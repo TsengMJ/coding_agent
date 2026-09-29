@@ -150,5 +150,14 @@ func MergeSchemas(schemas ...Schema) (Schema, error) {
 
 // PrivateKeys returns the names of keys marked Private across schemas.
 func PrivateKeys(schemas ...Schema) []string {
-	return nil
+	var keys []string
+	for _, s := range schemas {
+		for name, spec := range s {
+			if spec.Private && !slices.Contains(keys, name) {
+				keys = append(keys, name)
+			}
+		}
+	}
+	slices.Sort(keys)
+	return keys
 }

@@ -103,3 +103,13 @@ func TestCloneIsIndependentAtTopLevel(t *testing.T) {
 		t.Fatal("clone must not share the Values map")
 	}
 }
+
+func TestPrivateKeysCollectsSortedUniqueNames(t *testing.T) {
+	got := PrivateKeys(
+		Schema{"b": {Name: "b", Private: true}, "files": {Name: "files"}},
+		Schema{"a": {Name: "a", Private: true}, "b": {Name: "b", Private: true}},
+	)
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("PrivateKeys = %v", got)
+	}
+}

@@ -337,20 +337,20 @@
 
 ### 4.3 SubAgents `middleware/subagents`（py: `middleware/subagents.py`）
 
-- [~] `TaskToolName`、`GeneralPurposeName` / `GeneralPurposeDescription` / `DefaultSubagentPrompt`
-- [~] `Mode`（isolated / fork；legacy `handoff` = isolated）
-- [~] `Spec` 介面、`SubAgent`、`CompiledSubAgent`
-- [~] `Options` / `Middleware` / `AddPrivateStateKeys`
-- [~] `ValidateSpecs`（名稱唯一、mode 合法、fork 不可有 skills）
-- [ ] `task` 工具
-  - [ ] `TaskToolSchema`（description / subagent_type，拒絕未知欄位）
-  - [ ] `TASK_TOOL_DESCRIPTION` + `{available_agents}` 清單
-  - [ ] isolated：只傳 task 描述，排除 `_EXCLUDED_STATE_KEYS` 與 private keys
+- [x] `TaskToolName`、`GeneralPurposeName` / `GeneralPurposeDescription` / `DefaultSubagentPrompt`
+- [x] `Mode`（isolated / fork；legacy `handoff` = isolated）
+- [x] `Spec` 介面、`SubAgent`、`CompiledSubAgent`（宣告式 spec 由 `New` 編譯；Skills / Permissions 尚未支援）
+- [x] `Options` / `Middleware` / `AddPrivateStateKeys`
+- [x] `ValidateSpecs`（名稱唯一、mode 合法、fork 不可有 skills；fork 回 `ErrNotImplemented`）
+- [x] `task` 工具（同一輪多個 task 平行執行）
+  - [x] `TaskToolSchema`（description / subagent_type，拒絕未知欄位）
+  - [x] `TASK_TOOL_DESCRIPTION` + `{available_agents}` 清單
+  - [x] isolated：只傳 task 描述，排除 `_EXCLUDED_STATE_KEYS` 與 private keys
   - [ ] fork：傳 parent 有效訊息、`_FORK_TASK_PREAMBLE`、防止遞迴 fork
-  - [ ] 結果回傳：structured_response JSON 或最後一則非空 AI 訊息
-  - [ ] subagent 的 state update 回寫 parent（files 等）
+  - [x] 結果回傳：structured_response JSON 或最後一則非空 AI 訊息
+  - [x] subagent 的 state update 回寫 parent（files 等）
   - [ ] response_format（per-subagent）
-  - [ ] 未知 subagent_type 錯誤
+  - [x] 未知 subagent_type 錯誤
 - [ ] 事件 namespace / tracing metadata（`ls_agent_type`）
 
 ### 4.4 AsyncSubAgents `middleware/asyncsubagents`（py: `middleware/async_subagents.py`）
