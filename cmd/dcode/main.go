@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/tsengmingchun/deepagents_golang"
 	"github.com/tsengmingchun/deepagents_golang/code/client"
@@ -22,15 +23,23 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("dcode", flag.ContinueOnError)
-	prompt := fs.String("n", "", "run a single prompt non-interactively")
+	promptFlag := fs.String("n", "", "run a single prompt non-interactively")
 	threadID := fs.String("thread", "", "thread ID to resume")
 	version := fs.Bool("version", false, "print version and exit")
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage: dcode [-n prompt | prompt...] [-thread id]\n\n")
+		fs.PrintDefaults()
+	}
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *version {
 		fmt.Println("dcode (go)", deepagents.Version)
 		return nil
+	}
+	prompt, err := resolvePrompt(*promptFlag, fs.Args())
+	if err != nil {
+		return err
 	}
 
 	cwd, err := os.Getwd()
@@ -47,9 +56,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer srv.Close()
 
-	if *prompt != "" {
+	if prompt != "" {
 		code, err := client.RunNonInteractive(ctx, srv, client.NonInteractiveOptions{
-			Prompt: *prompt, ThreadID: *threadID, Stdout: os.Stdout, Stderr: os.Stderr,
+			Prompt: prompt, ThreadID: *threadID, Stdout: os.Stdout, Stderr: os.Stderr,
 		})
 		if err != nil {
 			return err
@@ -57,4 +66,16 @@ func run(ctx context.Context, args []string) error {
 		os.Exit(code)
 	}
 	return client.RunInteractive(ctx, srv, client.InteractiveOptions{ThreadID: *threadID})
+}
+
+// resolvePrompt takes the prompt from -n or from leftover arguments.
+// An empty result means interactive mode.
+func resolvePrompt(flagPrompt string, args []string) (string, error) {
+	if flagPrompt != "" && len(args) > 0 {
+		return "", fmt.Errorf("pass the prompt with -n or as arguments, not both")
+	}
+	if flagPrompt != "" {
+		return flagPrompt, nil
+	}
+	return strings.Join(args, " "), nil
 }

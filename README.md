@@ -31,8 +31,16 @@ internal/notimpl         未實作 sentinel error
 ## 開發指令
 
 ```sh
-go build ./...
-go vet ./...
-gofmt -l .
-go test ./...
+make test                         # go test ./...
+make test PKG=./runtime ARGS=-v   # 單一 package、額外參數
+make check                        # gofmt、vet、test
+make run PROMPT='summarize README.md'
+make run PROMPT='continue' THREAD=thread-id
+```
+
+`dcode` 的 prompt 可以用 `-n`，也可以直接當參數：
+
+```sh
+go run ./cmd/dcode -- -n 'summarize README.md'
+go run ./cmd/dcode -- summarize README.md
 ```
