@@ -4,6 +4,8 @@
 // `langchain_core.language_models.BaseChatModel` that Deep Agents relies on.
 package llm
 
+import "strings"
+
 // Role identifies who authored a message.
 type Role string
 
@@ -99,6 +101,17 @@ func NewUserMessage(text string) Message {
 // NewAssistantMessage builds an assistant message with a single text block.
 func NewAssistantMessage(text string) Message {
 	return Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock(text)}}
+}
+
+// Text concatenates the text blocks of the message.
+func (m Message) Text() string {
+	var b strings.Builder
+	for _, c := range m.Content {
+		if c.Type == BlockText {
+			b.WriteString(c.Text)
+		}
+	}
+	return b.String()
 }
 
 // NewToolMessage builds a tool-result message answering toolCallID.
