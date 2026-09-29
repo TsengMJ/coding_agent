@@ -73,7 +73,10 @@
   - [ ] Stream
   - [x] tool calling
   - [ ] `store=False` + `reasoning.encrypted_content`
-- [ ] OpenRouter provider（OpenAI 相容 + app attribution headers）
+- [~] OpenRouter provider — go: `llm/openrouter.go`（共用 OpenAI Chat Completions client；`OPENROUTER_API_KEY` / `OPENROUTER_API_BASE`）
+  - [x] Generate + tool calling、app attribution headers（`HTTP-Referer` / `X-Title`）
+  - [ ] `provider: {ignore: [azure]}` 預設路由（`DEEPAGENTS_OPENROUTER_ALLOW_AZURE`）
+  - [ ] Stream
 - [ ] NVIDIA provider
 - [ ] Google Gemini provider
 - [ ] Ollama provider

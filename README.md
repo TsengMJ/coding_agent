@@ -48,7 +48,14 @@ go run ./cmd/dcode summarize README.md
 
 不要在 `go run ./cmd/dcode` 後面加 `--`：Go 的 `flag` 套件會把 `--` 之後的東西都當成一般參數，`-n` 就會變成 prompt 的一部分。
 
-模型設定：`-model` 優先，其次是環境變數 `DCODE_MODEL`，預設 `openai:gpt-5.5`。OpenAI 需要 `OPENAI_API_KEY`；設定 `OPENAI_BASE_URL` 可以改接相容 OpenAI 的端點。
+模型設定：`-model` 優先，其次是環境變數 `DCODE_MODEL`，預設 `openai:gpt-5.5`。格式是 `provider:model`，只以第一個 `:` 切分，所以 OpenRouter 的 slug 可以直接寫：
+
+| provider | 範例 | API key | 端點覆寫 |
+| --- | --- | --- | --- |
+| `openrouter` | `openrouter:openai/gpt-6-luna` | `OPENROUTER_API_KEY` | `OPENROUTER_API_BASE` |
+| `openai` | `openai:gpt-5.5` | `OPENAI_API_KEY` | `OPENAI_BASE_URL` |
+
+OpenRouter 會帶上 app attribution header（`HTTP-Referer`、`X-Title`），可用 `OPENROUTER_APP_URL`、`OPENROUTER_APP_TITLE` 覆寫，設成空字串則不送。
 
 ### API key 與 `.env`
 

@@ -42,10 +42,15 @@ func newOpenAIFromSpec(model string, opts map[string]any) (ChatModel, error) {
 
 // OpenAIModel talks to the OpenAI Chat Completions API. The Responses API
 // (useResponses) is not implemented yet.
+//
+// The same client serves OpenAI-compatible providers such as OpenRouter,
+// which differ only in provider name, base URL and extra headers.
 type OpenAIModel struct {
 	cfg          ProviderConfig
 	useResponses bool
 	client       *http.Client
+	provider     string
+	headers      map[string]string
 }
 
 // NewOpenAIModel builds an OpenAI chat model; useResponses selects the Responses API.
@@ -54,10 +59,10 @@ func NewOpenAIModel(cfg ProviderConfig, useResponses bool) *OpenAIModel {
 		cfg.BaseURL = DefaultOpenAIBaseURL
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
-	return &OpenAIModel{cfg: cfg, useResponses: useResponses, client: http.DefaultClient}
+	return &OpenAIModel{cfg: cfg, useResponses: useResponses, client: http.DefaultClient, provider: "openai"}
 }
 
-func (m *OpenAIModel) Info() ModelInfo { return ModelInfo{Provider: "openai", Model: m.cfg.Model} }
+func (m *OpenAIModel) Info() ModelInfo { return ModelInfo{Provider: m.provider, Model: m.cfg.Model} }
 
 func (m *OpenAIModel) Profile() ModelProfile { return ModelProfile{} }
 
@@ -79,9 +84,13 @@ func (m *OpenAIModel) Generate(ctx context.Context, req ChatRequest) (*Message, 
 	}
 	raw, err := m.post(ctx, "/chat/completions", body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", m.provider, err)
 	}
-	return parseChatCompletion(raw)
+	msg, err := parseChatCompletion(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", m.provider, err)
+	}
+	return msg, nil
 }
 
 type oaFunctionCall struct {
@@ -113,7 +122,7 @@ func (m *OpenAIModel) buildRequest(req ChatRequest) (map[string]any, error) {
 	for i, msg := range req.Messages {
 		om, err := toOpenAIMessage(msg)
 		if err != nil {
-			return nil, fmt.Errorf("openai: message %d: %w", i, err)
+			return nil, fmt.Errorf("%s: message %d: %w", m.provider, i, err)
 		}
 		msgs = append(msgs, om)
 	}
@@ -173,31 +182,34 @@ func toOpenAIMessage(msg Message) (oaMessage, error) {
 func (m *OpenAIModel) post(ctx context.Context, path string, body any) ([]byte, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("openai: encode request: %w", err)
+		return nil, fmt.Errorf("encode request: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.cfg.BaseURL+path, bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("openai: build request: %w", err)
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if m.cfg.APIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+m.cfg.APIKey)
 	}
+	for k, v := range m.headers {
+		httpReq.Header.Set(k, v)
+	}
 	resp, err := m.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("openai: POST %s: %w", path, err)
+		return nil, fmt.Errorf("POST %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("openai: read response: %w", err)
+		return nil, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		snippet := raw
 		if len(snippet) > errorBodyLimit {
 			snippet = snippet[:errorBodyLimit]
 		}
-		return nil, fmt.Errorf("openai: POST %s: status %d: %s", path, resp.StatusCode, bytes.TrimSpace(snippet))
+		return nil, fmt.Errorf("POST %s: status %d: %s", path, resp.StatusCode, bytes.TrimSpace(snippet))
 	}
 	return raw, nil
 }
@@ -226,10 +238,10 @@ type oaResponse struct {
 func parseChatCompletion(raw []byte) (*Message, error) {
 	var resp oaResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return nil, fmt.Errorf("openai: decode response: %w", err)
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	if len(resp.Choices) == 0 {
-		return nil, errors.New("openai: response has no choices")
+		return nil, errors.New("response has no choices")
 	}
 	choice := resp.Choices[0]
 	msg := &Message{
@@ -247,7 +259,7 @@ func parseChatCompletion(raw []byte) (*Message, error) {
 		args := map[string]any{}
 		if strings.TrimSpace(tc.Function.Arguments) != "" {
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				return nil, fmt.Errorf("openai: decode args of tool call %s (%s): %w", tc.ID, tc.Function.Name, err)
+				return nil, fmt.Errorf("decode args of tool call %s (%s): %w", tc.ID, tc.Function.Name, err)
 			}
 		}
 		msg.ToolCalls = append(msg.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Args: args})
