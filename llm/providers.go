@@ -36,29 +36,6 @@ func (m *AnthropicModel) Stream(ctx context.Context, req ChatRequest) iter.Seq2[
 	return errSeq(notimpl.Err("llm.AnthropicModel.Stream"))
 }
 
-// OpenAIModel talks to the OpenAI Responses / Chat Completions API.
-type OpenAIModel struct {
-	cfg          ProviderConfig
-	useResponses bool
-}
-
-// NewOpenAIModel builds an OpenAI chat model; useResponses selects the Responses API.
-func NewOpenAIModel(cfg ProviderConfig, useResponses bool) *OpenAIModel {
-	return &OpenAIModel{cfg: cfg, useResponses: useResponses}
-}
-
-func (m *OpenAIModel) Info() ModelInfo { return ModelInfo{Provider: "openai", Model: m.cfg.Model} }
-
-func (m *OpenAIModel) Profile() ModelProfile { return ModelProfile{} }
-
-func (m *OpenAIModel) Generate(ctx context.Context, req ChatRequest) (*Message, error) {
-	return nil, notimpl.Err("llm.OpenAIModel.Generate")
-}
-
-func (m *OpenAIModel) Stream(ctx context.Context, req ChatRequest) iter.Seq2[Chunk, error] {
-	return errSeq(notimpl.Err("llm.OpenAIModel.Stream"))
-}
-
 func errSeq(err error) iter.Seq2[Chunk, error] {
 	return func(yield func(Chunk, error) bool) { yield(Chunk{}, err) }
 }
