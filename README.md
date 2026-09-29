@@ -35,12 +35,17 @@ make test                         # go test ./...
 make test PKG=./runtime ARGS=-v   # 單一 package、額外參數
 make check                        # gofmt、vet、test
 make run PROMPT='summarize README.md'
-make run PROMPT='continue' THREAD=thread-id
+make run PROMPT='hi' MODEL=openai:gpt-5.5
+make run PROMPT='continue' THREAD=thread-id   # thread 續跑尚未支援
 ```
 
 `dcode` 的 prompt 可以用 `-n`，也可以直接當參數：
 
 ```sh
-go run ./cmd/dcode -- -n 'summarize README.md'
-go run ./cmd/dcode -- summarize README.md
+go run ./cmd/dcode -n 'summarize README.md'
+go run ./cmd/dcode summarize README.md
 ```
+
+不要在 `go run ./cmd/dcode` 後面加 `--`：Go 的 `flag` 套件會把 `--` 之後的東西都當成一般參數，`-n` 就會變成 prompt 的一部分。
+
+模型設定：`-model` 優先，其次是環境變數 `DCODE_MODEL`，預設 `openai:gpt-5.5`。OpenAI 需要 `OPENAI_API_KEY`；設定 `OPENAI_BASE_URL` 可以改接相容 OpenAI 的端點。

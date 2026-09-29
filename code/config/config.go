@@ -3,7 +3,14 @@
 // (Python `config.py`, `configuration/*`).
 package config
 
-import "github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+)
 
 // Scope is a configuration tier, lowest to highest precedence.
 type Scope string
@@ -55,9 +62,28 @@ type Resolver interface {
 	Reload() error
 }
 
+// DirName is the per-user and per-project configuration directory name.
+const DirName = ".deepagents"
+
 // DefaultPaths computes paths for the current user and working directory.
+// Profile-specific state directories are not modeled yet; everything lives
+// directly under ~/.deepagents.
 func DefaultPaths(cwd string) (Paths, error) {
-	return Paths{}, notimpl.Err("config.DefaultPaths")
+	if cwd == "" {
+		return Paths{}, errors.New("config.DefaultPaths: cwd is required")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return Paths{}, fmt.Errorf("config.DefaultPaths: %w", err)
+	}
+	userDir := filepath.Join(home, DirName)
+	return Paths{
+		Home:       home,
+		UserDir:    userDir,
+		ProjectDir: filepath.Join(cwd, DirName),
+		ConfigFile: filepath.Join(userDir, "config.toml"),
+		SessionsDB: filepath.Join(userDir, "sessions.db"),
+	}, nil
 }
 
 // NewResolver returns a resolver over the given paths.

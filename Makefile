@@ -10,9 +10,11 @@ ARGS ?=
 PROMPT ?=
 # Optional thread id for make run.
 THREAD ?=
+# Optional model for make run. Example: make run MODEL=openai:gpt-5.5 PROMPT='hi'
+MODEL ?=
 
 help: ## Show targets
-	@echo "Usage: make <target> [PKG=./...] [ARGS='-v'] [PROMPT='...'] [THREAD=id]"
+	@echo "Usage: make <target> [PKG=./...] [ARGS='-v'] [PROMPT='...'] [THREAD=id] [MODEL=provider:model]"
 	@echo ""
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-8s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
@@ -38,4 +40,4 @@ check: fmt vet test ## Run fmt, vet, and tests
 
 run: ## Run one prompt: make run PROMPT="..."
 	@test -n "$(PROMPT)" || { echo 'usage: make run PROMPT="your prompt"'; exit 1; }
-	go run ./cmd/dcode -- -n "$(PROMPT)" $(if $(THREAD),-thread=$(THREAD),)
+	go run ./cmd/dcode $(if $(MODEL),-model=$(MODEL),) $(if $(THREAD),-thread=$(THREAD),) -n "$(PROMPT)"

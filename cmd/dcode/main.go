@@ -25,9 +25,10 @@ func run(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("dcode", flag.ContinueOnError)
 	promptFlag := fs.String("n", "", "run a single prompt non-interactively")
 	threadID := fs.String("thread", "", "thread ID to resume")
+	model := fs.String("model", "", "model as provider:model (default $"+server.ModelEnvVar+" or "+server.DefaultModelSpec+")")
 	version := fs.Bool("version", false, "print version and exit")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: dcode [-n prompt | prompt...] [-thread id]\n\n")
+		fmt.Fprintf(fs.Output(), "Usage: dcode [-model provider:model] [-n prompt | prompt...] [-thread id]\n\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -50,7 +51,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve paths: %w", err)
 	}
-	srv, err := server.New(ctx, server.Config{Paths: paths})
+	srv, err := server.New(ctx, server.Config{Paths: paths, ModelSpec: *model})
 	if err != nil {
 		return fmt.Errorf("start agent server: %w", err)
 	}
