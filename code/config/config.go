@@ -27,7 +27,7 @@ type Settings struct {
 	Model              string
 	SummarizationModel string
 	ReasoningEffort    string
-	// ApprovalMode is ApprovalManual or ApprovalYolo (startup.mode).
+	// ApprovalMode is ApprovalManual or ApprovalYolo (startup.mode, default yolo).
 	ApprovalMode string
 	AgentName    string
 	// ShellAllowList names commands that run without approval

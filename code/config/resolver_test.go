@@ -40,8 +40,16 @@ func clearEnv(t *testing.T) {
 func TestResolverMissingFileGivesDefaults(t *testing.T) {
 	clearEnv(t)
 	s := resolve(t, Paths{ConfigFile: filepath.Join(t.TempDir(), "absent.toml")})
-	if s.ApprovalMode != ApprovalManual || s.Model != "" || s.MaxRetries != nil || s.ShellAllowList != nil {
+	if s.ApprovalMode != ApprovalYolo || s.Model != "" || s.MaxRetries != nil || s.ShellAllowList != nil {
 		t.Errorf("settings = %+v", s)
+	}
+}
+
+func TestResolverManualModeTurnsReviewBackOn(t *testing.T) {
+	clearEnv(t)
+	s := resolve(t, writeConfig(t, "[startup]\nmode = \"manual\"\n"))
+	if s.ApprovalMode != ApprovalManual {
+		t.Errorf("ApprovalMode = %q", s.ApprovalMode)
 	}
 }
 

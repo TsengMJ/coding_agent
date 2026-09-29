@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/smallnest/langgraphgo/graph"
 
@@ -353,10 +354,45 @@ func (a *loopAgent) nodeAfterModel(ctx context.Context, state any) (any, error) 
 	return st, nil
 }
 
+// maxParallelTools caps how many tool calls of one model turn run at once.
+const maxParallelTools = 8
+
+// nodeTools runs the pending tool calls concurrently against one state
+// snapshot, then applies their results in call order so tool messages and
+// Command updates stay deterministic.
 func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 	st := state.(*execState)
-	for _, call := range pendingToolCalls(st.State) {
-		if err := a.runTool(ctx, st.State, st.RT, call); err != nil {
+	calls := pendingToolCalls(st.State)
+	snapshot := st.State.Clone()
+	results := make([]*tool.Result, len(calls))
+	errs := make([]error, len(calls))
+	sem := make(chan struct{}, maxParallelTools)
+	var wg sync.WaitGroup
+	for i, call := range calls {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					errs[i] = panicError("tool "+call.Name, r)
+				}
+			}()
+			results[i], errs[i] = a.toolChain(ctx, &ToolCallRequest{
+				ToolCall: call,
+				Tool:     a.toolByName[call.Name],
+				State:    snapshot,
+				Runtime:  st.RT,
+			})
+		}()
+	}
+	wg.Wait()
+	for i, call := range calls {
+		if errs[i] != nil {
+			return nil, errs[i]
+		}
+		if err := a.applyToolResult(st.State, call, results[i]); err != nil {
 			return nil, err
 		}
 	}
@@ -574,15 +610,9 @@ func pendingToolCalls(state *runtime.State) []llm.ToolCall {
 	return nil
 }
 
-func (a *loopAgent) runTool(ctx context.Context, state *runtime.State, rt *Runtime, call llm.ToolCall) error {
-	res, err := a.toolChain(ctx, &ToolCallRequest{
-		ToolCall: call,
-		Tool:     a.toolByName[call.Name],
-		State:    state,
-		Runtime:  rt,
-	})
-	if err != nil {
-		return err
+func (a *loopAgent) applyToolResult(state *runtime.State, call llm.ToolCall, res *tool.Result) error {
+	if res == nil {
+		res = &tool.Result{}
 	}
 	if res.Command != nil {
 		if res.Command.Goto != "" {

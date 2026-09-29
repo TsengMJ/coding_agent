@@ -3,8 +3,11 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
@@ -342,6 +345,86 @@ func TestLoopStreamEmitsModelChunksWhenMessagesRequested(t *testing.T) {
 	}
 	if got := final.Messages[len(final.Messages)-1].Text(); got != "hello big world" {
 		t.Fatalf("stored text = %q", got)
+	}
+}
+
+// barrierTool returns only after n calls are in flight at the same time, so
+// sequential execution times out instead of passing.
+func barrierTool(n int) tool.Tool {
+	var mu sync.Mutex
+	started := 0
+	all := make(chan struct{})
+	return &tool.Func{
+		ToolName: "wait",
+		Fn: func(ctx context.Context, _ *tool.Runtime, args map[string]any) (*tool.Result, error) {
+			mu.Lock()
+			started++
+			if started == n {
+				close(all)
+			}
+			mu.Unlock()
+			select {
+			case <-all:
+			case <-time.After(2 * time.Second):
+				return nil, errors.New("calls did not overlap")
+			}
+			id, _ := args["id"].(string)
+			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("done:" + id)}}, nil
+		},
+	}
+}
+
+func TestLoopRunsToolCallsInParallel(t *testing.T) {
+	model := llm.NewFakeModel(
+		toolCallReply(
+			llm.ToolCall{ID: "c1", Name: "wait", Args: map[string]any{"id": "1"}},
+			llm.ToolCall{ID: "c2", Name: "wait", Args: map[string]any{"id": "2"}},
+			llm.ToolCall{ID: "c3", Name: "wait", Args: map[string]any{"id": "3"}},
+		),
+		llm.NewAssistantMessage("ok"),
+	)
+	state, err := invoke(t, Config{Model: model, Tools: []tool.Tool{barrierTool(3)}}, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{"done:1", "done:2", "done:3"} {
+		msg := state.Messages[2+i]
+		if msg.Status == llm.ToolStatusError || msg.Text() != want || msg.ToolCallID != fmt.Sprintf("c%d", i+1) {
+			t.Fatalf("tool message %d = %+v, want %s", i, msg, want)
+		}
+	}
+}
+
+func TestLoopParallelCommandUpdatesApplyInCallOrder(t *testing.T) {
+	setter := &tool.Func{
+		ToolName: "set",
+		Fn: func(_ context.Context, rt *tool.Runtime, args map[string]any) (*tool.Result, error) {
+			v, _ := args["v"].(string)
+			if v == "first" {
+				time.Sleep(20 * time.Millisecond)
+			}
+			return &tool.Result{Command: &runtime.Command{Update: &runtime.Update{
+				Messages: []llm.Message{llm.NewToolMessage(rt.ToolCallID, "set", "set "+v)},
+				Values:   map[string]any{"last": v},
+			}}}, nil
+		},
+	}
+	model := llm.NewFakeModel(
+		toolCallReply(
+			llm.ToolCall{ID: "c1", Name: "set", Args: map[string]any{"v": "first"}},
+			llm.ToolCall{ID: "c2", Name: "set", Args: map[string]any{"v": "second"}},
+		),
+		llm.NewAssistantMessage("ok"),
+	)
+	state, err := invoke(t, Config{Model: model, Tools: []tool.Tool{setter}}, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Values["last"]; got != "second" {
+		t.Fatalf("last = %v, want second", got)
+	}
+	if state.Messages[2].ToolCallID != "c1" || state.Messages[3].ToolCallID != "c2" {
+		t.Fatalf("tool message order: %s, %s", state.Messages[2].ToolCallID, state.Messages[3].ToolCallID)
 	}
 }
 

@@ -104,23 +104,27 @@
 - CLI：`-q` 只輸出回覆、`-no-stream` 一次寫出、逾時 124、中斷 130、JSON envelope、旗標需搭配 `-n`
 **Status**: Complete
 
-## Stage 7: SubAgents 與 CreateDeepAgent 完整組裝
+## Stage 7: 讓 dcode 日常可用、SubAgents、工具平行執行
 
-**Goal**: SubAgentMiddleware 的 `task` 工具、CreateDeepAgent 完整組裝（預設 middleware stack、profiles、預設 general-purpose subagent）。
-**Success Criteria**: `deepagents.CreateDeepAgent(WithModelSpec(...))` 產生帶預設 middleware 的 agent，能委派任務給 subagent 並拿回結果。
+**Goal**: tool calls 平行執行並預設信任模型；write_todos、AGENTS.md memory、專案資訊；核心 summarization 與 `/compact`；SubAgent `task` 工具與 CreateDeepAgent 完整組裝（預設 middleware stack、profiles、general-purpose subagent）。
+**Success Criteria**: `make check` 通過；同一輪多個 tool calls 同時執行、結果依 call 順序寫回；長對話自動摘要並 offload；AGENTS.md 注入 prompt；`CreateDeepAgent` 產生帶預設 middleware 的 agent，能委派任務給 subagent 並拿回結果。
+**子階段**:
+- 7a 平行 tool calls（state 快照、最多 8 個 goroutine、依原順序套用）、同一路徑平行異動保護、`startup.mode` 預設 yolo
+- 7b `write_todos`（TUI checklist）、MemoryMiddleware（AGENTS.md）、system prompt 的 Project Context（git 分支 / 狀態、專案標記檔）
+- 7c `ApproximateTokenCounter`、`ErrContextOverflow`、Summarization（觸發、參數截斷、cutoff、摘要、offload、overflow 重試）、`/compact`
+- 7d `task` 工具（isolated）、profiles 合併 / `ApplyPrompt`、ToolExclusion、CreateDeepAgent 完整組裝與 general-purpose subagent
 **Tests**:
-- middleware 組裝順序與 `_apply_custom_middleware` 取代規則
-- excluded middleware 驗證（不可排除 Filesystem / SubAgent）
-- prompt 組裝 USER → BASE → SUFFIX
-- `task` 工具 isolated 模式只傳描述、結果取最後 AI 訊息
-**Status**: Not Started
+- 平行：barrier 工具證明同時執行、Command update 依 call 順序、同一路徑第二個寫入被拒、`-race`
+- todos / memory / local context / TUI checklist
+- summarization 觸發、cutoff 不切斷 tool call 配對、state messages 不變、offload、overflow 重試、`/compact` 端到端
+- middleware 組裝順序與同名取代、excluded middleware 驗證、prompt 組裝、`task` isolated 與平行呼叫
+**Status**: In Progress（7a 完成）
 
 ## Stage 8: 進階 middleware
 
-**Goal**: Summarization、Memory、Skills 完成（PatchToolCalls 已於 Stage 6.5 完成）；HITL 補上 edit / respond 決策。
-**Success Criteria**: 長對話會被自動摘要並 offload；AGENTS.md 與 SKILL.md 被注入 prompt；核准時可修改 tool 參數後再執行。
+**Goal**: Skills 完成；HITL 補上 edit / respond 決策。
+**Success Criteria**: SKILL.md 被注入 prompt；核准時可修改 tool 參數後再執行。
 **Tests**:
-- summarization 觸發條件與 cutoff 不切斷 tool call 配對
 - SKILL.md frontmatter 解析與驗證
 - HITL edit 決策（取代 AI 訊息中的 tool call 參數）
 **Status**: Not Started

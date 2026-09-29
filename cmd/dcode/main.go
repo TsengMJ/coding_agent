@@ -141,7 +141,7 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 	promptFlag := fs.String("n", "", "run a single prompt non-interactively")
 	threadID := fs.String("thread", "", "thread ID to continue")
 	resume := fs.Bool("r", false, "continue the most recent thread in this directory")
-	autoApprove := fs.Bool("y", false, "approve every tool call without asking (startup.mode = \"yolo\")")
+	autoApprove := fs.Bool("y", false, "approve every tool call without asking, even when startup.mode = \"manual\"")
 	plain := fs.Bool("plain", false, "use the line REPL instead of the full-screen TUI")
 	model := fs.String("model", "", modelFlagUsage)
 	serverFlag := fs.String("server", "", serverFlagUsage+"; empty runs in-process")
@@ -155,8 +155,9 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 			"  dcode serve [-addr host:port]          run a long-lived agent server\n"+
 			"  dcode threads [-all] [-json]           list threads\n\n"+
 			"Threads are stored in Postgres when $%s is set, otherwise in memory.\n"+
-			"write_file, edit_file and execute ask for approval unless -y is given;\n"+
-			"shell.allow_list in %s lets matching commands skip it.\n"+
+			"Tool calls run without approval by default. With startup.mode = \"manual\" in\n"+
+			"%s, write_file, edit_file and execute ask first\n"+
+			"(-y skips it for one run; shell.allow_list lets matching commands skip it).\n"+
 			"Shell commands run in the current directory and are not sandboxed.\n\n", postgresEnvVar, "~/.deepagents/config.toml")
 		fs.PrintDefaults()
 	}

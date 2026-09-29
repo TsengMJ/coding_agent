@@ -140,8 +140,15 @@ func appendToSystemMessage(msg *llm.Message, text string) *llm.Message {
 	return &out
 }
 
-// WrapToolCall clips oversized text results to ToolResultTokenLimit.
+// WrapToolCall rejects a second mutation of the same file in one model turn
+// and clips oversized text results to ToolResultTokenLimit.
 func (m *Middleware) WrapToolCall(ctx context.Context, req *agent.ToolCallRequest, next agent.ToolHandler) (*tool.Result, error) {
+	if parallelFileMutation(req) {
+		return &tool.Result{
+			Content: []llm.ContentBlock{llm.TextBlock("Error: parallel file mutations to the same path are not allowed.")},
+			IsError: true,
+		}, nil
+	}
 	res, err := next(ctx, req)
 	if err != nil || res == nil {
 		return res, err
@@ -152,4 +159,47 @@ func (m *Middleware) WrapToolCall(ctx context.Context, req *agent.ToolCallReques
 		}
 	}
 	return res, nil
+}
+
+var fileMutationTools = []string{string(ToolWriteFile), string(ToolEditFile), string(ToolDelete)}
+
+// parallelFileMutation reports whether an earlier call in the same assistant
+// message already mutates req's file (`_parallel_file_mutation_error`). Tool
+// calls run concurrently, so only the first mutation of a path may run.
+func parallelFileMutation(req *agent.ToolCallRequest) bool {
+	target, ok := mutationPath(req.ToolCall)
+	if !ok || req.State == nil {
+		return false
+	}
+	for i := len(req.State.Messages) - 1; i >= 0; i-- {
+		msg := req.State.Messages[i]
+		if msg.Role != llm.RoleAssistant {
+			continue
+		}
+		for _, call := range msg.ToolCalls {
+			if call.ID == req.ToolCall.ID {
+				return false
+			}
+			if p, ok := mutationPath(call); ok && p == target {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+func mutationPath(call llm.ToolCall) (string, bool) {
+	if !slices.Contains(fileMutationTools, call.Name) {
+		return "", false
+	}
+	raw, ok := call.Args["file_path"].(string)
+	if !ok {
+		return "", false
+	}
+	p, err := backend.ValidatePath(raw, nil)
+	if err != nil {
+		return "", false
+	}
+	return p, true
 }

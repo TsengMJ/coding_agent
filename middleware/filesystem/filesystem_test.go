@@ -186,3 +186,26 @@ func TestCustomToolDescription(t *testing.T) {
 		t.Fatalf("description = %q", m.Tools()[0].Description())
 	}
 }
+
+func TestParallelWritesToSamePathRejectLaterCalls(t *testing.T) {
+	b, dir := newShellBackend(t)
+	m, err := New(Options{Backend: b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+		{ID: "w1", Name: "write_file", Args: map[string]any{"file_path": "/a.txt", "content": "one"}},
+		{ID: "w2", Name: "write_file", Args: map[string]any{"file_path": "/a.txt", "content": "two"}},
+		{ID: "w3", Name: "write_file", Args: map[string]any{"file_path": "/b.txt", "content": "three"}},
+	}}
+	msgs, _ := runAgent(t, m, batch)
+	if msgs["w1"].Status == llm.ToolStatusError || msgs["w3"].Status == llm.ToolStatusError {
+		t.Fatalf("first writes must succeed: %+v / %+v", msgs["w1"], msgs["w3"])
+	}
+	if msgs["w2"].Status != llm.ToolStatusError || !strings.Contains(msgs["w2"].Text(), "parallel file mutations") {
+		t.Fatalf("second write to same path = %+v", msgs["w2"])
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(got) != "one" {
+		t.Fatalf("a.txt = %q", got)
+	}
+}

@@ -53,7 +53,7 @@ func (r *fileResolver) Settings() (*Settings, error) {
 func (r *fileResolver) Sources() []Source { return r.sources }
 
 func (r *fileResolver) Reload() error {
-	s := &Settings{ApprovalMode: ApprovalManual}
+	s := &Settings{ApprovalMode: ApprovalYolo}
 	src := Source{Scope: ScopeUser, Path: r.paths.ConfigFile}
 	err := loadUserFile(r.paths.ConfigFile, s)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

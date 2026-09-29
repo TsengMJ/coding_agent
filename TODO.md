@@ -154,7 +154,7 @@
 - [~] `CreateAgent` — go: `agent/loop.go`, `agent/chain.go`
   - [-] model → after_model → tools → model 迴圈 — langgraphgo `MessageGraph`（這個版本的 `StateGraph.Compile` 不處理 `InterruptBefore`）。AfterModel hooks 在獨立的 `after_model` 節點，中斷後 resume 不重打 model；所有 tool call 都已有回覆（例如被拒絕）時回到 model
   - [x] middleware hook 串接順序（wrap 類：前面的在外層；AfterModel / AfterAgent 逆序）
-  - [-] 平行執行多個 tool calls — 多邊 fan-out 由 langgraphgo 提供；目前單一 `tools` 節點循序執行，以保持 tool message 順序
+  - [x] 平行執行多個 tool calls — `tools` 節點以 state 快照同時執行（上限 8），結果依 call 順序套用，tool message 順序不變
   - [x] 未知工具錯誤回報
   - [x] recursion limit（`ErrRecursionLimit`；套件 Invoke 沒有此上限，在 model 節點檢查）
   - [-] checkpoint 讀寫（每步）— `OnGraphStep` 寫入 langgraphgo checkpointer
