@@ -31,7 +31,21 @@ var (
 	ErrPendingApproval = errors.New("thread has tool calls awaiting approval; resume it with decisions or start a new thread")
 	// ErrNoPendingApproval is returned when a resume arrives without a pending review.
 	ErrNoPendingApproval = errors.New("thread has no tool calls awaiting approval")
+	// ErrThreadNotFound is returned when an operation needs an existing thread.
+	ErrThreadNotFound = errors.New("thread not found")
+	// ErrNothingToCompact is returned when a thread is too short to compact.
+	ErrNothingToCompact = errors.New("conversation is too short to compact")
 )
+
+// CompactResult describes a summarization done by Compact.
+type CompactResult struct {
+	ThreadID string `json:"thread_id"`
+	// Summary is the message that stands in for the older history.
+	Summary string `json:"summary"`
+	// FilePath is where the full older history was saved, relative to the
+	// thread's cwd; empty when saving failed.
+	FilePath string `json:"file_path,omitempty"`
+}
 
 // RunRequest starts a run on a thread, or resumes one paused for approval.
 // Exactly one of Messages and Resume must be set.
@@ -96,6 +110,9 @@ type Server interface {
 	// GetThread returns nil when the thread has no state.
 	GetThread(ctx context.Context, threadID string) (*ThreadState, error)
 	ListThreads(ctx context.Context, f sessions.Filter) ([]sessions.Info, error)
+	// Compact summarizes older messages of an idle thread so later runs
+	// send the model a shorter history.
+	Compact(ctx context.Context, threadID string) (*CompactResult, error)
 	Close() error
 }
 

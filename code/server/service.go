@@ -17,6 +17,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 )
 
@@ -125,6 +126,56 @@ func (s *Service) GetThread(ctx context.Context, threadID string) (*ThreadState,
 		ts.Interrupts = append(ts.Interrupts, toInterrupt(in))
 	}
 	return ts, nil
+}
+
+// Compact summarizes the thread's older messages now and saves the result
+// as a new checkpoint. The messages stay in state; the summary replaces
+// them only in what the model is sent.
+func (s *Service) Compact(ctx context.Context, threadID string) (*CompactResult, error) {
+	if threadID == "" {
+		return nil, fmt.Errorf("%w: thread_id is required", ErrBadRequest)
+	}
+	if !s.acquire(threadID) {
+		return nil, ErrThreadBusy
+	}
+	defer s.release(threadID)
+
+	info, err := s.sessions.Get(ctx, threadID)
+	if err != nil {
+		return nil, err
+	}
+	cp, err := s.checkpointer.Latest(ctx, threadID)
+	if err != nil {
+		return nil, err
+	}
+	if info == nil || cp == nil {
+		return nil, fmt.Errorf("%w: %s", ErrThreadNotFound, threadID)
+	}
+	if len(cp.PendingInterrupts) > 0 {
+		return nil, ErrPendingApproval
+	}
+	summ, err := codeagent.NewSummarization(s.model, codeagent.NewBackend(info.Cwd))
+	if err != nil {
+		return nil, err
+	}
+	upd, err := summ.Compact(ctx, &cp.State, s.model)
+	if errors.Is(err, summarization.ErrNothingToCompact) {
+		return nil, ErrNothingToCompact
+	}
+	if err != nil {
+		return nil, err
+	}
+	next := *cp
+	next.State = *cp.State.Clone()
+	if err := next.State.Apply(*upd, summ.StateSchema()); err != nil {
+		return nil, err
+	}
+	next.ID, next.ParentID, next.CreatedAt = "", cp.ID, time.Time{}
+	if err := s.checkpointer.Put(ctx, next); err != nil {
+		return nil, err
+	}
+	event, _ := upd.Values[summarization.EventStateKey].(summarization.Event)
+	return &CompactResult{ThreadID: threadID, Summary: event.SummaryMessage.Text(), FilePath: event.FilePath}, nil
 }
 
 // Run executes one run and yields the messages it adds. A run paused for

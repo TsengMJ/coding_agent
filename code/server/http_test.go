@@ -31,6 +31,8 @@ func (funcServer) ListThreads(context.Context, sessions.Filter) ([]sessions.Info
 	return nil, nil
 }
 
+func (funcServer) Compact(context.Context, string) (*CompactResult, error) { return nil, nil }
+
 func (funcServer) Close() error { return nil }
 
 func startServe(t *testing.T, srv Server) (string, context.CancelFunc, <-chan error) {

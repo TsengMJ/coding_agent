@@ -448,3 +448,67 @@ func TestModelOptionsCarryMaxRetries(t *testing.T) {
 		t.Errorf("opts = %v", opts)
 	}
 }
+
+func TestServiceCompactSummarizesOlderMessagesForLaterRuns(t *testing.T) {
+	cwd := t.TempDir()
+	svc, model := newService(t,
+		llm.NewAssistantMessage("a1"), llm.NewAssistantMessage("a2"),
+		llm.NewAssistantMessage("a3"), llm.NewAssistantMessage("a4"),
+		llm.NewAssistantMessage("SUMMARY-OF-EARLY-WORK"),
+		llm.NewAssistantMessage("a5"),
+	)
+	for _, text := range []string{"first task", "q2", "q3", "q4"} {
+		if _, err := collect(t, svc, userReq("t1", cwd, text)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := svc.Compact(context.Background(), "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Summary, "SUMMARY-OF-EARLY-WORK") {
+		t.Fatalf("summary = %q", res.Summary)
+	}
+	if !strings.HasPrefix(res.FilePath, "/.deepagents/conversation_history/") {
+		t.Fatalf("file path = %q", res.FilePath)
+	}
+	history, err := os.ReadFile(filepath.Join(cwd, filepath.FromSlash(res.FilePath)))
+	if err != nil || !strings.Contains(string(history), "first task") {
+		t.Fatalf("history = %q, %v", history, err)
+	}
+
+	if _, err := collect(t, svc, userReq("t1", cwd, "q5")); err != nil {
+		t.Fatal(err)
+	}
+	reqs := model.Requests()
+	var sent []string
+	for _, m := range reqs[len(reqs)-1].Messages {
+		sent = append(sent, m.Text())
+	}
+	joined := strings.Join(sent, "\n")
+	if strings.Contains(joined, "first task") || !strings.Contains(joined, "SUMMARY-OF-EARLY-WORK") {
+		t.Fatalf("model saw:\n%s", joined)
+	}
+	ts, err := svc.GetThread(context.Background(), "t1")
+	if err != nil || len(ts.Messages) != 10 {
+		t.Fatalf("stored messages = %d, %v; compaction must not drop history", len(ts.Messages), err)
+	}
+}
+
+func TestServiceCompactShortThreadHasNothingToDo(t *testing.T) {
+	cwd := t.TempDir()
+	svc, _ := newService(t, llm.NewAssistantMessage("hi"))
+	if _, err := collect(t, svc, userReq("t1", cwd, "hello")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Compact(context.Background(), "t1"); !errors.Is(err, ErrNothingToCompact) {
+		t.Fatalf("err = %v, want ErrNothingToCompact", err)
+	}
+}
+
+func TestServiceCompactUnknownThread(t *testing.T) {
+	svc, _ := newService(t)
+	if _, err := svc.Compact(context.Background(), "missing"); !errors.Is(err, ErrThreadNotFound) {
+		t.Fatalf("err = %v, want ErrThreadNotFound", err)
+	}
+}

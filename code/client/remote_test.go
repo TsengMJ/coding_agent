@@ -163,3 +163,32 @@ func TestRemoteCancelStopsServerRun(t *testing.T) {
 	}
 	<-done
 }
+
+func TestRemoteCompact(t *testing.T) {
+	cwd := t.TempDir()
+	r := remoteFor(t, newService(t,
+		llm.NewAssistantMessage("a1"), llm.NewAssistantMessage("a2"),
+		llm.NewAssistantMessage("a3"), llm.NewAssistantMessage("a4"),
+		llm.NewAssistantMessage("the summary"),
+	))
+	if _, err := r.Compact(context.Background(), "nope"); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Fatalf("want 404, got %v", err)
+	}
+	for i, text := range []string{"q1", "q2", "q3", "q4"} {
+		if _, err := drain(r, server.RunRequest{ThreadID: "t1", Cwd: cwd, Messages: []llm.Message{llm.NewUserMessage(text)}}); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			if _, err := r.Compact(context.Background(), "t1"); err == nil || !strings.Contains(err.Error(), "HTTP 409") {
+				t.Fatalf("want 409 for a short thread, got %v", err)
+			}
+		}
+	}
+	res, err := r.Compact(context.Background(), "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Summary, "the summary") || res.FilePath == "" {
+		t.Fatalf("result = %+v", res)
+	}
+}

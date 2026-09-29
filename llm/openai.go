@@ -111,6 +111,9 @@ func (m *OpenAIModel) generate(ctx context.Context, req ChatRequest, sink *strea
 	}
 	resp, err := client.GenerateContent(ctx, msgs, opts...)
 	if err != nil {
+		if isContextOverflow(err) {
+			return nil, fmt.Errorf("%s: %w: %w", m.provider, ErrContextOverflow, err)
+		}
 		return nil, fmt.Errorf("%s: %w", m.provider, err)
 	}
 	if len(resp.Choices) == 0 {
@@ -339,4 +342,24 @@ func (h headerDoer) Do(req *http.Request) (*http.Response, error) {
 	resp.Body = io.NopCloser(bytes.NewReader(raw))
 	resp.ContentLength = int64(len(raw))
 	return resp, nil
+}
+
+// contextOverflowMarkers are substrings OpenAI-compatible APIs use when a
+// request exceeds the context window. langchaingo keeps only the error
+// message, so the error code is matched as text too.
+var contextOverflowMarkers = []string{
+	"context_length_exceeded",
+	"maximum context length",
+	"context window",
+	"prompt is too long",
+}
+
+func isContextOverflow(err error) bool {
+	msg := strings.ToLower(err.Error())
+	for _, marker := range contextOverflowMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }

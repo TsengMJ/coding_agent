@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -107,5 +108,21 @@ func TestOpenAIProviderRequiresAPIKey(t *testing.T) {
 	_, err := InitChatModel("openai:gpt-test", nil)
 	if err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
 		t.Fatalf("want missing key error, got %v", err)
+	}
+}
+
+func TestOpenAIContextOverflowIsTyped(t *testing.T) {
+	m := fakeOpenAI(t, 400, `{"error":{"message":"This model's maximum context length is 128000 tokens.","type":"invalid_request_error","code":"context_length_exceeded"}}`, nil)
+	_, err := m.Generate(context.Background(), ChatRequest{Messages: []Message{NewUserMessage("hi")}})
+	if !errors.Is(err, ErrContextOverflow) {
+		t.Fatalf("want ErrContextOverflow, got %v", err)
+	}
+}
+
+func TestOpenAIOtherBadRequestIsNotOverflow(t *testing.T) {
+	m := fakeOpenAI(t, 400, `{"error":{"message":"invalid tool schema","type":"invalid_request_error"}}`, nil)
+	_, err := m.Generate(context.Background(), ChatRequest{Messages: []Message{NewUserMessage("hi")}})
+	if err == nil || errors.Is(err, ErrContextOverflow) {
+		t.Fatalf("got %v", err)
 	}
 }

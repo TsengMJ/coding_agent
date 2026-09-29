@@ -54,8 +54,8 @@
 - [~] `ChatModel` 介面（`Info` / `Profile` / `Generate` / `Stream`）
 - [~] `ChatRequest` / `ToolSpec` / `ResponseFormat` / `Chunk`
 - [~] `ModelInfo`、`ModelProfile`（max_input_tokens、多模態支援旗標）
-- [~] `TokenCounter` 型別
-- [~] `ApproximateTokenCounter`（`count_tokens_approximately`）
+- [x] `TokenCounter` 型別
+- [x] `ApproximateTokenCounter`（`count_tokens_approximately`：字元數 / 4 + 每則訊息固定成本）— go: `llm/tokens.go`
 - [x] `ModelSpec` / `ParseModelSpec`（`provider:model`，只以第一個 `:` 切分）
 - [x] `RegisterProvider` / `InitChatModel`（`init_chat_model`；未知 provider 列出已註冊清單）
 - [~] `ModelMatchesSpec`（py: `_models.model_matches_spec`）
@@ -83,7 +83,7 @@
 - [ ] Bedrock provider
 - [ ] Fireworks provider
 - [x] FakeModel（測試用：預先編排回應 / tool calls）— go: `llm/fake.go`
-- [ ] context overflow 錯誤型別（`ContextOverflowError`，供 summarization 恢復）
+- [x] context overflow 錯誤型別 — go: `llm.ErrContextOverflow`（OpenAI 錯誤碼 / 訊息比對後包裝）
 - [ ] 重試 / rate limit 處理
 
 ### 1.3 Tool `tool/tool.go`（langchain_core.tools）
@@ -181,7 +181,7 @@
   - [ ] `model=None` 預設 `claude-sonnet-4-6`（Python 已 deprecated）
   - [x] `tools`（`WithTools`）
   - [x] `system_prompt`（`WithSystemMessage` 優先，否則 `WithSystemPrompt`）
-  - [~] `middleware`（`WithMiddleware`：目前直接作為完整 stack，尚無同名取代規則）
+  - [x] `middleware`（`WithMiddleware`：同名取代 base stack 原位置，其餘插在 base 之後；重複名稱報錯）
   - [~] `subagents`（`WithSubAgents`：SubAgent / CompiledSubAgent / AsyncSubAgent）
   - [~] `skills`（`WithSkills`）
   - [x] `memory`（`WithMemory`：以主 backend 讀取，放在 caller middleware 之後、HITL 之前）
@@ -197,7 +197,7 @@
 - [ ] Model 解析（`resolve_model`）+ harness profile 查找
 - [ ] Prompt 組裝：USER → BASE → SUFFIX（`_apply_profile_prompt`）；SystemMessage 保留 cache_control blocks
 - [ ] Main agent middleware 組裝順序：Skills → Filesystem → SubAgent → Summarization → PatchToolCalls → AsyncSubAgent → [caller] → profile extra → prompt caching → Memory → HITL → UnsupportedContent → ToolExclusion
-- [ ] `_apply_custom_middleware`：同名取代原位置、新增者插在 core 之後 tail 之前
+- [x] `_apply_custom_middleware`：同名取代原位置、新增者插在 core 之後 tail 之前 — go: `mergeMiddleware`
 - [~] Required middleware 保護（Filesystem / SubAgent 不可被排除）— go: `RequiredMiddleware`
 - [ ] `_excluded_middleware.py`：`_validate_excluded_middleware_config` / `_apply_excluded_middleware` / `_verify_excluded_middleware_coverage` / 名稱衝突檢查
 - [ ] 預設 general-purpose subagent（可被 profile 關閉、可被同名 spec 取代、繼承同名 middleware）
@@ -374,15 +374,16 @@
 - [~] `Options` / `New` / `NewForModel` / `ComputeDefaults`
 - [~] `Middleware`（Name = `SummarizationMiddleware`）
 - [~] `ToolMiddleware`（`compact_conversation` 工具）
-- [ ] `DEEPAGENTS_DEFAULT_SUMMARY_PROMPT`
-- [ ] 觸發判斷（tokens / messages / fraction；AND / OR 組合）
-- [ ] cutoff 計算（不切斷 tool call / tool result 配對）
-- [ ] 舊 tool args 截斷（write_file / edit_file）
-- [ ] 產生摘要（trim_tokens_to_summarize）
-- [ ] 被移除訊息 offload 到 `/conversation_history/{session_id}.md`
+- [x] `DEEPAGENTS_DEFAULT_SUMMARY_PROMPT` — go: `DefaultSummaryPrompt`
+- [x] 觸發判斷（tokens / messages / fraction；AND / OR 組合）
+- [x] cutoff 計算（不切斷 tool call / tool result 配對）
+- [x] 舊 tool args 截斷（write_file / edit_file）
+- [x] 產生摘要（trim_tokens_to_summarize）
+- [x] 被移除訊息 offload 到 `/conversation_history/{session_id}.md`（dcode 用 `/.deepagents/conversation_history`）
 - [ ] inline media（data URL）offload 到 backend
-- [ ] summary 訊息帶檔案路徑、過濾舊 summary
-- [ ] context overflow 錯誤 → 摘要後重試（`_call_with_budget`）
+- [x] summary 訊息帶檔案路徑、過濾舊 summary
+- [x] context overflow 錯誤 → 摘要後重試一次（`_call_with_budget`）
+- [x] `Compact`（手動摘要，供 dcode `/compact`；nothing-to-compact 回 `ErrNothingToCompact`）
 - [ ] `_overflow_clip.py`：overflow 門檻推導
 - [ ] `compact_conversation`：資格判斷、nothing-to-compact、錯誤處理
 
@@ -585,7 +586,7 @@
   - [ ] `/mcp`
   - [ ] `/model`
   - [ ] `/notifications`
-  - [ ] `/offload`（`/compact`）
+  - [x] `/offload`（`/compact`）— `Server.Compact` / `POST /threads/{id}/compact`
   - [ ] `/plugins`
   - [ ] `/prompts`
   - [ ] `/quit`（`/q`）

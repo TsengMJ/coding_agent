@@ -34,6 +34,7 @@ var (
 //	POST /runs            RunRequest -> NDJSON stream of Event, ending in done or error
 //	GET  /threads         ?cwd=&limit= -> []sessions.Info
 //	GET  /threads/{id}    -> ThreadState (404 when unknown)
+//	POST /threads/{id}/compact -> CompactResult (404 unknown, 409 busy/pending/too short)
 func NewHandler(srv Server) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -73,6 +74,14 @@ func NewHandler(srv Server) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, ts)
+	})
+	mux.HandleFunc("POST /threads/{id}/compact", func(w http.ResponseWriter, r *http.Request) {
+		res, err := srv.Compact(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
 	})
 	return mux
 }
@@ -122,8 +131,11 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, ErrBadRequest):
 		return http.StatusBadRequest
+	case errors.Is(err, ErrThreadNotFound):
+		return http.StatusNotFound
 	case errors.Is(err, ErrThreadBusy), errors.Is(err, ErrThreadCwdMismatch),
-		errors.Is(err, ErrPendingApproval), errors.Is(err, ErrNoPendingApproval):
+		errors.Is(err, ErrPendingApproval), errors.Is(err, ErrNoPendingApproval),
+		errors.Is(err, ErrNothingToCompact):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

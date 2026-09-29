@@ -378,3 +378,23 @@ func TestWriteTodosRendersChecklist(t *testing.T) {
 		t.Fatalf("raw JSON shown:\n%s", out)
 	}
 }
+
+func TestCompactCommandReportsResult(t *testing.T) {
+	svc := newService(t,
+		llm.NewAssistantMessage("a1"), llm.NewAssistantMessage("a2"),
+		llm.NewAssistantMessage("a3"), llm.NewAssistantMessage("a4"),
+		llm.NewAssistantMessage("the summary"),
+	)
+	m := newTestModel(t, svc, t.TempDir())
+	drain(t, m, m.submit("/compact"))
+	if !hasEntry(m, entryError, "compact:") {
+		t.Fatalf("empty thread: entries = %+v", m.entries)
+	}
+	for _, text := range []string{"q1", "q2", "q3", "q4"} {
+		drain(t, m, m.submit(text))
+	}
+	drain(t, m, m.submit("/compact"))
+	if !hasEntry(m, entryInfo, "/.deepagents/conversation_history/") {
+		t.Fatalf("entries = %+v", m.entries)
+	}
+}

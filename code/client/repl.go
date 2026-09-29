@@ -20,6 +20,7 @@ const SlashHelp = `commands:
   /thread        show the current thread id
   /threads       list threads in this directory
   /resume <id>   switch to another thread
+  /compact       summarize older messages to free context
   /yolo          toggle auto-approval of tool calls
   /quit          exit`
 
@@ -127,6 +128,13 @@ func (r *repl) command(ctx context.Context, line string) bool {
 			break
 		}
 		PrintThreads(out, list, false)
+	case "/compact", "/offload":
+		res, err := r.srv.Compact(ctx, r.thread)
+		if err != nil {
+			fmt.Fprintln(r.opts.Err, "error:", err)
+			break
+		}
+		fmt.Fprintln(out, CompactSummary(res))
 	case "/resume":
 		if arg == "" {
 			fmt.Fprintln(r.opts.Err, "usage: /resume <thread id>")
@@ -172,4 +180,12 @@ func onOff(b bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+// CompactSummary describes a finished /compact for the user.
+func CompactSummary(res *server.CompactResult) string {
+	if res.FilePath == "" {
+		return "compacted older messages into a summary"
+	}
+	return "compacted older messages into a summary; full history saved to " + res.FilePath
 }

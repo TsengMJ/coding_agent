@@ -60,10 +60,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	}
 	b := opts.Backend
 	if b == nil {
-		b = backend.NewLocalShellBackend(backend.LocalShellOptions{
-			FilesystemOptions: backend.FilesystemOptions{RootDir: opts.Cwd, VirtualMode: true},
-			InheritEnv:        true,
-		})
+		b = NewBackend(opts.Cwd)
 	}
 	if opts.ProjectContext == "" {
 		opts.ProjectContext = LocalContext(ctx, opts.Cwd)
@@ -76,12 +73,16 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	summ, err := NewSummarization(opts.Model, b)
+	if err != nil {
+		return nil, err
+	}
 	dopts := []deepagents.Option{
 		deepagents.WithModel(opts.Model),
 		deepagents.WithBackend(b),
 		deepagents.WithSystemPrompt(prompt),
 		deepagents.WithTools(opts.ExtraTools...),
-		deepagents.WithMiddleware(todolist.New("", ""), mem),
+		deepagents.WithMiddleware(summ, todolist.New("", ""), mem),
 		deepagents.WithCheckpointer(opts.Checkpointer),
 		deepagents.WithStore(opts.Store),
 		deepagents.WithName(opts.AgentName),

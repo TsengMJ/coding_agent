@@ -97,6 +97,10 @@ type (
 		list []sessions.Info
 		err  error
 	}
+	compactMsg struct {
+		res *server.CompactResult
+		err error
+	}
 )
 
 type model struct {
@@ -215,6 +219,13 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			m.mode = modeIdle
 		}
 		return nil
+	case compactMsg:
+		if msg.err != nil {
+			m.errorf("compact: %v", msg.err)
+			return nil
+		}
+		m.info(client.CompactSummary(msg.res))
+		return nil
 	case spinner.TickMsg:
 		if m.mode != modeRunning {
 			return nil
@@ -301,6 +312,13 @@ func (m *model) command(line string) tea.Cmd {
 		return func() tea.Msg {
 			list, err := srv.ListThreads(ctx, sessions.Filter{Cwd: cwd, Limit: 20})
 			return threadsMsg{list: list, err: err}
+		}
+	case "/compact", "/offload":
+		srv, thread, ctx := m.srv, m.thread, m.ctx
+		m.info("compacting older messages…")
+		return func() tea.Msg {
+			res, err := srv.Compact(ctx, thread)
+			return compactMsg{res: res, err: err}
 		}
 	case "/resume":
 		if arg == "" {

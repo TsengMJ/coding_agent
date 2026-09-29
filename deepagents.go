@@ -6,6 +6,7 @@ package deepagents
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/backend"
@@ -17,6 +18,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/middleware/patchtoolcalls"
 	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
 	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
+	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
 )
@@ -123,7 +125,7 @@ func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	stack, err := buildMiddleware(o)
+	stack, err := buildMiddleware(o, model)
 	if err != nil {
 		return nil, err
 	}
@@ -159,21 +161,28 @@ func rejectUnsupported(o Options) error {
 	return nil
 }
 
-// buildMiddleware places FilesystemMiddleware (when a backend is set) and
-// PatchToolCallsMiddleware ahead of the caller's middleware, and
-// HumanInTheLoopMiddleware (when InterruptOn is set) last, so its AfterModel
-// runs first and interrupts before other hooks change state.
-func buildMiddleware(o Options) ([]agent.Middleware, error) {
+// buildMiddleware places FilesystemMiddleware and SummarizationMiddleware
+// (when a backend is set) and PatchToolCallsMiddleware ahead of the caller's
+// middleware, and HumanInTheLoopMiddleware (when InterruptOn is set) last,
+// so its AfterModel runs first and interrupts before other hooks change state.
+func buildMiddleware(o Options, model llm.ChatModel) ([]agent.Middleware, error) {
 	var stack []agent.Middleware
 	if o.Backend != nil {
 		fs, err := filesystem.New(filesystem.Options{Backend: o.Backend})
 		if err != nil {
 			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
 		}
-		stack = append(stack, fs)
+		summ, err := summarization.NewForModel(model, o.Backend)
+		if err != nil {
+			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+		}
+		stack = append(stack, fs, summ)
 	}
 	stack = append(stack, patchtoolcalls.New())
-	stack = append(stack, o.Middleware...)
+	stack, err := mergeMiddleware(stack, o.Middleware)
+	if err != nil {
+		return nil, err
+	}
 	if len(o.Memory) > 0 {
 		if o.Backend == nil {
 			return nil, errors.New("deepagents.CreateDeepAgent: WithMemory requires WithBackend")
@@ -188,6 +197,27 @@ func buildMiddleware(o Options) ([]agent.Middleware, error) {
 		stack = append(stack, hitl.New(o.InterruptOn))
 	}
 	return stack, nil
+}
+
+// mergeMiddleware appends extra to base; an extra entry whose Name matches a
+// base entry replaces it in place instead. Names within extra must be unique.
+func mergeMiddleware(base, extra []agent.Middleware) ([]agent.Middleware, error) {
+	out := slices.Clone(base)
+	seen := map[string]bool{}
+	for _, m := range extra {
+		name := m.Name()
+		if seen[name] {
+			return nil, fmt.Errorf("deepagents.CreateDeepAgent: duplicate middleware %q", name)
+		}
+		seen[name] = true
+		i := slices.IndexFunc(out[:len(base)], func(b agent.Middleware) bool { return b.Name() == name })
+		if i >= 0 {
+			out[i] = m
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }
 
 func resolveModel(o Options) (llm.ChatModel, error) {

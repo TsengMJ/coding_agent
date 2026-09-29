@@ -76,8 +76,3 @@ func registeredProviders() []string {
 func ModelMatchesSpec(model ChatModel, spec string) bool {
 	return false
 }
-
-// ApproximateTokenCounter is the default character-based token estimate.
-func ApproximateTokenCounter(messages []Message, tools []ToolSpec) int {
-	return 0
-}

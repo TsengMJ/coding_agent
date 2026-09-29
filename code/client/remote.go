@@ -145,6 +145,22 @@ func (r *Remote) ListThreads(ctx context.Context, f sessions.Filter) ([]sessions
 	return list, nil
 }
 
+func (r *Remote) Compact(ctx context.Context, threadID string) (*server.CompactResult, error) {
+	resp, err := r.do(ctx, http.MethodPost, "/threads/"+url.PathEscape(threadID)+"/compact", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+	var res server.CompactResult
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, fmt.Errorf("decode compact result: %w", err)
+	}
+	return &res, nil
+}
+
 func (r *Remote) Close() error { return nil }
 
 func (r *Remote) do(ctx context.Context, method, path string, q url.Values, body []byte) (*http.Response, error) {
