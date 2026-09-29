@@ -49,3 +49,18 @@ go run ./cmd/dcode summarize README.md
 不要在 `go run ./cmd/dcode` 後面加 `--`：Go 的 `flag` 套件會把 `--` 之後的東西都當成一般參數，`-n` 就會變成 prompt 的一部分。
 
 模型設定：`-model` 優先，其次是環境變數 `DCODE_MODEL`，預設 `openai:gpt-5.5`。OpenAI 需要 `OPENAI_API_KEY`；設定 `OPENAI_BASE_URL` 可以改接相容 OpenAI 的端點。
+
+### API key 與 `.env`
+
+```sh
+cp .env.example .env   # 填入 OPENAI_API_KEY
+make run PROMPT='hello'
+```
+
+`dcode` 啟動時會載入 `.env`，優先順序（高到低）：
+
+1. shell 已設定的環境變數（永遠不會被 `.env` 覆寫）
+2. 專案 `.env`：從目前目錄往上找到的第一個 `.env`
+3. 全域 `~/.deepagents/.env`
+
+`.env` 已列在 `.gitignore`，只有 `.env.example` 會進版控。

@@ -506,7 +506,9 @@
 - [x] `DefaultPaths`（`~/.deepagents`、`cwd/.deepagents`；尚未處理 profile state dir）
 - [ ] config.toml 解析（需決定 TOML 函式庫）
 - [ ] 分層合併（managed / user / project / session / env）
-- [ ] .env 載入
+- [x] .env 載入（shell > 最近的專案 `.env` > `~/.deepagents/.env`）— go: `code/config/dotenv.go`
+  - [ ] 拒絕危險 key（`_DOTENV_DENIED_ENV_KEYS`、專案 `.env` 不可設定的 LangSmith key）
+  - [ ] 變數內插（`${VAR}`）、`/reload` 時移除先前注入的值
 - [ ] `/reload` 產生新 generation
 - [ ] 環境變數對照表
 

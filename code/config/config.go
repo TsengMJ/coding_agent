@@ -52,6 +52,8 @@ type Paths struct {
 	ProjectDir string
 	ConfigFile string
 	SessionsDB string
+	// GlobalDotEnv is the user-wide .env, loaded below the project .env.
+	GlobalDotEnv string
 }
 
 // Resolver builds one process-wide configuration generation and reuses it
@@ -78,11 +80,12 @@ func DefaultPaths(cwd string) (Paths, error) {
 	}
 	userDir := filepath.Join(home, DirName)
 	return Paths{
-		Home:       home,
-		UserDir:    userDir,
-		ProjectDir: filepath.Join(cwd, DirName),
-		ConfigFile: filepath.Join(userDir, "config.toml"),
-		SessionsDB: filepath.Join(userDir, "sessions.db"),
+		Home:         home,
+		UserDir:      userDir,
+		ProjectDir:   filepath.Join(cwd, DirName),
+		ConfigFile:   filepath.Join(userDir, "config.toml"),
+		SessionsDB:   filepath.Join(userDir, "sessions.db"),
+		GlobalDotEnv: filepath.Join(userDir, ".env"),
 	}, nil
 }
 

@@ -51,6 +51,9 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve paths: %w", err)
 	}
+	if err := config.LoadDotEnv(paths, cwd); err != nil {
+		return fmt.Errorf("load .env: %w", err)
+	}
 	srv, err := server.New(ctx, server.Config{Paths: paths, ModelSpec: *model})
 	if err != nil {
 		return fmt.Errorf("start agent server: %w", err)
