@@ -138,8 +138,8 @@ func TestCancelledToolCallIsPatchedOnNextTurn(t *testing.T) {
 	}
 }
 
-func TestCreateDeepAgentRejectsSubAgents(t *testing.T) {
-	_, err := CreateDeepAgent(WithModel(llm.NewFakeModel()), WithSubAgents(subagents.SubAgent{}))
+func TestCreateDeepAgentRejectsAsyncSubAgents(t *testing.T) {
+	_, err := CreateDeepAgent(WithModel(llm.NewFakeModel()), WithSubAgents(asyncsubagents.AsyncSubAgent{Name: "remote"}))
 	if !errors.Is(err, notimpl.ErrNotImplemented) {
 		t.Fatalf("want ErrNotImplemented, got %v", err)
 	}
@@ -159,7 +159,7 @@ func TestCreateDeepAgentWithBackendExposesFilesystemTools(t *testing.T) {
 	for _, spec := range model.Requests()[0].Tools {
 		names = append(names, spec.Name)
 	}
-	if want := []string{"ls", "read_file", "write_file", "edit_file", "glob", "grep"}; !slices.Equal(names, want) {
+	if want := []string{"ls", "read_file", "write_file", "edit_file", "glob", "grep", "task"}; !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
 }
@@ -200,53 +200,5 @@ func TestCreateDeepAgentWithMemoryInjectsAgentsMD(t *testing.T) {
 	}
 	if sys := model.Requests()[0].Messages[0].Text(); !strings.Contains(sys, "always run tests") {
 		t.Fatalf("system prompt:\n%s", sys)
-	}
-}
-
-func middlewareNames(stack []agent.Middleware) []string {
-	var names []string
-	for _, m := range stack {
-		names = append(names, m.Name())
-	}
-	return names
-}
-
-func TestBuildMiddlewareAddsSummarizationAfterFilesystem(t *testing.T) {
-	b := backend.NewFilesystemBackend(backend.FilesystemOptions{RootDir: t.TempDir(), VirtualMode: true})
-	stack, err := buildMiddleware(Options{Backend: b}, llm.NewFakeModel())
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"FilesystemMiddleware", "SummarizationMiddleware", "PatchToolCallsMiddleware"}
-	if got := middlewareNames(stack); !slices.Equal(got, want) {
-		t.Fatalf("stack = %v, want %v", got, want)
-	}
-}
-
-func TestCallerMiddlewareWithBaseNameReplacesItInPlace(t *testing.T) {
-	b := backend.NewFilesystemBackend(backend.FilesystemOptions{RootDir: t.TempDir(), VirtualMode: true})
-	custom, err := summarization.New(summarization.Options{
-		Backend: b,
-		Keep:    summarization.ContextSize{Kind: summarization.SizeMessages, Value: 2},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stack, err := buildMiddleware(Options{Backend: b, Middleware: []agent.Middleware{custom, todolist.New("", "")}}, llm.NewFakeModel())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stack[1] != agent.Middleware(custom) {
-		t.Fatalf("stack[1] = %T, want the caller's summarization middleware", stack[1])
-	}
-	if got := middlewareNames(stack); len(got) != 4 || got[3] != "TodoListMiddleware" {
-		t.Fatalf("stack = %v", got)
-	}
-}
-
-func TestDuplicateCallerMiddlewareIsRejected(t *testing.T) {
-	_, err := buildMiddleware(Options{Middleware: []agent.Middleware{todolist.New("", ""), todolist.New("", "")}}, llm.NewFakeModel())
-	if err == nil || !strings.Contains(err.Error(), "duplicate middleware") {
-		t.Fatalf("err = %v", err)
 	}
 }

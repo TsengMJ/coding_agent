@@ -4,9 +4,10 @@ package toolexclusion
 
 import (
 	"context"
+	"slices"
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+	"github.com/tsengmingchun/deepagents_golang/tool"
 )
 
 // Middleware must run last so it also removes middleware-injected tools.
@@ -26,5 +27,9 @@ func New(excluded []string) *Middleware {
 func (m *Middleware) Name() string { return "_ToolExclusionMiddleware" }
 
 func (m *Middleware) WrapModelCall(ctx context.Context, req *agent.ModelRequest, next agent.ModelHandler) (*agent.ModelResponse, error) {
-	return nil, notimpl.Err("toolexclusion.Middleware.WrapModelCall")
+	req.Tools = slices.DeleteFunc(slices.Clone(req.Tools), func(t tool.Tool) bool {
+		_, drop := m.excluded[t.Name()]
+		return drop
+	})
+	return next(ctx, req)
 }

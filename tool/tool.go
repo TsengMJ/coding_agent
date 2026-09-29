@@ -5,7 +5,6 @@ package tool
 import (
 	"context"
 
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 )
@@ -66,6 +65,23 @@ func Spec(t Tool) llm.ToolSpec {
 
 // ApplyDescriptionOverrides returns tools with descriptions replaced per
 // overrides, keyed by tool name (`_apply_tool_description_overrides`).
-func ApplyDescriptionOverrides(tools []Tool, overrides map[string]string) ([]Tool, error) {
-	return nil, notimpl.Err("tool.ApplyDescriptionOverrides")
+func ApplyDescriptionOverrides(tools []Tool, overrides map[string]string) []Tool {
+	if len(overrides) == 0 {
+		return tools
+	}
+	out := make([]Tool, len(tools))
+	for i, t := range tools {
+		if desc, ok := overrides[t.Name()]; ok {
+			t = describedTool{Tool: t, description: desc}
+		}
+		out[i] = t
+	}
+	return out
 }
+
+type describedTool struct {
+	Tool
+	description string
+}
+
+func (d describedTool) Description() string { return d.description }

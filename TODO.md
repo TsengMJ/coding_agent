@@ -94,7 +94,7 @@
 - [~] `Result`（content / Command / artifact / is_error）
 - [~] `Func`（`StructuredTool.from_function`）
 - [~] `Spec`：Tool → `llm.ToolSpec`
-- [~] `ApplyDescriptionOverrides` — py: `_tools._apply_tool_description_overrides`
+- [x] `ApplyDescriptionOverrides` — py: `_tools._apply_tool_description_overrides`
 - [ ] 從 Go struct 反射產生 JSON Schema
 - [ ] 參數驗證（依 schema 驗證 args、拒絕未知欄位）
 - [x] 工具錯誤 → ToolMessage(status=error) 轉換 — go: `agent/loop.go`
@@ -104,7 +104,7 @@
 - [~] `State`（messages / structured_response / 擴充 Values）
 - [~] `Update`
 - [~] `Reducer`、`KeySpec`（Private = `PrivateStateAttr`、OmitFromInput / OmitFromOutput）
-- [~] `Schema` / `MergeSchemas` / `PrivateKeys` — py: `middleware/_state.private_state_field_names`
+- [~] `Schema` / `MergeSchemas` / `PrivateKeys`（`PrivateKeys` 完成）— py: `middleware/_state.private_state_field_names`
 - [x] `State.Apply`
 - [x] `State.Clone`（淺層複製：messages slice 與 Values map 另外複製）
 - [-] `MessagesReducer`（`add_messages`：append、依 ID 取代）— 合併交給 langgraphgo `AddMessages`，不再自寫。`RemoveAllMessages` 套件不認得，仍在 `runtime` 先切開。`files` reducer 仍自建
@@ -174,15 +174,15 @@
 
 ## 2. graph.py：`create_deep_agent` — go: `deepagents.go`
 
-- [~] `CreateDeepAgent(opts ...Option)` 入口（有 backend 時放入 FilesystemMiddleware，其餘直通 `agent.CreateAgent`）
-  - 備註：預設 middleware stack 只組了 Filesystem；subagents / skills / memory / permissions / interrupt_on / response_format 會回 `ErrNotImplemented`
+- [x] `CreateDeepAgent(opts ...Option)` 入口（預設 middleware stack、profiles、general-purpose subagent）
+  - 備註：skills / permissions / response_format / async subagents 仍回 `ErrNotImplemented`；未給 backend 時沒有檔案工具與 summarization
 - [~] 參數（functional options）
   - [x] `model`（`WithModel` 優先，否則 `WithModelSpec` 經 `InitChatModel` 解析）
   - [ ] `model=None` 預設 `claude-sonnet-4-6`（Python 已 deprecated）
   - [x] `tools`（`WithTools`）
   - [x] `system_prompt`（`WithSystemMessage` 優先，否則 `WithSystemPrompt`）
   - [x] `middleware`（`WithMiddleware`：同名取代 base stack 原位置，其餘插在 base 之後；重複名稱報錯）
-  - [~] `subagents`（`WithSubAgents`：SubAgent / CompiledSubAgent / AsyncSubAgent）
+  - [x] `subagents`（`WithSubAgents`：SubAgent / CompiledSubAgent；AsyncSubAgent 回 `ErrNotImplemented`）
   - [~] `skills`（`WithSkills`）
   - [x] `memory`（`WithMemory`：以主 backend 讀取，放在 caller middleware 之後、HITL 之前）
   - [~] `permissions`（`WithPermissions`）
@@ -194,17 +194,17 @@
   - [~] `checkpointer` / `store`（`WithCheckpointer` 已轉給 `agent.CreateAgent`；`WithStore` 仍只保存參照）
   - [~] `debug` / `name`（`WithDebug` / `WithName`）
   - [ ] `cache`
-- [ ] Model 解析（`resolve_model`）+ harness profile 查找
-- [ ] Prompt 組裝：USER → BASE → SUFFIX（`_apply_profile_prompt`）；SystemMessage 保留 cache_control blocks
-- [ ] Main agent middleware 組裝順序：Skills → Filesystem → SubAgent → Summarization → PatchToolCalls → AsyncSubAgent → [caller] → profile extra → prompt caching → Memory → HITL → UnsupportedContent → ToolExclusion
+- [x] Model 解析（`resolve_model`）+ harness profile 查找（`WithModelSpec` 用 spec，`WithModel` 用 `Info()`）
+- [x] Prompt 組裝：USER → BASE → SUFFIX（`_apply_profile_prompt`）；SystemMessage 保留 cache_control blocks
+- [~] Main agent middleware 組裝順序（Skills / AsyncSubAgent / prompt caching / UnsupportedContent 尚未加入）：Skills → Filesystem → SubAgent → Summarization → PatchToolCalls → AsyncSubAgent → [caller] → profile extra → prompt caching → Memory → HITL → UnsupportedContent → ToolExclusion
 - [x] `_apply_custom_middleware`：同名取代原位置、新增者插在 core 之後 tail 之前 — go: `mergeMiddleware`
-- [~] Required middleware 保護（Filesystem / SubAgent 不可被排除）— go: `RequiredMiddleware`
-- [ ] `_excluded_middleware.py`：`_validate_excluded_middleware_config` / `_apply_excluded_middleware` / `_verify_excluded_middleware_coverage` / 名稱衝突檢查
-- [ ] 預設 general-purpose subagent（可被 profile 關閉、可被同名 spec 取代、繼承同名 middleware）
-- [ ] 宣告式 SubAgent 處理：model 解析、subagent profile、permissions 繼承、interrupt_on 繼承與合併、tools 繼承、skills、fork 模式（鏡射 parent prompt middleware、system prompt addendum）
+- [x] Required middleware 保護（Filesystem / SubAgent 不可被排除）— go: `RequiredMiddleware`
+- [x] `_excluded_middleware.py`：`_validate_excluded_middleware_config` / `_apply_excluded_middleware` / `_verify_excluded_middleware_coverage`（Go 只有名稱形式，無類別衝突檢查）
+- [x] 預設 general-purpose subagent（可被 profile 關閉、可被同名 spec 取代、繼承同名 middleware；不繼承 interrupt_on，因 subagent 尚不能暫停 parent run）
+- [~] 宣告式 SubAgent 處理（已完成 model 解析、subagent profile、tools 繼承；permissions / skills / fork / interrupt_on 繼承未做）：model 解析、subagent profile、permissions 繼承、interrupt_on 繼承與合併、tools 繼承、skills、fork 模式（鏡射 parent prompt middleware、system prompt addendum）
 - [ ] AsyncSubAgent 分流到 AsyncSubAgentMiddleware
 - [ ] permissions → interrupt_on 合併（`_merge_fs_interrupt_on`）— go: `hitl.Merge` 已實作，尚未接到 permissions
-- [ ] private state keys 注入 SubAgentMiddleware
+- [x] private state keys 注入 SubAgentMiddleware
 - [ ] `with_config`：recursion_limit=9999、metadata（ls_integration / lc_versions / lc_agent_name）
 - [~] `DeepAgentState`（對應 `runtime.State` + messages delta reducer，見 1.4）
 - [-] `BASE_AGENT_PROMPT` / `_LEGACY_BASE_AGENT_PROMPT` — Python 已 deprecated
@@ -441,8 +441,8 @@
   - [ ] Anthropic cache_control 標記
   - [ ] Bedrock 標記
   - [ ] Fireworks 標記
-- [~] ToolExclusion `middleware/toolexclusion`（py: `_tool_exclusion.py`）
-  - [ ] WrapModelCall 過濾工具
+- [x] ToolExclusion `middleware/toolexclusion`（py: `_tool_exclusion.py`）
+  - [x] WrapModelCall 過濾工具
 - [x] `middleware/_utils.append_to_system_message` — go: `agent.AppendToSystemMessage`
 - [-] `middleware/permissions.py`（Python 僅為 re-export 模組）
 
@@ -454,10 +454,10 @@
 - [~] `HarnessProfile`（base_system_prompt / system_prompt_suffix / tool_description_overrides / excluded_tools / excluded_middleware / extra_middleware / general_purpose_subagent）
 - [~] `HarnessProfileConfig` + `ToProfile`（宣告式子集）
 - [ ] `HarnessProfileConfig` 從 YAML / JSON 載入與欄位驗證（`_coerce_*`）
-- [~] `RegisterHarnessProfile`（additive merge）
-- [~] `HarnessProfileFor`（provider → provider:model 疊加）
-- [~] `MergeHarnessProfiles`（`_merge_profiles`、middleware 合併）
-- [~] `ApplyPrompt`（`_apply_profile_prompt`）
+- [x] `RegisterHarnessProfile`（additive merge）
+- [x] `HarnessProfileFor`（provider → provider:model 疊加）
+- [x] `MergeHarnessProfiles`（`_merge_profiles`、middleware 依 Name 合併）
+- [x] `ApplyPrompt`（`_apply_profile_prompt`）
 - [~] `ProviderProfile`（init_kwargs / pre_init / init_kwargs_factory）
 - [~] `RegisterProviderProfile` / `ProviderProfileFor`
 - [~] `ResolveModel`（`resolve_model`）

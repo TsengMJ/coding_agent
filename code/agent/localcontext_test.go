@@ -82,3 +82,25 @@ func TestCLIAgentLoadsMemoryAndTodos(t *testing.T) {
 		t.Error("write_todos tool not offered")
 	}
 }
+
+func TestCLISubagentWritesWithoutApprovalInManualMode(t *testing.T) {
+	cwd := t.TempDir()
+	model := llm.NewFakeModel(
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "t1", Name: "task",
+			Args: map[string]any{"subagent_type": "general-purpose", "description": "write notes.txt"}}}},
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "w1", Name: "write_file",
+			Args: map[string]any{"file_path": "/notes.txt", "content": "hi"}}}},
+		llm.NewAssistantMessage("wrote notes.txt"),
+		llm.NewAssistantMessage("done"),
+	)
+	a, err := CreateCLIAgent(context.Background(), Options{Model: model, Cwd: cwd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(context.Background(), core.Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, rt.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(cwd, "notes.txt")); err != nil || string(got) != "hi" {
+		t.Fatalf("notes.txt = %q, %v", got, err)
+	}
+}
