@@ -77,11 +77,21 @@ const (
 	entryToolError
 	entryInfo
 	entryError
+	// entryLLM is one model call; tool rows below it are its second level.
+	entryLLM
+	// entryBatch summarizes the timing of a finished multi-call batch.
+	entryBatch
 )
 
 type entry struct {
 	kind entryKind
 	text string
+	// meta is shown right-aligned: tokens and duration.
+	meta string
+	// callID, last and failed describe a tool row.
+	callID string
+	last   bool
+	failed bool
 }
 
 // Messages delivered to Update.
@@ -128,11 +138,17 @@ type model struct {
 	spin          spinner.Model
 	width, height int
 
-	// gen changes whenever entries is replaced rather than appended to.
+	// gen changes whenever entries is replaced rather than appended to;
+	// version changes whenever an existing entry is updated in place.
 	gen     int
-	cache   transcriptCache
-	shown   contentKey
-	renders int
+	version int
+
+	llmCalls int
+	tokens   int
+	batch    *toolBatch
+	cache    transcriptCache
+	shown    contentKey
+	renders  int
 
 	// mdStyle is a glamour standard style ("dark", "light", "notty").
 	mdStyle string
@@ -413,20 +429,9 @@ func (m *model) message(msg llm.Message) {
 			text = strings.TrimSpace(m.streaming.String())
 		}
 		m.streaming.Reset()
-		if text != "" {
-			m.entries = append(m.entries, entry{kind: entryAssistant, text: text})
-		}
-		for _, call := range msg.ToolCalls {
-			if list, ok := todoChecklist(call); ok {
-				m.entries = append(m.entries, entry{kind: entryTool, text: list})
-				continue
-			}
-			m.entries = append(m.entries, entry{kind: entryTool, text: strings.TrimPrefix(client.ToolCallLine(call), "[tool] ")})
-		}
+		m.assistant(msg, text)
 	case llm.RoleTool:
-		if msg.Status == llm.ToolStatusError {
-			m.entries = append(m.entries, entry{kind: entryToolError, text: msg.Name + ": " + firstLine(msg.Text())})
-		}
+		m.toolResult(msg)
 	}
 }
 
@@ -588,6 +593,15 @@ func (m *model) threadLoaded(msg threadLoadedMsg) {
 func (m *model) resetEntries() {
 	m.entries = nil
 	m.gen++
+	m.llmCalls, m.tokens, m.batch = 0, 0, nil
+}
+
+// invalidate marks entry i as changed so the transcript re-renders it.
+func (m *model) invalidate(i int) {
+	m.version++
+	if i < len(m.cache.valid) {
+		m.cache.valid[i] = false
+	}
 }
 
 func (m *model) info(text string) { m.entries = append(m.entries, entry{kind: entryInfo, text: text}) }

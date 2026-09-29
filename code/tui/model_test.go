@@ -398,3 +398,58 @@ func TestCompactCommandReportsResult(t *testing.T) {
 		t.Fatalf("entries = %+v", m.entries)
 	}
 }
+
+func TestTranscriptShowsModelCallsWithToolsNested(t *testing.T) {
+	cwd := t.TempDir()
+	reply := llm.Message{Role: llm.RoleAssistant, Usage: &llm.Usage{InputTokens: 1200, OutputTokens: 34, TotalTokens: 1234},
+		ToolCalls: []llm.ToolCall{
+			{ID: "a", Name: "execute", Args: map[string]any{"command": "sleep 0.3"}},
+			{ID: "b", Name: "execute", Args: map[string]any{"command": "sleep 0.3"}},
+		}}
+	svc := newService(t, reply, llm.NewAssistantMessage("both done"))
+	m := newModel(context.Background(), Options{Server: svc, Cwd: cwd, MarkdownStyle: "notty", AutoApprove: true})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	drain(t, m, m.submit("run two sleeps"))
+
+	view := ansi.Strip(m.transcript())
+	for _, want := range []string{"◆ LLM #1", "1.2k in / 34 out", "├─ execute sleep 0.3", "└─ execute sleep 0.3", "◆ LLM #2", "⇉ 2 tools", "parallel"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("transcript missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "…") {
+		t.Errorf("a tool row still shows as running:\n%s", view)
+	}
+	if !strings.Contains(m.statusLine(), "tokens") {
+		t.Errorf("status line = %q", m.statusLine())
+	}
+}
+
+func TestToolResultUpdatesItsRowInPlace(t *testing.T) {
+	m := newTestModel(t, newService(t), t.TempDir())
+	m.message(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "ls", Args: map[string]any{"path": "/"}}}})
+	before := ansi.Strip(m.transcript())
+	if !strings.Contains(before, "└─ ls /") || !strings.Contains(before, "…") {
+		t.Fatalf("before result:\n%s", before)
+	}
+	res := llm.WithTiming(llm.NewToolMessage("c1", "ls", "a.txt"), llm.Timing{Start: time.Now(), Duration: 1500 * time.Millisecond})
+	res.Status = llm.ToolStatusError
+	res.Content = []llm.ContentBlock{llm.TextBlock("permission denied")}
+	m.message(res)
+	after := ansi.Strip(m.transcript())
+	if !strings.Contains(after, "└─ ls / — permission denied") || !strings.Contains(after, "1.5s") || strings.Contains(after, "…") {
+		t.Fatalf("after result:\n%s", after)
+	}
+}
+
+func TestBatchSummaryVerdict(t *testing.T) {
+	now := time.Now()
+	par := batchSummary([]llm.Timing{{Start: now, Duration: time.Second}, {Start: now.Add(10 * time.Millisecond), Duration: time.Second}})
+	seq := batchSummary([]llm.Timing{{Start: now, Duration: time.Second}, {Start: now.Add(time.Second), Duration: time.Second}})
+	if !strings.HasSuffix(par, "parallel") || !strings.Contains(par, "wall 1.0s") || !strings.Contains(par, "sum 2.0s") {
+		t.Errorf("parallel summary = %q", par)
+	}
+	if !strings.HasSuffix(seq, "sequential") {
+		t.Errorf("sequential summary = %q", seq)
+	}
+}

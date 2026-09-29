@@ -24,6 +24,8 @@ var (
 	styleAdd       = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	styleDel       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	styleHunk      = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	styleLLM       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
+	styleMeta      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
 func (m *model) View() string {
@@ -46,11 +48,12 @@ func (m *model) layout() {
 	follow := m.vp.AtBottom()
 	m.vp.Width = m.width
 	m.vp.Height = max(m.height-fixed, 3)
-	key := contentKey{gen: m.gen, entries: len(m.entries), width: m.width, height: m.vp.Height, streaming: m.streaming.Len()}
+	key := contentKey{gen: m.gen, version: m.version, entries: len(m.entries), width: m.width, height: m.vp.Height, streaming: m.streaming.Len()}
 	if key == m.shown {
 		return
 	}
-	if key.width != m.shown.width || key.entries != m.shown.entries || key.streaming != m.shown.streaming || key.gen != m.shown.gen {
+	if key.width != m.shown.width || key.entries != m.shown.entries || key.streaming != m.shown.streaming ||
+		key.gen != m.shown.gen || key.version != m.shown.version {
 		m.vp.SetContent(m.transcript())
 	}
 	if follow || key.gen != m.shown.gen {
@@ -59,16 +62,20 @@ func (m *model) layout() {
 	m.shown = key
 }
 
-// contentKey identifies what the viewport currently shows. Entries only
-// change by appending, or by a reset that bumps gen.
+// contentKey identifies what the viewport currently shows. Entries change
+// by appending, by an in-place update that bumps version, or by a reset
+// that bumps gen.
 type contentKey struct {
-	gen, entries, width, height, streaming int
+	gen, version, entries, width, height, streaming int
 }
 
 func (m *model) statusLine() string {
 	parts := []string{"dcode", filepath.Base(m.opts.Cwd), "thread " + m.thread}
 	if m.opts.ModelName != "" {
 		parts = append(parts, m.opts.ModelName)
+	}
+	if m.tokens > 0 {
+		parts = append(parts, formatTokens(m.tokens)+" tokens")
 	}
 	if m.auto {
 		parts = append(parts, "AUTO-APPROVE")
@@ -94,19 +101,35 @@ func (m *model) helpLine() string {
 	}
 }
 
-// transcript renders finished entries once per width into a cached prefix
-// and re-renders only the streaming tail.
+// transcript renders each finished entry once per width and keeps the
+// joined result; only the streaming tail and entries updated in place are
+// rendered again.
 func (m *model) transcript() string {
 	width := max(m.width-2, 20)
 	wrap := lipgloss.NewStyle().Width(width)
 	c := &m.cache
-	if c.gen != m.gen || c.width != width || c.count > len(m.entries) {
+	if c.gen != m.gen || c.width != width || len(c.rendered) > len(m.entries) {
 		*c = transcriptCache{gen: m.gen, width: width}
 	}
-	for ; c.count < len(m.entries); c.count++ {
-		c.prefix.WriteString(m.renderEntry(m.entries[c.count], wrap, width))
-		c.prefix.WriteString("\n")
+	rebuild := false
+	for i := range m.entries {
+		if i == len(c.rendered) {
+			c.rendered, c.valid = append(c.rendered, ""), append(c.valid, false)
+		}
+		if c.valid[i] {
+			continue
+		}
+		c.rendered[i] = m.renderEntry(m.entries[i], wrap, width) + "\n"
+		c.valid[i] = true
 		m.renders++
+		rebuild = rebuild || i < c.joined
+	}
+	if rebuild {
+		c.prefix.Reset()
+		c.joined = 0
+	}
+	for ; c.joined < len(c.rendered); c.joined++ {
+		c.prefix.WriteString(c.rendered[c.joined])
 	}
 	out := c.prefix.String()
 	if s := m.streaming.String(); s != "" {
@@ -116,8 +139,12 @@ func (m *model) transcript() string {
 }
 
 type transcriptCache struct {
-	gen, width, count int
-	prefix            strings.Builder
+	gen, width int
+	rendered   []string
+	valid      []bool
+	// joined counts the rendered entries already written to prefix.
+	joined int
+	prefix strings.Builder
 }
 
 func (m *model) renderEntry(e entry, wrap lipgloss.Style, width int) string {
@@ -126,8 +153,12 @@ func (m *model) renderEntry(e entry, wrap lipgloss.Style, width int) string {
 		return "\n" + styleUser.Inherit(wrap).Render("> "+e.text)
 	case entryAssistant:
 		return m.markdown(e.text, width)
+	case entryLLM:
+		return renderLLM(e, width)
 	case entryTool:
-		return styleTool.Inherit(wrap).Render("● " + e.text)
+		return renderTool(e, width)
+	case entryBatch:
+		return styleMeta.Render("     " + e.text)
 	case entryToolError:
 		return styleToolError.Inherit(wrap).Render("✗ " + e.text)
 	case entryInfo:

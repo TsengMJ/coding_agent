@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/smallnest/langgraphgo/graph"
 
@@ -365,6 +366,7 @@ func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 	calls := pendingToolCalls(st.State)
 	snapshot := st.State.Clone()
 	results := make([]*tool.Result, len(calls))
+	timings := make([]llm.Timing, len(calls))
 	errs := make([]error, len(calls))
 	sem := make(chan struct{}, maxParallelTools)
 	var wg sync.WaitGroup
@@ -374,6 +376,8 @@ func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			start := time.Now()
+			defer func() { timings[i] = llm.Timing{Start: start, Duration: time.Since(start)} }()
 			defer func() {
 				if r := recover(); r != nil {
 					errs[i] = panicError("tool "+call.Name, r)
@@ -392,7 +396,7 @@ func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 		if errs[i] != nil {
 			return nil, errs[i]
 		}
-		if err := a.applyToolResult(st.State, call, results[i]); err != nil {
+		if err := a.applyToolResult(st.State, call, results[i], timings[i]); err != nil {
 			return nil, err
 		}
 	}
@@ -540,6 +544,7 @@ func (a *loopAgent) callModel(ctx context.Context, req *ModelRequest) (*ModelRes
 	}
 	var reply *llm.Message
 	var err error
+	start := time.Now()
 	if emit, ok := ctx.Value(chunkEmitKey{}).(func(runtime.Event) bool); ok {
 		reply, err = streamModel(ctx, req.Model, chatReq, emit)
 	} else {
@@ -548,7 +553,8 @@ func (a *loopAgent) callModel(ctx context.Context, req *ModelRequest) (*ModelRes
 	if err != nil {
 		return nil, fmt.Errorf("model call: %w", err)
 	}
-	return &ModelResponse{Messages: []llm.Message{*reply}}, nil
+	timed := llm.WithTiming(*reply, llm.Timing{Start: start, Duration: time.Since(start)})
+	return &ModelResponse{Messages: []llm.Message{timed}}, nil
 }
 
 // chunkEmitKey carries the Stream emitter when StreamMessages was requested.
@@ -610,7 +616,9 @@ func pendingToolCalls(state *runtime.State) []llm.ToolCall {
 	return nil
 }
 
-func (a *loopAgent) applyToolResult(state *runtime.State, call llm.ToolCall, res *tool.Result) error {
+// applyToolResult applies one call's result and records its timing on the
+// tool message answering it.
+func (a *loopAgent) applyToolResult(state *runtime.State, call llm.ToolCall, res *tool.Result, t llm.Timing) error {
 	if res == nil {
 		res = &tool.Result{}
 	}
@@ -619,10 +627,18 @@ func (a *loopAgent) applyToolResult(state *runtime.State, call llm.ToolCall, res
 			return notimpl.Err("agent.tool(Command.Goto)")
 		}
 		if res.Command.Update != nil {
-			return state.Apply(*res.Command.Update, a.schema)
+			upd := *res.Command.Update
+			upd.Messages = slices.Clone(upd.Messages)
+			for i, m := range upd.Messages {
+				if m.Role == llm.RoleTool && m.ToolCallID == call.ID {
+					upd.Messages[i] = llm.WithTiming(m, t)
+				}
+			}
+			return state.Apply(upd, a.schema)
 		}
 	}
-	return state.Apply(runtime.Update{Messages: []llm.Message{toolMessage(call, res)}}, a.schema)
+	msg := llm.WithTiming(toolMessage(call, res), t)
+	return state.Apply(runtime.Update{Messages: []llm.Message{msg}}, a.schema)
 }
 
 // callTool is the innermost tool handler. Unknown tools, tool failures, and

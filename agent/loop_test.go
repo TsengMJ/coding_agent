@@ -442,3 +442,38 @@ func TestLoopStreamWithoutMessagesModeEmitsNoChunks(t *testing.T) {
 		}
 	}
 }
+
+func TestLoopRecordsModelAndToolTiming(t *testing.T) {
+	sleeper := &tool.Func{
+		ToolName: "sleep",
+		Fn: func(ctx context.Context, _ *tool.Runtime, _ map[string]any) (*tool.Result, error) {
+			time.Sleep(50 * time.Millisecond)
+			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("slept")}}, nil
+		},
+	}
+	model := llm.NewFakeModel(
+		toolCallReply(
+			llm.ToolCall{ID: "c1", Name: "sleep"},
+			llm.ToolCall{ID: "c2", Name: "sleep"},
+		),
+		llm.NewAssistantMessage("ok"),
+	)
+	state, err := invoke(t, Config{Model: model, Tools: []tool.Tool{sleeper}}, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := llm.TimingOf(state.Messages[1]); !ok {
+		t.Fatalf("assistant message has no timing: %+v", state.Messages[1].Metadata)
+	}
+	a, okA := llm.TimingOf(state.Messages[2])
+	b, okB := llm.TimingOf(state.Messages[3])
+	if !okA || !okB {
+		t.Fatal("tool messages have no timing")
+	}
+	if a.Duration < 50*time.Millisecond || b.Duration < 50*time.Millisecond {
+		t.Fatalf("durations = %v, %v", a.Duration, b.Duration)
+	}
+	if !a.Start.Before(b.End()) || !b.Start.Before(a.End()) {
+		t.Fatalf("parallel calls must overlap: [%v, %v] and [%v, %v]", a.Start, a.End(), b.Start, b.End())
+	}
+}
