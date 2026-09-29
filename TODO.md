@@ -16,9 +16,9 @@
 
 ## 進度總覽
 
-- 最後更新：2026-09-29（Stage 1 完成：框架與介面）
-- 核心 SDK：介面已定義，業務邏輯 0%
-- CLI：介面已定義，業務邏輯 0%
+- 最後更新：2026-09-29（Stage 2 完成：agent loop、OpenAI Chat Completions、`make run`）
+- 核心 SDK：runtime reducer、agent loop、FakeModel、OpenAI Generate 已實作；middleware、backend、checkpointer 仍為 stub
+- CLI：headless `dcode -n` 經 in-process server 可跑；TUI、設定檔、sessions 仍為 stub
 
 ---
 
@@ -45,7 +45,7 @@
 - [~] `Usage`（input / output / total / cache read / cache write）
 - [~] `Message`（SystemMessage / HumanMessage / AIMessage / ToolMessage 合一）
 - [~] 建構函式 `NewSystemMessage` / `NewUserMessage` / `NewAssistantMessage` / `NewToolMessage` / `TextBlock`
-- [ ] `Message.Text()`：串接文字內容
+- [x] `Message.Text()`：串接文字內容
 - [ ] JSON 序列化 / 反序列化（checkpoint 用）
 - [ ] 訊息 ID 自動產生
 
@@ -56,8 +56,8 @@
 - [~] `ModelInfo`、`ModelProfile`（max_input_tokens、多模態支援旗標）
 - [~] `TokenCounter` 型別
 - [~] `ApproximateTokenCounter`（`count_tokens_approximately`）
-- [~] `ModelSpec` / `ParseModelSpec`（`provider:model`）
-- [~] `RegisterProvider` / `InitChatModel`（`init_chat_model`）
+- [x] `ModelSpec` / `ParseModelSpec`（`provider:model`，只以第一個 `:` 切分）
+- [x] `RegisterProvider` / `InitChatModel`（`init_chat_model`；未知 provider 列出已註冊清單）
 - [~] `ModelMatchesSpec`（py: `_models.model_matches_spec`）
 - [ ] `get_model_identifier` / `get_model_provider` / `is_bedrock_model` — py: `_models.py`
 - [~] Anthropic provider — go: `llm/providers.go` `AnthropicModel`
@@ -67,11 +67,11 @@
   - [ ] prompt caching `cache_control`
   - [ ] 多模態輸入（image / pdf）
   - [ ] extended thinking / reasoning blocks
-- [~] OpenAI provider — go: `llm/providers.go` `OpenAIModel`
+- [~] OpenAI provider — go: `llm/openai.go` `OpenAIModel`（stdlib `net/http`，`OPENAI_API_KEY` / `OPENAI_BASE_URL`）
   - [ ] Responses API（預設）
-  - [ ] Chat Completions API
+  - [x] Chat Completions API（Generate）
   - [ ] Stream
-  - [ ] tool calling
+  - [x] tool calling
   - [ ] `store=False` + `reasoning.encrypted_content`
 - [ ] OpenRouter provider（OpenAI 相容 + app attribution headers）
 - [ ] NVIDIA provider
@@ -79,7 +79,7 @@
 - [ ] Ollama provider
 - [ ] Bedrock provider
 - [ ] Fireworks provider
-- [ ] FakeModel（測試用：預先編排回應 / tool calls）
+- [x] FakeModel（測試用：預先編排回應 / tool calls）— go: `llm/fake.go`
 - [ ] context overflow 錯誤型別（`ContextOverflowError`，供 summarization 恢復）
 - [ ] 重試 / rate limit 處理
 
@@ -94,7 +94,7 @@
 - [~] `ApplyDescriptionOverrides` — py: `_tools._apply_tool_description_overrides`
 - [ ] 從 Go struct 反射產生 JSON Schema
 - [ ] 參數驗證（依 schema 驗證 args、拒絕未知欄位）
-- [ ] 工具錯誤 → ToolMessage(status=error) 轉換
+- [x] 工具錯誤 → ToolMessage(status=error) 轉換 — go: `agent/loop.go`
 
 ### 1.4 State / Reducer `runtime/state.go`（LangGraph state）
 
@@ -102,9 +102,9 @@
 - [~] `Update`
 - [~] `Reducer`、`KeySpec`（Private = `PrivateStateAttr`、OmitFromInput / OmitFromOutput）
 - [~] `Schema` / `MergeSchemas` / `PrivateKeys` — py: `middleware/_state.private_state_field_names`
-- [~] `State.Apply`
-- [~] `State.Clone`
-- [~] `MessagesReducer`（`add_messages`：append、依 ID 取代、`RemoveAllMessages`）
+- [x] `State.Apply`
+- [x] `State.Clone`（淺層複製：messages slice 與 Values map 另外複製）
+- [x] `MessagesReducer`（`add_messages`：append、依 ID 取代、`RemoveAllMessages`）
 - [ ] `_messages_delta_reducer` + `DeltaChannel`（checkpoint 只存增量，snapshot_frequency=50）— py: `_messages_reducer.py`, `graph.DeepAgentState`
 - [ ] files reducer（`_file_data_reducer`：None 值代表刪除）— py: `middleware/filesystem.py`
 
@@ -143,16 +143,16 @@
 - [~] `ToolCallRequest` / `ModelHandler` / `ToolHandler`
 - [~] `Runtime`（hook 用）
 - [~] `Config` / `Input` / `Agent` 介面（Invoke / Stream / GetState / Name）
-- [~] `CreateAgent`
-  - [ ] model → tools → model 迴圈
-  - [ ] middleware hook 串接順序（wrap 類：前面的在外層）
+- [~] `CreateAgent` — go: `agent/loop.go`, `agent/chain.go`
+  - [x] model → tools → model 迴圈（tool calls 循序執行）
+  - [x] middleware hook 串接順序（wrap 類：前面的在外層；AfterModel / AfterAgent 逆序）
   - [ ] 平行執行多個 tool calls
-  - [ ] 未知工具錯誤回報
-  - [ ] recursion limit
+  - [x] 未知工具錯誤回報
+  - [x] recursion limit（`ErrRecursionLimit`）
   - [ ] checkpoint 讀寫（每步）
   - [ ] interrupt / resume
   - [ ] streaming（values / updates / messages / custom）
-  - [ ] middleware 名稱重複檢查
+  - [x] middleware 名稱重複檢查（含工具名稱重複檢查）
   - [ ] AfterAgent 回傳 `Command{Goto:"model"}` 重新進入迴圈
 - [~] Structured output：`ToolStrategy` / `ProviderStrategy` / `AutoStrategy` — go: `agent/response_format.go`
   - [ ] ToolStrategy 實作（合成工具 + 解析）
@@ -166,13 +166,14 @@
 
 ## 2. graph.py：`create_deep_agent` — go: `deepagents.go`
 
-- [~] `CreateDeepAgent(opts ...Option)` 入口
+- [~] `CreateDeepAgent(opts ...Option)` 入口（Stage 2 直通版：只轉給 `agent.CreateAgent`）
+  - 備註：CreateDeepAgent 暫未組裝預設 middleware stack；subagents / skills / memory / permissions / interrupt_on / response_format / checkpointer / backend 會回 `ErrNotImplemented`
 - [~] 參數（functional options）
-  - [~] `model`（`WithModel` / `WithModelSpec`）
+  - [x] `model`（`WithModel` 優先，否則 `WithModelSpec` 經 `InitChatModel` 解析）
   - [ ] `model=None` 預設 `claude-sonnet-4-6`（Python 已 deprecated）
-  - [~] `tools`（`WithTools`）
-  - [~] `system_prompt`（`WithSystemPrompt` / `WithSystemMessage`）
-  - [~] `middleware`（`WithMiddleware`）
+  - [x] `tools`（`WithTools`）
+  - [x] `system_prompt`（`WithSystemMessage` 優先，否則 `WithSystemPrompt`）
+  - [~] `middleware`（`WithMiddleware`：目前直接作為完整 stack，尚無同名取代規則）
   - [~] `subagents`（`WithSubAgents`：SubAgent / CompiledSubAgent / AsyncSubAgent）
   - [~] `skills`（`WithSkills`）
   - [~] `memory`（`WithMemory`）
@@ -467,14 +468,18 @@
 
 ### 6.1 進入點與架構
 
-- [~] `cmd/dcode/main.go`（flag：`-n` 非互動、`-thread`、`-version`）
+- [x] `cmd/dcode/main.go`（flag：`-n` 或位置參數 prompt、`-model`、`-thread`、`-version`）
 - [ ] 完整 CLI 參數（`main.py`：agent 選擇、model、sandbox、auto-approve、resume、list / reset agents、threads 子命令 ...）
 - [~] Server `code/server`（`Server` / `Manager` / `Config` / `RunRequest` / `New`）
+  - [x] in-process server（`Addr` 為空；模型依序取 `Config.ModelSpec` → `DCODE_MODEL` → `openai:gpt-5.5`；`Run` yield 一個含最終 state 的 values 事件）
   - [ ] server runtime 組裝（model、tools、MCP、sandbox、graph）— code: `server_graph.py`
   - [ ] 子行程啟動 / 重啟 / 停止 — code: `client/launch/server*.py`
   - [ ] streaming 協定
 - [~] Client `code/client`
   - [~] `RunNonInteractive`（headless）— code: `client/non_interactive.py`
+    - [x] 印出最後一則 assistant 文字、錯誤寫 stderr 並回 exit code 1
+    - [ ] `-thread` 續跑（目前回「thread 續跑尚未支援」）
+    - [ ] JSON 輸出、串流輸出、auto-approve
   - [~] `RunInteractive`
   - [ ] remote client — code: `client/remote_client.py`
 - [~] TUI placeholder `code/tui`（Python：Textual `app.py` + `tui/*`，UI 函式庫未定）
@@ -497,7 +502,8 @@
 
 ### 6.3 設定 `code/config`（code: `config.py`, `configuration/*`, `_paths.py`, `_env_vars.py`）
 
-- [~] `Scope`、`Settings`、`Source`、`Paths`、`Resolver`、`DefaultPaths`、`NewResolver`
+- [~] `Scope`、`Settings`、`Source`、`Paths`、`Resolver`、`NewResolver`
+- [x] `DefaultPaths`（`~/.deepagents`、`cwd/.deepagents`；尚未處理 profile state dir）
 - [ ] config.toml 解析（需決定 TOML 函式庫）
 - [ ] 分層合併（managed / user / project / session / env）
 - [ ] .env 載入
