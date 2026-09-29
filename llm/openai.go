@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/openai"
 
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 )
@@ -18,8 +21,6 @@ import (
 // DefaultOpenAIBaseURL is used when neither ProviderConfig.BaseURL nor
 // OPENAI_BASE_URL is set.
 const DefaultOpenAIBaseURL = "https://api.openai.com/v1"
-
-const errorBodyLimit = 2048
 
 func init() {
 	if err := RegisterProvider("openai", newOpenAIFromSpec); err != nil {
@@ -40,17 +41,20 @@ func newOpenAIFromSpec(model string, opts map[string]any) (ChatModel, error) {
 	return NewOpenAIModel(cfg, false), nil
 }
 
-// OpenAIModel talks to the OpenAI Chat Completions API. The Responses API
-// (useResponses) is not implemented yet.
+// OpenAIModel talks to the OpenAI Chat Completions API through langchaingo.
+// The Responses API (useResponses) is not implemented yet.
 //
 // The same client serves OpenAI-compatible providers such as OpenRouter,
 // which differ only in provider name, base URL and extra headers.
 type OpenAIModel struct {
 	cfg          ProviderConfig
 	useResponses bool
-	client       *http.Client
 	provider     string
 	headers      map[string]string
+
+	once    sync.Once
+	client  *openai.LLM
+	initErr error
 }
 
 // NewOpenAIModel builds an OpenAI chat model; useResponses selects the Responses API.
@@ -59,216 +63,280 @@ func NewOpenAIModel(cfg ProviderConfig, useResponses bool) *OpenAIModel {
 		cfg.BaseURL = DefaultOpenAIBaseURL
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
-	return &OpenAIModel{cfg: cfg, useResponses: useResponses, client: http.DefaultClient, provider: "openai"}
+	return &OpenAIModel{cfg: cfg, useResponses: useResponses, provider: "openai"}
 }
 
 func (m *OpenAIModel) Info() ModelInfo { return ModelInfo{Provider: m.provider, Model: m.cfg.Model} }
 
 func (m *OpenAIModel) Profile() ModelProfile { return ModelProfile{} }
 
-func (m *OpenAIModel) Stream(ctx context.Context, req ChatRequest) iter.Seq2[Chunk, error] {
-	return errSeq(notimpl.Err("llm.OpenAIModel.Stream"))
+// Generate implements ChatModel by calling langchaingo's OpenAI client.
+func (m *OpenAIModel) Generate(ctx context.Context, req ChatRequest) (*Message, error) {
+	return m.generate(ctx, req, nil)
 }
 
-// Generate implements ChatModel via POST {BaseURL}/chat/completions.
-func (m *OpenAIModel) Generate(ctx context.Context, req ChatRequest) (*Message, error) {
+// generate runs one completion; a non-nil sink requests a streamed response
+// whose parsed tool calls replace langchaingo's.
+func (m *OpenAIModel) generate(ctx context.Context, req ChatRequest, sink *streamSink) (*Message, error) {
 	if m.useResponses {
 		return nil, notimpl.Err("llm.OpenAIModel.Generate(Responses API)")
 	}
 	if req.ResponseFormat != nil {
 		return nil, notimpl.Err("llm.OpenAIModel.Generate(ResponseFormat)")
 	}
-	body, err := m.buildRequest(req)
+	client, err := m.llm()
 	if err != nil {
 		return nil, err
 	}
-	raw, err := m.post(ctx, "/chat/completions", body)
+	msgs := make([]llms.MessageContent, 0, len(req.Messages))
+	for i, msg := range req.Messages {
+		converted, err := toLangChainMessage(msg)
+		if err != nil {
+			return nil, fmt.Errorf("%s: message %d: %w", m.provider, i, err)
+		}
+		msgs = append(msgs, converted)
+	}
+	tools := make([]llms.Tool, len(req.Tools))
+	for i, t := range req.Tools {
+		tools[i] = llms.Tool{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name: t.Name, Description: t.Description, Parameters: t.Parameters,
+			},
+		}
+	}
+	opts := m.callOptions(req, tools)
+	if sink != nil {
+		opts = append(opts, llms.WithStreamingFunc(func(context.Context, []byte) error { return nil }))
+	}
+	resp, err := client.GenerateContent(ctx, msgs, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", m.provider, err)
 	}
-	msg, err := parseChatCompletion(raw)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", m.provider, err)
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("%s: response has no choices", m.provider)
+	}
+	msg := fromLangChainChoice(resp.Choices[0])
+	if sink != nil {
+		if calls := sink.toolCalls(); calls != nil {
+			msg.ToolCalls = calls
+		}
 	}
 	return msg, nil
 }
 
-type oaFunctionCall struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-type oaToolCall struct {
-	ID       string         `json:"id"`
-	Type     string         `json:"type"`
-	Function oaFunctionCall `json:"function"`
-}
-
-type oaMessage struct {
-	Role       string       `json:"role"`
-	Content    *string      `json:"content"`
-	Name       string       `json:"name,omitempty"`
-	ToolCalls  []oaToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string       `json:"tool_call_id,omitempty"`
-}
-
-type oaTool struct {
-	Type     string   `json:"type"`
-	Function ToolSpec `json:"function"`
-}
-
-func (m *OpenAIModel) buildRequest(req ChatRequest) (map[string]any, error) {
-	msgs := make([]oaMessage, 0, len(req.Messages))
-	for i, msg := range req.Messages {
-		om, err := toOpenAIMessage(msg)
-		if err != nil {
-			return nil, fmt.Errorf("%s: message %d: %w", m.provider, i, err)
+func (m *OpenAIModel) llm() (*openai.LLM, error) {
+	m.once.Do(func() {
+		opts := []openai.Option{
+			openai.WithToken(m.cfg.APIKey),
+			openai.WithModel(m.cfg.Model),
+			openai.WithBaseURL(m.cfg.BaseURL),
+			openai.WithHTTPClient(headerDoer{
+				base:    retryDoer{base: modelHTTPClient(), maxRetries: m.maxRetries()},
+				headers: m.headers,
+			}),
 		}
-		msgs = append(msgs, om)
+		m.client, m.initErr = openai.New(opts...)
+	})
+	return m.client, m.initErr
+}
+
+// maxRetries reads the "max_retries" setting, defaulting to DefaultMaxRetries.
+func (m *OpenAIModel) maxRetries() int {
+	if n, ok := asInt(m.cfg.Settings["max_retries"]); ok && n >= 0 {
+		return n
 	}
-	body := map[string]any{}
-	for k, v := range m.cfg.Settings {
-		body[k] = v
-	}
-	for k, v := range req.Settings {
-		body[k] = v
-	}
-	body["model"] = m.cfg.Model
-	body["messages"] = msgs
-	if len(req.Tools) > 0 {
-		tools := make([]oaTool, len(req.Tools))
-		for i, t := range req.Tools {
-			tools[i] = oaTool{Type: "function", Function: t}
-		}
-		body["tools"] = tools
+	return DefaultMaxRetries
+}
+
+func (m *OpenAIModel) callOptions(req ChatRequest, tools []llms.Tool) []llms.CallOption {
+	opts := []llms.CallOption{llms.WithModel(m.cfg.Model)}
+	if len(tools) > 0 {
+		opts = append(opts, llms.WithTools(tools))
 	}
 	if req.ToolChoice != "" {
-		body["tool_choice"] = req.ToolChoice
+		opts = append(opts, llms.WithToolChoice(req.ToolChoice))
 	}
-	return body, nil
+	applySettings(&opts, m.cfg.Settings)
+	applySettings(&opts, req.Settings)
+	return opts
 }
 
-func toOpenAIMessage(msg Message) (oaMessage, error) {
-	for _, c := range msg.Content {
-		if c.Type != BlockText {
-			return oaMessage{}, notimpl.Err("llm.OpenAIModel(" + string(c.Type) + " content)")
+func applySettings(opts *[]llms.CallOption, settings map[string]any) {
+	if settings == nil {
+		return
+	}
+	if v, ok := number(settings["temperature"]); ok {
+		*opts = append(*opts, llms.WithTemperature(v))
+	}
+	if v, ok := settings["max_tokens"]; ok {
+		if n, ok := asInt(v); ok {
+			*opts = append(*opts, llms.WithMaxTokens(n))
 		}
 	}
-	om := oaMessage{Role: string(msg.Role), Name: msg.Name, ToolCallID: msg.ToolCallID}
-	if msg.Role == RoleTool {
-		om.Name = ""
+}
+
+func number(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	default:
+		return 0, false
 	}
-	text := msg.Text()
-	if text != "" || len(msg.ToolCalls) == 0 {
-		om.Content = &text
+}
+
+func asInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
+}
+
+func toLangChainMessage(msg Message) (llms.MessageContent, error) {
+	for _, c := range msg.Content {
+		if c.Type != BlockText {
+			return llms.MessageContent{}, notimpl.Err("llm.OpenAIModel(" + string(c.Type) + " content)")
+		}
+	}
+	if msg.Role == RoleTool {
+		return llms.MessageContent{
+			Role: llms.ChatMessageTypeTool,
+			Parts: []llms.ContentPart{llms.ToolCallResponse{
+				ToolCallID: msg.ToolCallID, Name: msg.Name, Content: msg.Text(),
+			}},
+		}, nil
+	}
+	role, err := langChainRole(msg.Role)
+	if err != nil {
+		return llms.MessageContent{}, err
+	}
+	var parts []llms.ContentPart
+	if text := msg.Text(); text != "" || len(msg.ToolCalls) == 0 {
+		parts = append(parts, llms.TextPart(text))
 	}
 	for _, tc := range msg.ToolCalls {
 		args, err := json.Marshal(tc.Args)
 		if err != nil {
-			return oaMessage{}, fmt.Errorf("encode args of tool call %s: %w", tc.ID, err)
+			return llms.MessageContent{}, fmt.Errorf("encode args of tool call %s: %w", tc.ID, err)
 		}
 		if tc.Args == nil {
 			args = []byte("{}")
 		}
-		om.ToolCalls = append(om.ToolCalls, oaToolCall{
-			ID:       tc.ID,
-			Type:     "function",
-			Function: oaFunctionCall{Name: tc.Name, Arguments: string(args)},
+		parts = append(parts, llms.ToolCall{
+			ID: tc.ID, Type: "function",
+			FunctionCall: &llms.FunctionCall{Name: tc.Name, Arguments: string(args)},
 		})
 	}
-	return om, nil
+	return llms.MessageContent{Role: role, Parts: parts}, nil
 }
 
-func (m *OpenAIModel) post(ctx context.Context, path string, body any) ([]byte, error) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode request: %w", err)
+func langChainRole(role Role) (llms.ChatMessageType, error) {
+	switch role {
+	case RoleSystem:
+		return llms.ChatMessageTypeSystem, nil
+	case RoleUser:
+		return llms.ChatMessageTypeHuman, nil
+	case RoleAssistant:
+		return llms.ChatMessageTypeAI, nil
+	default:
+		return "", fmt.Errorf("unsupported role %q", role)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.cfg.BaseURL+path, bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if m.cfg.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+m.cfg.APIKey)
-	}
-	for k, v := range m.headers {
-		httpReq.Header.Set(k, v)
-	}
-	resp, err := m.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("POST %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		snippet := raw
-		if len(snippet) > errorBodyLimit {
-			snippet = snippet[:errorBodyLimit]
-		}
-		return nil, fmt.Errorf("POST %s: status %d: %s", path, resp.StatusCode, bytes.TrimSpace(snippet))
-	}
-	return raw, nil
 }
 
-type oaResponse struct {
-	ID      string `json:"id"`
-	Model   string `json:"model"`
-	Choices []struct {
-		Message struct {
-			Content   *string      `json:"content"`
-			Refusal   *string      `json:"refusal"`
-			ToolCalls []oaToolCall `json:"tool_calls"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Usage *struct {
-		PromptTokens        int `json:"prompt_tokens"`
-		CompletionTokens    int `json:"completion_tokens"`
-		TotalTokens         int `json:"total_tokens"`
-		PromptTokensDetails *struct {
-			CachedTokens int `json:"cached_tokens"`
-		} `json:"prompt_tokens_details"`
-	} `json:"usage"`
-}
-
-func parseChatCompletion(raw []byte) (*Message, error) {
-	var resp oaResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	if len(resp.Choices) == 0 {
-		return nil, errors.New("response has no choices")
-	}
-	choice := resp.Choices[0]
+func fromLangChainChoice(choice *llms.ContentChoice) *Message {
 	msg := &Message{
-		ID:       resp.ID,
 		Role:     RoleAssistant,
-		Metadata: map[string]any{"model": resp.Model, "finish_reason": choice.FinishReason},
+		Metadata: map[string]any{"finish_reason": choice.StopReason},
 	}
-	if c := choice.Message.Content; c != nil && *c != "" {
-		msg.Content = []ContentBlock{TextBlock(*c)}
+	if choice.Content != "" {
+		msg.Content = []ContentBlock{TextBlock(choice.Content)}
 	}
-	if r := choice.Message.Refusal; r != nil && *r != "" {
-		msg.Metadata["refusal"] = *r
-	}
-	for _, tc := range choice.Message.ToolCalls {
+	for _, tc := range choice.ToolCalls {
+		if tc.FunctionCall == nil {
+			continue
+		}
 		args := map[string]any{}
-		if strings.TrimSpace(tc.Function.Arguments) != "" {
-			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				return nil, fmt.Errorf("decode args of tool call %s (%s): %w", tc.ID, tc.Function.Name, err)
+		if strings.TrimSpace(tc.FunctionCall.Arguments) != "" {
+			_ = json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args)
+		}
+		msg.ToolCalls = append(msg.ToolCalls, ToolCall{ID: tc.ID, Name: tc.FunctionCall.Name, Args: args})
+	}
+	if info := choice.GenerationInfo; info != nil {
+		in, _ := asInt(info["PromptTokens"])
+		out, _ := asInt(info["CompletionTokens"])
+		total, _ := asInt(info["TotalTokens"])
+		cache, _ := asInt(info["PromptCachedTokens"])
+		if in != 0 || out != 0 || total != 0 || cache != 0 {
+			msg.Usage = &Usage{InputTokens: in, OutputTokens: out, TotalTokens: total, CacheRead: cache}
+		}
+	}
+	return msg
+}
+
+// headerDoer adds provider headers and rewrites JSON null message content to
+// an empty string. langchaingo unmarshals content into a Go string, which
+// rejects the null OpenAI sends on tool-call messages. Event streams are not
+// buffered; when a streamSink is in the context they go through sseTee under
+// an idle watchdog.
+type headerDoer struct {
+	base    doer
+	headers map[string]string
+}
+
+func (h headerDoer) Do(req *http.Request) (*http.Response, error) {
+	for k, v := range h.headers {
+		if req.Header.Get(k) == "" {
+			req.Header.Set(k, v)
+		}
+	}
+	base := h.base
+	if base == nil {
+		base = modelHTTPClient()
+	}
+	sink := streamSinkFrom(req.Context())
+	var watch *idleWatch
+	if sink != nil {
+		watch = startIdleWatch(req.Context())
+		req = req.WithContext(watch.ctx)
+	}
+	resp, err := base.Do(req)
+	if watch != nil {
+		if err != nil {
+			if watch.ctx.Err() != nil {
+				err = ctxError(watch.ctx)
 			}
+			watch.stop()
+			return resp, err
 		}
-		msg.ToolCalls = append(msg.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Args: args})
+		resp.Body = &watchedBody{r: resp.Body, watch: watch}
 	}
-	if u := resp.Usage; u != nil {
-		msg.Usage = &Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
-		if u.PromptTokensDetails != nil {
-			msg.Usage.CacheRead = u.PromptTokensDetails.CachedTokens
+	if err != nil || resp == nil || resp.Body == nil || resp.StatusCode != http.StatusOK {
+		return resp, err
+	}
+	if isEventStream(resp) {
+		if sink != nil {
+			resp.Body = &sseTee{r: resp.Body, sink: sink}
 		}
+		return resp, nil
 	}
-	return msg, nil
+	raw, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	raw = bytes.ReplaceAll(raw, []byte(`"content": null`), []byte(`"content":""`))
+	raw = bytes.ReplaceAll(raw, []byte(`"content":null`), []byte(`"content":""`))
+	resp.Body = io.NopCloser(bytes.NewReader(raw))
+	resp.ContentLength = int64(len(raw))
+	return resp, nil
 }

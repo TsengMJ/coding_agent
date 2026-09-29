@@ -109,6 +109,39 @@ func TestLoopToolErrorBecomesErrorMessage(t *testing.T) {
 	}
 }
 
+func TestLoopToolPanicBecomesErrorMessage(t *testing.T) {
+	panicky := &tool.Func{
+		ToolName: "boom",
+		Fn: func(context.Context, *tool.Runtime, map[string]any) (*tool.Result, error) {
+			panic("kaboom")
+		},
+	}
+	model := llm.NewFakeModel(toolCallReply(llm.ToolCall{ID: "c1", Name: "boom"}), llm.NewAssistantMessage("ok"))
+	state, err := invoke(t, Config{Model: model, Tools: []tool.Tool{panicky}}, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Messages[2].Status != llm.ToolStatusError || !strings.Contains(state.Messages[2].Text(), "kaboom") {
+		t.Fatalf("unexpected tool message: %+v", state.Messages[2])
+	}
+}
+
+type panicAfterModel struct{}
+
+func (panicAfterModel) Name() string { return "panicky" }
+
+func (panicAfterModel) AfterModel(context.Context, *runtime.State, *Runtime) (*runtime.Update, error) {
+	panic("hook exploded")
+}
+
+func TestLoopNodePanicBecomesError(t *testing.T) {
+	model := llm.NewFakeModel(llm.NewAssistantMessage("hi"))
+	_, err := invoke(t, Config{Model: model, Middleware: []Middleware{panicAfterModel{}}}, "go")
+	if !errors.Is(err, ErrPanic) || !strings.Contains(err.Error(), "hook exploded") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestLoopRecursionLimit(t *testing.T) {
 	call := toolCallReply(llm.ToolCall{ID: "c", Name: "echo"})
 	model := llm.NewFakeModel(call, call, call)
@@ -171,5 +204,158 @@ func TestLoopRejectsDuplicateMiddleware(t *testing.T) {
 func TestLoopRequiresModel(t *testing.T) {
 	if _, err := CreateAgent(Config{}); err == nil {
 		t.Fatal("want error for nil model")
+	}
+}
+
+func TestLoopThreadResumeUsesCheckpointer(t *testing.T) {
+	cp := runtime.NewMemoryCheckpointer()
+	model := llm.NewFakeModel(
+		llm.NewAssistantMessage("one"),
+		llm.NewAssistantMessage("two"),
+		llm.NewAssistantMessage("elsewhere"),
+	)
+	a, err := CreateAgent(Config{Model: model, Checkpointer: cp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := runtime.RunConfig{ThreadID: "t1"}
+	if _, err := a.Invoke(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("hi")}}, cfg); err != nil {
+		t.Fatal(err)
+	}
+	state, err := a.Invoke(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("again")}}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roles(state.Messages); got != "user,assistant,user,assistant" {
+		t.Fatalf("roles = %s", got)
+	}
+	if state.Messages[1].Text() != "one" || state.Messages[3].Text() != "two" {
+		t.Fatalf("texts = %q %q", state.Messages[1].Text(), state.Messages[3].Text())
+	}
+	other, err := a.Invoke(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("elsewhere")}}, runtime.RunConfig{ThreadID: "t2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roles(other.Messages); got != "user,assistant" {
+		t.Fatalf("other thread roles = %s", got)
+	}
+	got, err := a.GetState(context.Background(), "t1")
+	if err != nil || roles(got.Messages) != "user,assistant,user,assistant" {
+		t.Fatalf("GetState = %v, %v", got, err)
+	}
+}
+
+func TestLoopInterruptBeforeToolsAndResume(t *testing.T) {
+	cp := runtime.NewMemoryCheckpointer()
+	model := llm.NewFakeModel(
+		toolCallReply(llm.ToolCall{ID: "c1", Name: "echo", Args: map[string]any{"text": "a"}}),
+		llm.NewAssistantMessage("done"),
+	)
+	a, err := CreateAgent(Config{Model: model, Tools: []tool.Tool{echoTool()}, Checkpointer: cp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := runtime.RunConfig{ThreadID: "t", Configurable: map[string]any{"interrupt_before": []string{"tools"}}}
+	_, err = a.Invoke(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, cfg)
+	var paused *runtime.InterruptError
+	if !errors.As(err, &paused) || len(paused.Interrupts) != 1 || paused.Interrupts[0].ID != "tools" {
+		t.Fatalf("want interrupt before tools, got %v", err)
+	}
+	state, err := a.Invoke(context.Background(), Input{Resume: &runtime.Command{}}, runtime.RunConfig{ThreadID: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roles(state.Messages); got != "user,assistant,tool,assistant" {
+		t.Fatalf("roles = %s", got)
+	}
+	if state.Messages[2].Text() != "echo:a" || state.Messages[3].Text() != "done" {
+		t.Fatalf("messages = %+v", state.Messages)
+	}
+}
+
+type gotoModel struct{ jumped bool }
+
+func (g *gotoModel) Name() string { return "goto" }
+
+func (g *gotoModel) AfterAgent(context.Context, *runtime.State, *Runtime) (*runtime.Command, error) {
+	if g.jumped {
+		return nil, nil
+	}
+	g.jumped = true
+	return &runtime.Command{Goto: GotoModel}, nil
+}
+
+func TestLoopAfterAgentGotoModel(t *testing.T) {
+	model := llm.NewFakeModel(llm.NewAssistantMessage("a"), llm.NewAssistantMessage("b"))
+	state, err := invoke(t, Config{Model: model, Middleware: []Middleware{&gotoModel{}}}, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roles(state.Messages); got != "user,assistant,assistant" {
+		t.Fatalf("roles = %s", got)
+	}
+	if state.Messages[2].Text() != "b" {
+		t.Fatalf("final = %q", state.Messages[2].Text())
+	}
+}
+
+func TestLoopStreamEmitsValues(t *testing.T) {
+	a, err := CreateAgent(Config{Model: llm.NewFakeModel(llm.NewAssistantMessage("hi"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var modes []runtime.StreamMode
+	for ev, err := range a.Stream(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, runtime.RunConfig{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		modes = append(modes, ev.Mode)
+	}
+	if len(modes) == 0 || modes[0] != runtime.StreamValues {
+		t.Fatalf("modes = %v", modes)
+	}
+}
+
+func TestLoopStreamEmitsModelChunksWhenMessagesRequested(t *testing.T) {
+	a, err := CreateAgent(Config{Model: llm.NewFakeModel(llm.NewAssistantMessage("hello big world"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text strings.Builder
+	var final *runtime.State
+	for ev, err := range a.Stream(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, runtime.RunConfig{}, runtime.StreamValues, runtime.StreamMessages) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch ev.Mode {
+		case runtime.StreamMessages:
+			if final != nil && len(final.Messages) > 1 {
+				t.Fatal("chunk arrived after the assistant message was stored")
+			}
+			text.WriteString(ev.Data.(llm.Chunk).Delta.Text())
+		case runtime.StreamValues:
+			final = ev.Data.(*runtime.State)
+		}
+	}
+	if text.String() != "hello big world" {
+		t.Fatalf("streamed text = %q", text.String())
+	}
+	if got := final.Messages[len(final.Messages)-1].Text(); got != "hello big world" {
+		t.Fatalf("stored text = %q", got)
+	}
+}
+
+func TestLoopStreamWithoutMessagesModeEmitsNoChunks(t *testing.T) {
+	a, err := CreateAgent(Config{Model: llm.NewFakeModel(llm.NewAssistantMessage("hi there"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ev, err := range a.Stream(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, runtime.RunConfig{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Mode == runtime.StreamMessages {
+			t.Fatal("unexpected chunk event")
+		}
 	}
 }

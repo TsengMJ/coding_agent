@@ -7,7 +7,8 @@
 
 ## 設計原則
 
-- 不依賴 LangChain / LangGraph 的 Go 替代品，底層 agent loop、state、checkpointer、interrupt 皆自建。
+- 圖執行、checkpoint、interrupt、訊息合併用 [langgraphgo](https://github.com/smallnest/langgraphgo)；OpenAI Chat Completions 用 [langchaingo](https://github.com/tmc/langchaingo)。Go 沒有官方 LangGraph。
+- Deep Agents 的 middleware、backend、profiles、CLI 仍自建。跨 thread `Store` 與 `files` reducer 套件沒有對等物，也留在這個專案。
 - 未實作的函式一律回傳 `notimpl.Err("pkg.Func")`（包裝 `notimpl.ErrNotImplemented`），用 `errors.Is` 判斷。
 - Python 的 sync / async 雙版本 API（如 `ls` / `als`）在 Go 統一為帶 `context.Context` 的單一版本。
 - Python 的 `AgentMiddleware` 以 Go「可選介面」表達：middleware 只需實作 `Name()`，再依需要實作各 hook 介面。
@@ -20,9 +21,9 @@ deepagents (根套件)       CreateDeepAgent：組裝預設 middleware、subagen
 middleware/*             Deep Agents middleware（filesystem、subagents、summarization ...）
 backend                  檔案/shell 後端（state、store、filesystem、sandbox、composite ...）
 profiles                 Harness / Provider profiles
-agent                    Middleware 介面與 agent loop（對應 langchain create_agent）
-llm, tool                訊息、ChatModel、Tool（對應 langchain_core）
-runtime                  State、Checkpointer、Store、Interrupt、事件串流（對應 LangGraph）
+agent                    Middleware 介面；圖用 langgraphgo MessageGraph 組裝
+llm, tool                訊息與 ChatModel；OpenAI 呼叫走 langchaingo
+runtime                  State、Checkpointer（轉接 langgraphgo）、Store、Interrupt
 internal/notimpl         未實作 sentinel error
 ```
 
@@ -36,7 +37,9 @@ make test PKG=./runtime ARGS=-v   # 單一 package、額外參數
 make check                        # gofmt、vet、test
 make run PROMPT='summarize README.md'
 make run PROMPT='hi' MODEL=openai:gpt-5.5
-make run PROMPT='continue' THREAD=thread-id   # thread 續跑尚未支援
+make run PROMPT='continue' THREAD=thread-id   # 續跑 thread（in-process 需要 Postgres 才留得住）
+make serve                                    # 常駐 server，預設 127.0.0.1:8123
+make install                                  # go install ./cmd/dcode
 ```
 
 `dcode` 的 prompt 可以用 `-n`，也可以直接當參數：
@@ -46,9 +49,105 @@ go run ./cmd/dcode -n 'summarize README.md'
 go run ./cmd/dcode summarize README.md
 ```
 
+### 寫檔與執行指令
+
+`dcode` 以目前目錄為專案根目錄。檔案工具（`ls`、`read_file`、`write_file`、`edit_file`、`glob`、`grep`）把它當成 `/`，不能讀寫根目錄以外的路徑；`execute` 在根目錄下用 `sh -c` 執行指令，執行過的工具會列在 stderr（`[tool] write_file /main.go`）。
+
+`write_file`、`edit_file`、`execute` 執行前會先問你（`ls`、`read_file`、`grep`、`glob` 不問）：
+
+- TUI：跳出核准框，`a` 核准、`r` 拒絕（可輸入理由，理由會回傳給模型）、`A` 本次全部核准
+- `-n` 且 stdin 是終端機：逐一問 `approve? [y]es / [a]ll / [N]o / or type a reason to reject`
+- `-n` 但 stdin 不是終端機（管線、CI）：自動拒絕並告訴模型沒有人可以核准
+- `-y`（或 TUI 裡的 `/yolo`、config.toml 的 `startup.mode = "yolo"`）：全部自動核准
+- `shell.allow_list`：符合的 `execute` 指令免核准（見下方設定檔）
+
+核准框會顯示 `write_file` / `edit_file` 對照磁碟上現有檔案的 unified diff。
+
+> **注意**：shell 指令沒有沙箱，核准後可以存取整台機器；`-y` 等於沒有保護。請在可以放心讓它改動的目錄下使用。
+
+### 腳本與 CI
+
+```sh
+dcode -q -n '用一句話總結 README.md' > summary.txt   # stdout 只有回覆，沒有 thread id 與 tool 行
+dcode -no-stream -n '...'                            # 回覆完成後一次寫出，不逐字串流
+dcode -timeout 10m -n '跑測試並修好'                 # 逾時取消，exit code 124；Ctrl-C 為 130
+dcode threads -json                                  # {"schema_version":1,"command":"threads list","data":[...]}
+```
+
+`-q`、`-no-stream`、`-timeout` 需要搭配 `-n`（或位置參數 prompt）。
+
+### 設定檔 `~/.deepagents/config.toml`
+
+優先順序：flag > 環境變數 > config.toml > 預設。檔案不存在時全部用預設；格式錯誤時啟動失敗並指出行號。
+
+```toml
+[models]
+default = "openrouter:openai/gpt-6-luna"   # 等同 DCODE_MODEL
+
+[startup]
+mode = "manual"                            # 或 "yolo"（等同 -y）
+
+[shell]
+# TOML 陣列或逗號字串；"recommended" 展開成唯讀指令（ls、cat、grep、wc、diff ...），可與其他指令混用；
+# "all" 必須單獨使用，所有 execute 都免核准。環境變數 DEEPAGENTS_CODE_SHELL_ALLOW_LIST 會覆寫。
+allow_list = ["recommended", "go", "make"]
+
+[retries]
+max_retries = 2                            # 模型呼叫遇到 429 / 5xx / 連線錯誤的重試次數，0 = 不重試
+
+[server]
+url = "http://127.0.0.1:8123"              # 等同 DCODE_SERVER
+```
+
+allow-list 只比對每段指令（以 `|`、`;`、`&&`、`||` 切開）的第一個字；含 `$(`、反引號、`$VAR`、`${`、重導向（`>`、`<`、`>>`、`<<`）、背景 `&`、換行或 tab 的指令一律要核准。例如 `ls | grep x` 免核准，`ls "$(rm -rf /)"` 與 `ls &` 仍會問。
+
+```sh
+mkdir /tmp/demo && cd /tmp/demo
+dcode -n '建立 main.go 印出 hello，然後 go run main.go'
+```
+
+### 常駐 server 與 TUI（邊寫邊測）
+
+```sh
+# 終端 A：常駐 server（只綁 loopback）
+export POSTGRES_CONN_STRING='postgres://user:pass@localhost:5432/db?sslmode=disable'   # 可省略
+dcode serve                        # 或 make serve；-addr 127.0.0.1:8123、-model provider:model
+
+# 終端 B：任何專案目錄
+export DCODE_SERVER=http://127.0.0.1:8123
+cd ~/work/demo
+dcode                              # 全螢幕 TUI；非終端機或加 -plain 時改用逐行 REPL
+dcode -r                           # 接續這個目錄最近的 thread
+dcode -thread <id>                 # 接續指定 thread
+dcode -n '加上 --upper 參數' -r    # 單次續跑
+dcode threads                      # 列出這個目錄的 threads（-all 列出全部）
+```
+
+- 沒設 `DCODE_SERVER`（或 `-server`）時，agent 直接在 `dcode` 行程內執行。
+- 有 `POSTGRES_CONN_STRING` 時，thread 內容（含待核准的 tool call）與 threads 列表存在 Postgres（`deepagents_checkpoints`、`dcode_threads` 表），server 重啟後仍可接續；沒設時存在記憶體，行程結束就消失。
+- 一個 thread 綁定建立它的目錄，換目錄使用同一個 thread 會被拒絕；同一個 thread 同時只能跑一個 run。
+- 回覆會邊產生邊顯示（token 串流）；tool call 的參數要等模型說完才會出現。完成的回覆在 TUI 裡以 markdown 渲染。
+- `dcode serve` 收到 Ctrl-C / SIGTERM 時停止接新 run，進行中的 run 最多有 30 秒收尾，之後被取消；再按一次 Ctrl-C 立即結束。被取消的 tool call 下一輪會自動補上「未完成」的結果，thread 可以直接接續。
+- 模型呼叫遇到 429、5xx 或連線錯誤會自動重試（預設 2 次，`retries.max_retries` 可調）；串流超過 5 分鐘沒有新資料視為卡住並報錯。
+- 每個 thread 只保留最新 10 筆 checkpoint，長對話不會讓 checkpoint 表無限成長。
+
+TUI 按鍵：
+
+| 按鍵 / 指令 | 作用 |
+| --- | --- |
+| Enter | 送出 |
+| Ctrl-C | 執行中：取消這次 run；閒置：清空輸入框，輸入框已空則離開 |
+| Ctrl-D | 離開 |
+| PgUp / PgDn | 捲動對話 |
+| `/new`、`/thread`、`/threads`、`/resume <id>` | 新 thread、顯示 id、選擇 thread、切換 thread |
+| `/yolo` | 切換自動核准 |
+| `/help`、`/quit` | 說明、離開 |
+
+server 的 HTTP 介面：`GET /healthz`、`POST /runs`（回傳 NDJSON：`delta`、`message`、`interrupt`、`done`、`error`）、`GET /threads?cwd=&limit=`、`GET /threads/{id}`。
+
 不要在 `go run ./cmd/dcode` 後面加 `--`：Go 的 `flag` 套件會把 `--` 之後的東西都當成一般參數，`-n` 就會變成 prompt 的一部分。
 
-模型設定：`-model` 優先，其次是環境變數 `DCODE_MODEL`，預設 `openai:gpt-5.5`。格式是 `provider:model`，只以第一個 `:` 切分，所以 OpenRouter 的 slug 可以直接寫：
+模型設定：`-model` 優先，其次是環境變數 `DCODE_MODEL`、config.toml 的 `models.default`，預設 `openai:gpt-5.5`。格式是 `provider:model`，只以第一個 `:` 切分，所以 OpenRouter 的 slug 可以直接寫：
 
 | provider | 範例 | API key | 端點覆寫 |
 | --- | --- | --- | --- |

@@ -1,4 +1,4 @@
-.PHONY: help test vet fmt build check run
+.PHONY: help test vet fmt build check run serve install
 
 .DEFAULT_GOAL := help
 
@@ -10,8 +10,10 @@ ARGS ?=
 PROMPT ?=
 # Optional thread id for make run.
 THREAD ?=
-# Optional model for make run. Example: make run MODEL=openai:gpt-5.5 PROMPT='hi'
+# Optional model for make run / make serve. Example: make run MODEL=openai:gpt-5.5 PROMPT='hi'
 MODEL ?=
+# Listen address for make serve (loopback only).
+ADDR ?= 127.0.0.1:8123
 
 help: ## Show targets
 	@echo "Usage: make <target> [PKG=./...] [ARGS='-v'] [PROMPT='...'] [THREAD=id] [MODEL=provider:model]"
@@ -41,3 +43,9 @@ check: fmt vet test ## Run fmt, vet, and tests
 run: ## Run one prompt: make run PROMPT="..."
 	@test -n "$(PROMPT)" || { echo 'usage: make run PROMPT="your prompt"'; exit 1; }
 	go run ./cmd/dcode $(if $(MODEL),-model=$(MODEL),) $(if $(THREAD),-thread=$(THREAD),) -n "$(PROMPT)"
+
+serve: ## Run the agent server: make serve [ADDR=127.0.0.1:8123] [MODEL=...]
+	go run ./cmd/dcode serve -addr=$(ADDR) $(if $(MODEL),-model=$(MODEL),)
+
+install: ## Install dcode into $(go env GOPATH)/bin
+	go install ./cmd/dcode

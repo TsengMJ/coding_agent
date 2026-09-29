@@ -16,9 +16,9 @@
 
 ## 進度總覽
 
-- 最後更新：2026-09-29（Stage 2 完成：agent loop、OpenAI Chat Completions、`make run`）
-- 核心 SDK：runtime reducer、agent loop、FakeModel、OpenAI Generate 已實作；middleware、backend、checkpointer 仍為 stub
-- CLI：headless `dcode -n` 經 in-process server 可跑；TUI、設定檔、sessions 仍為 stub
+- 最後更新：2026-09-29（Stage 6.5：穩定性與 CLI 體驗）
+- 核心 SDK：圖、in-memory / Postgres checkpoint（每 thread 保留最新 10 筆）、interrupt、OpenAI Generate / Stream 走套件（含重試與串流閒置逾時）；FilesystemBackend / LocalShellBackend / FilesystemMiddleware / HITL（approve / reject、`When`）/ PatchToolCalls 可用；其餘 middleware、StateBackend、Store 仍為 stub
+- CLI：`dcode serve`（HTTP + NDJSON、兩階段關閉）、Bubble Tea TUI（markdown、diff 預覽）與 line REPL、`-n` / `-thread` / `-r` / `-y` / `-q` / `-no-stream` / `-timeout`、`dcode threads [-json]`；使用者層 `config.toml` 與 shell allow-list
 
 ---
 
@@ -35,7 +35,7 @@
 
 ---
 
-## 1. Runtime 基礎（取代 langchain_core / LangChain / LangGraph）
+## 1. Runtime 基礎（採用 langchaingo / langgraphgo）
 
 ### 1.1 訊息 `llm/message.go`（langchain_core.messages）
 
@@ -67,16 +67,16 @@
   - [ ] prompt caching `cache_control`
   - [ ] 多模態輸入（image / pdf）
   - [ ] extended thinking / reasoning blocks
-- [~] OpenAI provider — go: `llm/openai.go` `OpenAIModel`（stdlib `net/http`，`OPENAI_API_KEY` / `OPENAI_BASE_URL`）
-  - [ ] Responses API（預設）
-  - [x] Chat Completions API（Generate）
-  - [ ] Stream
-  - [x] tool calling
+- [~] OpenAI provider — go: `llm/openai.go` `OpenAIModel`（langchaingo `llms/openai`，`OPENAI_API_KEY` / `OPENAI_BASE_URL`）
+  - [ ] Responses API（預設；langchaingo 未涵蓋，仍待實作）
+  - [x] Chat Completions API（Generate）— 由 langchaingo 提供
+  - [x] Stream — langchaingo 串流請求；SSE 經 `sseTee` 取文字 delta，tool call 依 index 自行組回（langchaingo 遇到重複 `type` 會拆錯）— go: `llm/openai_stream.go`
+  - [x] tool calling — 由 langchaingo 提供
   - [ ] `store=False` + `reasoning.encrypted_content`
 - [~] OpenRouter provider — go: `llm/openrouter.go`（共用 OpenAI Chat Completions client；`OPENROUTER_API_KEY` / `OPENROUTER_API_BASE`）
   - [x] Generate + tool calling、app attribution headers（`HTTP-Referer` / `X-Title`）
   - [ ] `provider: {ignore: [azure]}` 預設路由（`DEEPAGENTS_OPENROUTER_ALLOW_AZURE`）
-  - [ ] Stream
+  - [x] Stream（共用 OpenAI 實作）
 - [ ] NVIDIA provider
 - [ ] Google Gemini provider
 - [ ] Ollama provider
@@ -107,17 +107,19 @@
 - [~] `Schema` / `MergeSchemas` / `PrivateKeys` — py: `middleware/_state.private_state_field_names`
 - [x] `State.Apply`
 - [x] `State.Clone`（淺層複製：messages slice 與 Values map 另外複製）
-- [x] `MessagesReducer`（`add_messages`：append、依 ID 取代、`RemoveAllMessages`）
+- [-] `MessagesReducer`（`add_messages`：append、依 ID 取代）— 合併交給 langgraphgo `AddMessages`，不再自寫。`RemoveAllMessages` 套件不認得，仍在 `runtime` 先切開。`files` reducer 仍自建
 - [ ] `_messages_delta_reducer` + `DeltaChannel`（checkpoint 只存增量，snapshot_frequency=50）— py: `_messages_reducer.py`, `graph.DeepAgentState`
 - [ ] files reducer（`_file_data_reducer`：None 值代表刪除）— py: `middleware/filesystem.py`
 
 ### 1.5 Checkpointer `runtime/checkpoint.go`
 
-- [~] `Checkpoint`、`Checkpointer` 介面
-- [~] `MemoryCheckpointer`（`InMemorySaver`）
-  - [ ] Latest / Put / List / DeleteThread
-- [ ] SQLite checkpointer（`AsyncSqliteSaver`，CLI sessions 使用）
-- [ ] checkpoint 序列化格式（JSON）
+- [x] `Checkpoint`、`Checkpointer` 介面（對外 API；儲存交給套件）。續跑欄位 `Seq` / `Steps` / `ResumeFrom` 具型別，不放在 `Metadata`
+- [-] `MemoryCheckpointer`（`InMemorySaver`）— 轉接 langgraphgo `MemoryCheckpointStore`，不自寫儲存。Latest / Put / List / DeleteThread 已接上
+- [x] `PostgresCheckpointer` — go: `runtime/postgres.go`，轉接 langgraphgo `checkpoint/postgres`（`POSTGRES_CONN_STRING`，表 `deepagents_checkpoints`）。JSON 讀回還原 `Checkpoint`；pending interrupt 與 `ResumeFrom` 可跨行程讀取
+- [-] SQLite checkpointer（`AsyncSqliteSaver`）— CLI 改用 Postgres（`POSTGRES_CONN_STRING`），沒設時 in-memory
+- [x] `PostgresCheckpointer.Pool()` 讓 sessions 表共用連線池
+- [x] checkpoint 序列化格式（JSON）— Postgres 路徑把 `map[string]any` 解回 `Checkpoint`
+- [x] 每 thread 只保留最新 `DefaultCheckpointsPerThread`（10）筆；`version` 欄存 seq，Postgres 以索引取最新與裁剪，舊資料（version=0）仍可讀
 
 ### 1.6 Store `runtime/store.go`
 
@@ -129,14 +131,17 @@
 ### 1.7 Interrupt / Command `runtime/interrupt.go`
 
 - [~] `Interrupt`、`InterruptError`、`Command`（update / resume / goto）
-- [ ] interrupt 暫停與 checkpoint 保存 pending interrupts
-- [ ] 以 `Command.Resume` 續跑
+- [-] interrupt 暫停與 checkpoint 保存 pending interrupts — langgraphgo `GraphInterrupt` / `InterruptBefore`（`RunConfig.Configurable["interrupt_before"]`）
+- [-] 以 `Command.Resume` 續跑 — 從同一個 thread checkpoint `ResumeFrom`
+- [x] `agent.Interrupt(ctx, value)`（LangGraph `interrupt()`）：在 AfterModel hook 中暫停；resume 值每個 run 只交出一次，同一 run 之後的 Interrupt 會再次暫停 — go: `agent/loop.go`
 
 ### 1.8 Config / Event `runtime/config.go`, `runtime/event.go`
 
 - [~] `RunConfig`（thread_id / recursion_limit / tags / metadata / configurable）
 - [~] `DefaultRecursionLimit = 9999`
 - [~] `StreamMode`（values / updates / messages / custom）、`Event`、`Emitter`
+- [-] values 事件串流 — 由 langgraphgo `OnGraphStep` 轉成 `runtime.Event`，不自寫 event loop。updates / custom 尚未接
+- [x] messages 串流：`Stream(..., StreamMessages)` 時 model 節點改用 `ChatModel.Stream`，每個片段送出 `llm.Chunk` 事件；沒實作 Stream 的 model 退回 Generate
 - [ ] subgraph（subagent）事件 namespace 傳遞
 
 ### 1.9 Agent loop `agent/`（langchain `create_agent` + `AgentMiddleware`）
@@ -147,16 +152,16 @@
 - [~] `Runtime`（hook 用）
 - [~] `Config` / `Input` / `Agent` 介面（Invoke / Stream / GetState / Name）
 - [~] `CreateAgent` — go: `agent/loop.go`, `agent/chain.go`
-  - [x] model → tools → model 迴圈（tool calls 循序執行）
+  - [-] model → after_model → tools → model 迴圈 — langgraphgo `MessageGraph`（這個版本的 `StateGraph.Compile` 不處理 `InterruptBefore`）。AfterModel hooks 在獨立的 `after_model` 節點，中斷後 resume 不重打 model；所有 tool call 都已有回覆（例如被拒絕）時回到 model
   - [x] middleware hook 串接順序（wrap 類：前面的在外層；AfterModel / AfterAgent 逆序）
-  - [ ] 平行執行多個 tool calls
+  - [-] 平行執行多個 tool calls — 多邊 fan-out 由 langgraphgo 提供；目前單一 `tools` 節點循序執行，以保持 tool message 順序
   - [x] 未知工具錯誤回報
-  - [x] recursion limit（`ErrRecursionLimit`）
-  - [ ] checkpoint 讀寫（每步）
-  - [ ] interrupt / resume
-  - [ ] streaming（values / updates / messages / custom）
+  - [x] recursion limit（`ErrRecursionLimit`；套件 Invoke 沒有此上限，在 model 節點檢查）
+  - [-] checkpoint 讀寫（每步）— `OnGraphStep` 寫入 langgraphgo checkpointer
+  - [-] interrupt / resume — 見 1.7
+  - [-] streaming（values）— 見 1.8；updates / messages / custom 尚未接
   - [x] middleware 名稱重複檢查（含工具名稱重複檢查）
-  - [ ] AfterAgent 回傳 `Command{Goto:"model"}` 重新進入迴圈
+  - [x] AfterAgent 回傳 `Command{Goto:"model"}` 重新進入迴圈 — langgraphgo `Command`
 - [~] Structured output：`ToolStrategy` / `ProviderStrategy` / `AutoStrategy` — go: `agent/response_format.go`
   - [ ] ToolStrategy 實作（合成工具 + 解析）
   - [ ] ProviderStrategy 實作
@@ -169,8 +174,8 @@
 
 ## 2. graph.py：`create_deep_agent` — go: `deepagents.go`
 
-- [~] `CreateDeepAgent(opts ...Option)` 入口（Stage 2 直通版：只轉給 `agent.CreateAgent`）
-  - 備註：CreateDeepAgent 暫未組裝預設 middleware stack；subagents / skills / memory / permissions / interrupt_on / response_format / checkpointer / backend 會回 `ErrNotImplemented`
+- [~] `CreateDeepAgent(opts ...Option)` 入口（有 backend 時放入 FilesystemMiddleware，其餘直通 `agent.CreateAgent`）
+  - 備註：預設 middleware stack 只組了 Filesystem；subagents / skills / memory / permissions / interrupt_on / response_format 會回 `ErrNotImplemented`
 - [~] 參數（functional options）
   - [x] `model`（`WithModel` 優先，否則 `WithModelSpec` 經 `InitChatModel` 解析）
   - [ ] `model=None` 預設 `claude-sonnet-4-6`（Python 已 deprecated）
@@ -181,12 +186,12 @@
   - [~] `skills`（`WithSkills`）
   - [~] `memory`（`WithMemory`）
   - [~] `permissions`（`WithPermissions`）
-  - [~] `backend`（`WithBackend`，預設 StateBackend）
-  - [~] `interrupt_on`（`WithInterruptOn`）
+  - [~] `backend`（`WithBackend` 會加入 FilesystemMiddleware；未給時預設 StateBackend 尚未實作，暫不加檔案工具）
+  - [x] `interrupt_on`（`WithInterruptOn`：HITL middleware 放在 stack 最後）
   - [~] `response_format`（`WithResponseFormat`）
   - [~] `state_schema`（`WithStateSchema`）
   - [ ] `context_schema`
-  - [~] `checkpointer` / `store`（`WithCheckpointer` / `WithStore`）
+  - [~] `checkpointer` / `store`（`WithCheckpointer` 已轉給 `agent.CreateAgent`；`WithStore` 仍只保存參照）
   - [~] `debug` / `name`（`WithDebug` / `WithName`）
   - [ ] `cache`
 - [ ] Model 解析（`resolve_model`）+ harness profile 查找
@@ -198,7 +203,7 @@
 - [ ] 預設 general-purpose subagent（可被 profile 關閉、可被同名 spec 取代、繼承同名 middleware）
 - [ ] 宣告式 SubAgent 處理：model 解析、subagent profile、permissions 繼承、interrupt_on 繼承與合併、tools 繼承、skills、fork 模式（鏡射 parent prompt middleware、system prompt addendum）
 - [ ] AsyncSubAgent 分流到 AsyncSubAgentMiddleware
-- [ ] permissions → interrupt_on 合併（`_merge_fs_interrupt_on`）— go: `hitl.Merge`（stub）
+- [ ] permissions → interrupt_on 合併（`_merge_fs_interrupt_on`）— go: `hitl.Merge` 已實作，尚未接到 permissions
 - [ ] private state keys 注入 SubAgentMiddleware
 - [ ] `with_config`：recursion_limit=9999、metadata（ls_integration / lc_versions / lc_agent_name）
 - [~] `DeepAgentState`（對應 `runtime.State` + messages delta reducer，見 1.4）
@@ -243,16 +248,18 @@
   - [~] `NamespaceFactory`、`ValidateNamespace`
   - [ ] ls / read / write / edit / delete / grep / glob
   - [ ] upload_files / download_files
-- [~] `FilesystemBackend` — py: `backends/filesystem.py`
-  - [ ] virtual_mode 路徑解析與逃逸防護
-  - [ ] ls / read（含 binary → base64）/ write / edit / delete
-  - [ ] grep（ripgrep 優先，fallback 內建搜尋）、context_lines
-  - [ ] glob（逾時、截斷原因）
-  - [ ] max_file_size_mb
-  - [ ] symlink loop 偵測、例外 → 標準錯誤碼
-  - [ ] upload_files / download_files
-- [~] `LocalShellBackend` — py: `backends/local_shell.py`
-  - [ ] execute（timeout、max_output_bytes、env / inherit_env、cwd=root）
+- [~] `FilesystemBackend` — go: `backend/filesystem.go`
+  - [x] virtual_mode 路徑解析與逃逸防護（含 symlink 逃逸）
+  - [x] ls / read（含 binary → base64）/ write / edit / delete
+  - [~] grep：內建 Go 字面搜尋（跳過 `.git`、逾時截斷）
+    - [ ] ripgrep 優先
+    - [ ] context_lines
+  - [x] glob（`**` / `{a,b}` 用 doublestar、逾時截斷）
+  - [x] max_file_size_mb（grep 跳過過大檔案）
+  - [~] 例外 → 標準錯誤碼（upload / download 已對應；symlink loop 由 `EvalSymlinks` 回報錯誤）
+  - [x] upload_files / download_files
+- [x] `LocalShellBackend` — py: `backends/local_shell.py`
+  - [x] execute（timeout、max_output_bytes、env / inherit_env、cwd=root；stderr 行加 `[stderr]`、逾時 exit code 124；unix 上逾時或結束後殺整個程序群組、輸出邊讀邊截斷在 rune 邊界）
 - [~] `CompositeBackend` — py: `backends/composite.py`
   - [ ] 最長前綴路由
   - [ ] ls 合併（根目錄列出 route）
@@ -273,21 +280,21 @@
 
 ### 3.4 Utils `backend/utils.go`（py: `backends/utils.py`）
 
-- [~] 常數：`EmptyContentWarning` / `EmptyOldStringError` / `TruncationMarkerTemplate` / `MaxLineLength` / `ToolResultTokenLimit` / `TruncationGuidance` / `MaxVideoInputBytes`
-- [~] `FileType` + `FileTypeForPath`（副檔名 → text / image / audio / video / pdf）
-- [~] `ValidatePath`（allowed_prefixes、`..`、`~`）
-- [~] `ToPOSIXPath`
-- [~] `FormatContentWithLineNumbers`（cat -n、長行切分）
-- [~] `CheckEmptyContent`
-- [~] `CreateFileData` / `UpdateFileData` / `FileDataToString`
-- [~] `NormalizeReadBounds` / `SliceReadResponse`
-- [~] `PerformStringReplacement`
-- [~] `TruncateIfTooLong`
-- [~] `SanitizeToolCallID`
-- [~] `CompileGrepIncludeGlob`
-- [~] `GrepMatchesFromFiles` / `GlobSearchFiles`
-- [~] `GrepOutputMode` / `FormatGrepMatches`（files_with_matches / content / count、context 分組）
-- [~] `RegexLiteralHint`
+- [x] 常數：`EmptyContentWarning` / `EmptyOldStringError` / `TruncationMarkerTemplate` / `MaxLineLength` / `ToolResultTokenLimit` / `TruncationGuidance` / `MaxVideoInputBytes`
+- [x] `FileType` + `FileTypeForPath`（副檔名 → text / image / audio / video / pdf）
+- [x] `ValidatePath`（allowed_prefixes、`..`、`~`、Windows 絕對路徑）
+- [x] `ToPOSIXPath`
+- [x] `FormatContentWithLineNumbers`（兩空白分隔、長行切成 N.1、N.2）
+- [x] `CheckEmptyContent`
+- [x] `CreateFileData` / `UpdateFileData` / `FileDataToString`
+- [x] `NormalizeReadBounds` / `SliceReadResponse`
+- [x] `PerformStringReplacement`（含 EOF 換行提示）
+- [x] `TruncateIfTooLong`（字串版）
+- [x] `SanitizeToolCallID`
+- [x] `CompileGrepIncludeGlob`（doublestar；dotfile 規則與 wcmatch 略有差異）
+- [x] `GrepMatchesFromFiles` / `GlobSearchFiles`
+- [x] `GrepOutputMode` / `FormatGrepMatches`（files_with_matches / content / count、context 分組）
+- [x] `RegexLiteralHint`
 - [ ] `build_grep_results_dict`、`_glob_anchor`、`_paths_overlap`
 
 ---
@@ -296,23 +303,23 @@
 
 ### 4.1 Filesystem `middleware/filesystem`（py: `middleware/filesystem.py`）
 
-- [~] `ToolName`（`FsToolName`）與 `AllTools`
-- [~] `Options`（backend / system_prompt / custom_tool_descriptions / tool_token_limit_before_evict / human_message_token_limit_before_evict / max_execute_timeout / grep_max_count / tools / permissions）
-- [~] `Middleware`（Name / Tools / StateSchema / WrapModelCall / WrapToolCall）
-- [ ] 工具實作
-  - [ ] `ls`
-  - [ ] `read_file`（offset / limit 分頁、行號、截斷通知、空檔提醒）
-  - [ ] `read_file` 多模態：image / audio / pdf 回傳 content blocks
+- [x] `ToolName`（`FsToolName`）與 `AllTools`、`DefaultTools`（預設不含 `delete`）
+- [~] `Options`（backend / system_prompt / custom_tool_descriptions / max_execute_timeout / grep_max_count / tools 已生效；token eviction 門檻與 permissions 尚未使用，給 permissions 會回錯誤；Backend 必填）
+- [x] `Middleware`（Name / Tools / StateSchema / WrapModelCall 附加 system prompt / WrapToolCall 截斷過長文字結果）
+- [~] 工具實作 — go: `middleware/filesystem/tools.go`
+  - [x] `ls`
+  - [x] `read_file`（offset / limit 分頁、`@@ lines A-B of T | next offset N @@` 標頭、負 offset 通知、空檔提醒；超過 `MaxFileSizeMB` 的檔案拒讀並建議用 grep）
+  - [x] `read_file` 多模態：image / audio / pdf 回傳 base64 content blocks
   - [ ] `read_file` 影片：抽幀（py: `_video.py`，需 ffmpeg 或等效函式庫）
-  - [ ] `write_file`
-  - [ ] `edit_file`（replace_all）
-  - [ ] `delete`（僅 Deleter backend；萬用字元 deny 重疊檢查）
-  - [ ] `glob`（逾時訊息）
-  - [ ] `grep`（output_mode、max_count、regex 提示）
-  - [ ] `execute`（timeout 上限、ExecuteArtifact、offload 大輸出）
-- [ ] 工具 schema 與預設描述文字（`LsSchema` ... `ExecuteSchema`）
+  - [x] `write_file`
+  - [x] `edit_file`（replace_all）
+  - [~] `delete`（僅 Deleter backend、需在 `Tools` 明確列出；萬用字元 deny 重疊檢查未做）
+  - [x] `glob`（截斷 note）
+  - [x] `grep`（output_mode、max_count、regex 提示、截斷 note）
+  - [~] `execute`（timeout 上限、ExecuteArtifact；offload 大輸出未做）
+- [x] 工具 schema 與預設描述文字（`LsSchema` ... `ExecuteSchema`）
 - [ ] system prompt：composite route host-path 說明（`_route_host_path_prompt`）
-- [ ] 非 sandbox backend 時移除 `execute`
+- [x] 非 sandbox backend 時移除 `execute`（在 `New` 決定工具清單）
 - [ ] 權限檢查：read / write / delete 規則、ls / glob / grep 結果過濾
 - [ ] 平行檔案異動保護（`_parallel_file_mutation_error`）
 - [ ] 大型 tool 結果 eviction 到 backend（`_message_eviction.py`：preview head/tail、`/large_tool_results/`）
@@ -415,16 +422,17 @@
 
 ### 4.9 其他 middleware
 
-- [~] PatchToolCalls `middleware/patchtoolcalls`（py: `patch_tool_calls.py`）
-  - [ ] BeforeAgent：補上 dangling tool call 的取消訊息
+- [x] PatchToolCalls `middleware/patchtoolcalls`（py: `patch_tool_calls.py`）
+  - [x] BeforeAgent：補上 dangling tool call 的取消訊息（接在 filesystem 之後、caller middleware 之前）
 - [~] UnsupportedContent `middleware/unsupportedcontent`（py: `unsupported_content.py`）
   - [ ] 依 ModelProfile 判斷 block 是否支援（含 tool message 內）
   - [ ] OpenAI Responses 例外、read_file placeholder
 - [~] HumanInTheLoop `middleware/hitl`（langchain `HumanInTheLoopMiddleware`）
-  - [~] `InterruptOnConfig` / `DecisionType` / `ActionRequest` / `Decision`
-  - [ ] AfterModel：對符合的 tool calls 發出 interrupt
-  - [ ] 處理 approve / edit / reject / respond
-  - [~] `Merge`（`_merge_fs_interrupt_on`）
+  - [x] `InterruptOnConfig` / `DecisionType` / `ActionRequest` / `Decision`（`AllowedDecisions` 預設 approve / reject）
+  - [x] AfterModel：對符合的 tool calls 發出 interrupt；`hitl_auto_approve` 設定時略過
+  - [x] approve / reject（reject 產生 error tool message，可附理由）
+  - [ ] edit / respond
+  - [x] `Merge`（`_merge_fs_interrupt_on`）
 - [~] TodoList `middleware/todolist`（langchain `TodoListMiddleware`）
   - [ ] `write_todos` 工具與 system prompt
 - [~] PromptCaching `middleware/promptcaching`（py: `_prompt_caching.py`）
@@ -471,33 +479,42 @@
 
 ### 6.1 進入點與架構
 
-- [x] `cmd/dcode/main.go`（flag：`-n` 或位置參數 prompt、`-model`、`-thread`、`-version`）
-- [ ] 完整 CLI 參數（`main.py`：agent 選擇、model、sandbox、auto-approve、resume、list / reset agents、threads 子命令 ...）
-- [~] Server `code/server`（`Server` / `Manager` / `Config` / `RunRequest` / `New`）
-  - [x] in-process server（`Addr` 為空；模型依序取 `Config.ModelSpec` → `DCODE_MODEL` → `openai:gpt-5.5`；`Run` yield 一個含最終 state 的 values 事件）
-  - [ ] server runtime 組裝（model、tools、MCP、sandbox、graph）— code: `server_graph.py`
+- [x] `cmd/dcode/main.go`（flag：`-n` 或位置參數 prompt、`-model`、`-thread`、`-r`、`-y`、`-plain`、`-server`、`-version`、`-q`、`-no-stream`、`-timeout`；子命令 `serve`、`threads [-json]`）
+- [ ] 完整 CLI 參數（`main.py`：agent 選擇、sandbox、list / reset agents ...）
+- [~] Server `code/server`（`Server` / `Service` / `Config` / `RunRequest` / `Event` / `New`）
+  - [x] `Service`：依 cwd（與 interactive）快取 agent、共用 model 與 checkpointer；thread 鎖（`ErrThreadBusy`）、thread 綁定 cwd（`ErrThreadCwdMismatch`）、待核准時拒收新訊息（`ErrPendingApproval`）
+  - [x] 事件協定：`delta` / `message`（只送本次新增）/ `interrupt` / `done` / `error`
+  - [x] thread 儲存：`PostgresConn` → Postgres checkpointer + `dcode_threads`；否則 in-memory
+  - [x] HTTP（`dcode serve`，只綁 loopback）：`GET /healthz`、`POST /runs`（NDJSON；409 / 400）、`GET /threads`、`GET /threads/{id}`；client 斷線會取消 run — go: `code/server/http.go`
+  - [x] 關閉：進行中的 run 有 30 秒收尾，之後取消；每次事件寫入 30 秒逾時；再按一次 Ctrl-C 強制結束
+  - [x] tool / node panic 轉成錯誤，不會打掛 serve
+  - [~] server runtime 組裝（model、tools、MCP、sandbox、graph）— code: `server_graph.py`；目前 model + `CreateCLIAgent`
   - [ ] 子行程啟動 / 重啟 / 停止 — code: `client/launch/server*.py`
-  - [ ] streaming 協定
 - [~] Client `code/client`
   - [~] `RunNonInteractive`（headless）— code: `client/non_interactive.py`
-    - [x] 印出最後一則 assistant 文字、錯誤寫 stderr 並回 exit code 1
-    - [ ] `-thread` 續跑（目前回「thread 續跑尚未支援」）
-    - [ ] JSON 輸出、串流輸出、auto-approve
-  - [~] `RunInteractive`
-  - [ ] remote client — code: `client/remote_client.py`
-- [~] TUI placeholder `code/tui`（Python：Textual `app.py` + `tui/*`，UI 函式庫未定）
-  - [ ] 聊天輸入、自動完成、貼上收合
-  - [ ] 訊息渲染、markdown、diff、工具輸出
-  - [ ] approval 介面、ask_user
-  - [ ] model / thread / agent / theme 選擇器
-  - [ ] 狀態列、context 用量、通知中心、subagent 面板
+    - [x] 即時印出 assistant 文字（串流）、tool calls 與失敗的 tool 寫到 stderr、錯誤回 exit code 1
+    - [x] `-thread` 續跑；沒給就新建並印出 `thread: <id>`
+    - [x] 核准：`-y` 自動核准；stdin 是 TTY 時逐一 y / a / N / 理由；否則拒絕並告知模型
+    - [x] `-q`（只輸出回覆）、`-no-stream`（完成後一次寫出）、`-timeout`（exit 124）、Ctrl-C（exit 130）
+    - [-] JSON 事件串流 — Python `-n` 也沒有；`dcode threads -json` 用 Python 的 `{"schema_version":1,...}` envelope
+  - [x] `RunInteractive`：line REPL（非 TTY 或 `-plain`），slash 指令、Ctrl-C 只取消當前 run
+  - [x] remote client `client.Remote`（`DCODE_SERVER`）— code: `client/remote_client.py`
+  - [x] `PrintThreads`（`dcode threads [-all]`）
+- [~] TUI `code/tui`（Bubble Tea；Python：Textual `app.py` + `tui/*`）
+  - [x] 輸入框、transcript viewport（串流字、tool 行、錯誤）、狀態列（cwd / thread / model / auto-approve / spinner）
+  - [x] approval 框（write / edit / execute 預覽；a / r + 理由 / A / Ctrl-C）
+  - [x] `/new` `/thread` `/threads`（picker）`/resume` `/yolo` `/help` `/quit`；Ctrl-C 取消 run，閒置時離開
+  - [x] markdown（glamour，完成的 assistant 訊息）、核准框 unified diff（write / edit 對照磁碟檔案）
+  - [x] 效能：已完成訊息依寬度快取、內容沒變就不重排、捲上去時串流不拉回底部
+  - [ ] 自動完成、貼上收合、ask_user
+  - [ ] model / agent / theme 選擇器、context 用量、通知中心、subagent 面板
 
 ### 6.2 Agent `code/agent`（code: `agent.py`）
 
-- [~] `CreateCLIAgent` / `Options`
-- [~] `SystemPrompt`（model identity、cwd、git 資訊、工具說明）
+- [~] `CreateCLIAgent` / `Options`（LocalShellBackend virtual mode 以 cwd 為根 + system prompt + HITL `DefaultInterruptOn`：write_file / edit_file / execute；subagents、MCP 未接）
+- [~] `SystemPrompt`（headless / interactive、model identity、cwd 與虛擬路徑說明；git 資訊、skills、web search 段落未做）— go: `code/agent/system_prompt.md`
 - [~] `ListAgents` / `ResetAgent`
-- [~] `ShellAllowListMiddleware`
+- [x] shell allow-list（`IsShellCommandAllowed`，移植 `contains_dangerous_patterns` / `is_shell_command_allowed`）— 以 hitl `When` 讓符合的 execute 免核准，`all` 取消 execute 核准；取代 `ShellAllowListMiddleware` stub
 - [ ] 任務錯誤格式化（`_format_task_error`）
 - [ ] subagents 注入 fs tools
 - [ ] rubric grader 工具與 prompt
@@ -505,10 +522,10 @@
 
 ### 6.3 設定 `code/config`（code: `config.py`, `configuration/*`, `_paths.py`, `_env_vars.py`）
 
-- [~] `Scope`、`Settings`、`Source`、`Paths`、`Resolver`、`NewResolver`
+- [x] `Scope`、`Settings`、`Source`、`Paths`、`Resolver`、`NewResolver`（使用者層 + env）
 - [x] `DefaultPaths`（`~/.deepagents`、`cwd/.deepagents`；尚未處理 profile state dir）
-- [ ] config.toml 解析（需決定 TOML 函式庫）
-- [ ] 分層合併（managed / user / project / session / env）
+- [x] config.toml 解析（`github.com/BurntSushi/toml`）：`models.default`、`startup.mode`（manual / yolo）、`shell.allow_list`（陣列、逗號字串、`recommended`、`all`）、`retries.max_retries`、`server.url`；其餘 key 放 `Raw`；錯誤帶行號
+- [~] 分層合併：flag > env（`DCODE_MODEL`、`DCODE_SERVER`、`DEEPAGENTS_CODE_SHELL_ALLOW_LIST`）> 使用者 config.toml > 預設；managed / project / session 層未做
 - [x] .env 載入（shell > 最近的專案 `.env` > `~/.deepagents/.env`）— go: `code/config/dotenv.go`
   - [ ] 拒絕危險 key（`_DOTENV_DENIED_ENV_KEYS`、專案 `.env` 不可設定的 LangSmith key）
   - [ ] 變數內插（`${VAR}`）、`/reload` 時移除先前注入的值
@@ -517,11 +534,12 @@
 
 ### 6.4 Sessions `code/sessions`（code: `sessions.py`）
 
-- [~] `ThreadInfo` / `ListOptions` / `Manager` / `Open` / `NewThreadID`
-- [ ] SQLite schema 與 checkpointer
-- [ ] list / most recent / exists / find similar / delete / metadata
-- [ ] message count、initial prompt 快取
-- [ ] `threads` 子命令輸出
+- [x] `Info` / `Filter` / `Store` / `Latest` / `NewThreadID` / `Title`
+- [-] SQLite schema — 改用 Postgres `dcode_threads`（`PostgresStore`）與 `MemoryStore`
+- [x] list / most recent / get / delete；thread 綁定 cwd
+- [x] message count、title（第一則 prompt 前 60 字）
+- [ ] find similar（打錯 thread id 時提示）
+- [x] `threads` 子命令輸出
 
 ### 6.5 工具 `code/tools`（code: `tools.py`）
 
@@ -634,7 +652,7 @@
   - [ ] marketplace、discovery、substitution
 - [~] Extensions `code/extensions`（`Extension`、`Register`、`Loaded`）— code: `extensions/*`
 - [ ] model config / 切換 / reasoning effort — code: `model_config.py`, `configurable_model.py`, `reasoning_effort.py`
-- [ ] model retry — code: `model_retry.py`
+- [x] model retry — code: `model_retry.py`；go: `llm/transport.go`（429 / 5xx / 連線錯誤指數退避、Retry-After、`retries.max_retries`；串流閒置 5 分鐘逾時）
 - [ ] auth store / 顯示 — code: `auth_store.py`, `auth_display.py`
 - [ ] OpenAI Codex 整合 — code: `integrations/openai_codex.py`
 - [ ] btw（旁支問題）— code: `btw*.py`

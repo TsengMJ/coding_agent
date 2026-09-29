@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 )
 
 // Scope is a configuration tier, lowest to highest precedence.
@@ -25,18 +23,34 @@ const (
 
 // Settings is the resolved configuration used by the CLI.
 type Settings struct {
+	// Model is the default "provider:model" (models.default, $DCODE_MODEL).
 	Model              string
 	SummarizationModel string
 	ReasoningEffort    string
-	ApprovalMode       string
-	AgentName          string
-	ShellAllowList     []string
-	Theme              string
-	SandboxProvider    string
-	WebSearchAPIKey    string
-	// Raw holds every resolved key for settings without a dedicated field.
+	// ApprovalMode is ApprovalManual or ApprovalYolo (startup.mode).
+	ApprovalMode string
+	AgentName    string
+	// ShellAllowList names commands that run without approval
+	// (shell.allow_list, $DEEPAGENTS_CODE_SHELL_ALLOW_LIST).
+	ShellAllowList []string
+	// ShellAllowAll approves every command (shell.allow_list = "all").
+	ShellAllowAll bool
+	// MaxRetries overrides llm.DefaultMaxRetries when non-nil (retries.max_retries).
+	MaxRetries *int
+	// ServerURL is the `dcode serve` URL clients use (server.url, $DCODE_SERVER).
+	ServerURL       string
+	Theme           string
+	SandboxProvider string
+	WebSearchAPIKey string
+	// Raw holds every key read from config.toml.
 	Raw map[string]any
 }
+
+// Approval modes for startup.mode.
+const (
+	ApprovalManual = "manual"
+	ApprovalYolo   = "yolo"
+)
 
 // Source reports one tier's file and its health.
 type Source struct {
@@ -89,7 +103,12 @@ func DefaultPaths(cwd string) (Paths, error) {
 	}, nil
 }
 
-// NewResolver returns a resolver over the given paths.
+// NewResolver returns a resolver over the user config file and the process
+// environment. Managed and project tiers are not read yet.
 func NewResolver(p Paths) (Resolver, error) {
-	return nil, notimpl.Err("config.NewResolver")
+	r := &fileResolver{paths: p, getenv: os.Getenv}
+	if err := r.Reload(); err != nil {
+		return nil, err
+	}
+	return r, nil
 }

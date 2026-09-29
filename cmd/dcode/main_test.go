@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"context"
+	"strings"
+	"testing"
+)
 
 func TestResolvePrompt(t *testing.T) {
 	tests := []struct {
@@ -31,5 +36,23 @@ func TestResolvePrompt(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHeadlessFlagsRequireAPrompt(t *testing.T) {
+	for _, args := range [][]string{{"-q"}, {"-no-stream"}, {"-timeout", "5s"}} {
+		var stdout, stderr bytes.Buffer
+		code, err := run(context.Background(), args, &stdout, &stderr)
+		if code != 2 || err == nil || !strings.Contains(err.Error(), "requires -n") {
+			t.Errorf("%v: code=%d err=%v", args, code, err)
+		}
+	}
+}
+
+func TestNegativeTimeoutIsRejected(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code, err := run(context.Background(), []string{"-timeout", "-1s", "-n", "hi"}, &stdout, &stderr)
+	if code != 2 || err == nil {
+		t.Fatalf("code=%d err=%v", code, err)
 	}
 }

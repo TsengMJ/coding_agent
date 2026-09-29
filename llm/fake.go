@@ -5,8 +5,6 @@ import (
 	"errors"
 	"iter"
 	"sync"
-
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 )
 
 // ErrScriptExhausted is returned by FakeModel once every scripted reply has
@@ -52,9 +50,38 @@ func (f *FakeModel) Generate(ctx context.Context, req ChatRequest) (*Message, er
 	return &reply, nil
 }
 
-// Stream implements ChatModel.
+// Stream implements ChatModel. It replays the next reply's text word by word,
+// then yields the whole reply as the Done chunk.
 func (f *FakeModel) Stream(ctx context.Context, req ChatRequest) iter.Seq2[Chunk, error] {
-	return errSeq(notimpl.Err("llm.FakeModel.Stream"))
+	return func(yield func(Chunk, error) bool) {
+		reply, err := f.Generate(ctx, req)
+		if err != nil {
+			yield(Chunk{}, err)
+			return
+		}
+		for _, piece := range splitWords(reply.Text()) {
+			if !yield(Chunk{Delta: NewAssistantMessage(piece)}, nil) {
+				return
+			}
+		}
+		yield(Chunk{Delta: *reply, Done: true}, nil)
+	}
+}
+
+// splitWords splits s after each run of spaces, so the pieces concatenate to s.
+func splitWords(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == ' ' && (i+1 == len(s) || s[i+1] != ' ') {
+			out = append(out, s[start:i+1])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
 }
 
 // Requests returns a copy of the requests received so far.

@@ -1,12 +1,16 @@
-// Package runtime provides the execution substrate that LangGraph supplies in
-// Python: graph state with reducers, checkpoints, a key-value store,
+// Package runtime provides graph state, checkpoints, a key-value store,
 // interrupts, run configuration, and streamed events.
+//
+// Message merge and checkpoint storage delegate to langgraphgo.
+// The cross-thread Store and the files reducer stay in this package.
 package runtime
 
 import (
 	"fmt"
 	"maps"
 	"slices"
+
+	"github.com/smallnest/langgraphgo/graph"
 
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
@@ -19,12 +23,12 @@ const RemoveAllMessages = "__remove_all__"
 
 // State is the agent graph state (`AgentState` / `DeepAgentState`).
 type State struct {
-	Messages []llm.Message
+	Messages []llm.Message `json:"messages,omitempty"`
 	// StructuredResponse holds the parsed structured output, if any.
-	StructuredResponse any
+	StructuredResponse any `json:"structured_response,omitempty"`
 	// Values holds extension fields contributed by middleware or a custom
 	// schema (e.g. "files", "todos", "skills_metadata", "memory_contents").
-	Values map[string]any
+	Values map[string]any `json:"values,omitempty"`
 }
 
 // Update is a partial state change returned by nodes, hooks and tools.
@@ -103,30 +107,31 @@ func (s *State) Clone() *State {
 }
 
 // MessagesReducer appends messages, replacing ones with matching IDs and
-// honoring RemoveAllMessages (LangGraph `add_messages`). Messages after the
-// last RemoveAllMessages marker replace the whole history.
+// honoring RemoveAllMessages (LangGraph `add_messages`).
+//
+// ID merge is langgraphgo's AddMessages. RemoveAllMessages is applied first
+// because that library reducer does not know the marker: messages after the
+// last marker replace the whole history.
 func MessagesReducer(current, update []llm.Message) ([]llm.Message, error) {
 	if i := lastRemoveAll(update); i >= 0 {
-		return slices.Clone(update[i+1:]), nil
+		current = nil
+		update = slices.Clone(update[i+1:])
 	}
-	out := slices.Clone(current)
-	index := make(map[string]int, len(out))
-	for i, m := range out {
-		if m.ID != "" {
-			index[m.ID] = i
-		}
+	if current == nil {
+		current = []llm.Message{}
 	}
-	for _, m := range update {
-		if i, ok := index[m.ID]; ok && m.ID != "" {
-			out[i] = m
-			continue
-		}
-		if m.ID != "" {
-			index[m.ID] = len(out)
-		}
-		out = append(out, m)
+	if len(update) == 0 {
+		return slices.Clone(current), nil
 	}
-	return out, nil
+	merged, err := graph.AddMessages(current, update)
+	if err != nil {
+		return nil, err
+	}
+	msgs, ok := merged.([]llm.Message)
+	if !ok {
+		return nil, fmt.Errorf("add_messages: got %T", merged)
+	}
+	return msgs, nil
 }
 
 func lastRemoveAll(msgs []llm.Message) int {

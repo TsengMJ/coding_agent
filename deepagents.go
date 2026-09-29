@@ -5,6 +5,7 @@ package deepagents
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/backend"
@@ -12,6 +13,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/filesystem"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/deepagents_golang/middleware/patchtoolcalls"
 	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
 	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
@@ -105,8 +107,9 @@ func WithResponseFormat(f agent.ResponseFormat) Option {
 // Memory (if memory) -> HITL (if interrupts) -> UnsupportedContent ->
 // ToolExclusion (if profile excludes tools).
 //
-// The default stack is not assembled yet: only the caller's middleware runs,
-// and options that depend on the stack return notimpl.ErrNotImplemented.
+// The default stack is only partly assembled: Filesystem runs when a backend
+// is given, followed by the caller's middleware. Options that depend on the
+// rest of the stack return notimpl.ErrNotImplemented.
 func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
 	var o Options
 	for _, opt := range opts {
@@ -119,12 +122,17 @@ func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	stack, err := buildMiddleware(o)
+	if err != nil {
+		return nil, err
+	}
 	return agent.CreateAgent(agent.Config{
 		Model:          model,
 		SystemMessage:  resolveSystemMessage(o),
 		Tools:          o.Tools,
-		Middleware:     o.Middleware,
+		Middleware:     stack,
 		StateSchema:    o.StateSchema,
+		Checkpointer:   o.Checkpointer,
 		Store:          o.Store,
 		Name:           o.Name,
 		Debug:          o.Debug,
@@ -141,10 +149,7 @@ func rejectUnsupported(o Options) error {
 		{"WithSkills", len(o.Skills) > 0},
 		{"WithMemory", len(o.Memory) > 0},
 		{"WithPermissions", len(o.Permissions) > 0},
-		{"WithInterruptOn", len(o.InterruptOn) > 0},
 		{"WithResponseFormat", o.ResponseFormat != nil},
-		{"WithCheckpointer", o.Checkpointer != nil},
-		{"WithBackend", o.Backend != nil},
 	}
 	for _, u := range unsupported {
 		if u.set {
@@ -152,6 +157,27 @@ func rejectUnsupported(o Options) error {
 		}
 	}
 	return nil
+}
+
+// buildMiddleware places FilesystemMiddleware (when a backend is set) and
+// PatchToolCallsMiddleware ahead of the caller's middleware, and
+// HumanInTheLoopMiddleware (when InterruptOn is set) last, so its AfterModel
+// runs first and interrupts before other hooks change state.
+func buildMiddleware(o Options) ([]agent.Middleware, error) {
+	var stack []agent.Middleware
+	if o.Backend != nil {
+		fs, err := filesystem.New(filesystem.Options{Backend: o.Backend})
+		if err != nil {
+			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+		}
+		stack = append(stack, fs)
+	}
+	stack = append(stack, patchtoolcalls.New())
+	stack = append(stack, o.Middleware...)
+	if len(o.InterruptOn) > 0 {
+		stack = append(stack, hitl.New(o.InterruptOn))
+	}
+	return stack, nil
 }
 
 func resolveModel(o Options) (llm.ChatModel, error) {

@@ -1,65 +1,106 @@
-// Package server runs the agent graph in a separate process and streams run
-// events to clients (Python `server_graph.py`, `client/launch/server*.py`).
+// Package server runs the coding agent for clients, either in-process or
+// behind `dcode serve` (Python `server_graph.py`, `client/launch/server*.py`).
 package server
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"iter"
 	"os"
 
-	"github.com/tsengmingchun/deepagents_golang"
-	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
 )
 
 // DefaultModelSpec is used when neither Config.ModelSpec nor DCODE_MODEL is set.
 const DefaultModelSpec = "openai:gpt-5.5"
 
 // ModelEnvVar overrides the default model spec.
-const ModelEnvVar = "DCODE_MODEL"
+const ModelEnvVar = config.ModelEnvVar
 
-// RunRequest starts or resumes a run on a thread.
+var (
+	// ErrBadRequest wraps malformed run requests.
+	ErrBadRequest = errors.New("bad run request")
+	// ErrThreadBusy is returned when a thread already has a run in flight.
+	ErrThreadBusy = errors.New("thread is busy with another run")
+	// ErrThreadCwdMismatch is returned when a thread is reused from another directory.
+	ErrThreadCwdMismatch = errors.New("thread belongs to a different working directory")
+	// ErrPendingApproval is returned when new messages arrive while tool calls await review.
+	ErrPendingApproval = errors.New("thread has tool calls awaiting approval; resume it with decisions or start a new thread")
+	// ErrNoPendingApproval is returned when a resume arrives without a pending review.
+	ErrNoPendingApproval = errors.New("thread has no tool calls awaiting approval")
+)
+
+// RunRequest starts a run on a thread, or resumes one paused for approval.
+// Exactly one of Messages and Resume must be set.
 type RunRequest struct {
-	ThreadID  string
-	AgentName string
-	Input     agent.Input
-	Modes     []runtime.StreamMode
+	ThreadID string        `json:"thread_id"`
+	Cwd      string        `json:"cwd"`
+	Messages []llm.Message `json:"messages,omitempty"`
+	Resume   *Resume       `json:"resume,omitempty"`
+	// AutoApprove skips human review of tool calls.
+	AutoApprove bool `json:"auto_approve,omitempty"`
+	// Interactive selects the system prompt for a human-attended session.
+	Interactive bool `json:"interactive,omitempty"`
 }
 
-// Server is the agent-server side of the client/server boundary.
+// Resume answers the pending review of a thread, one decision per action request.
+type Resume struct {
+	Decisions []hitl.Decision `json:"decisions"`
+}
+
+// EventKind names a run event; the values double as the NDJSON "event" field.
+type EventKind string
+
+const (
+	EventDelta     EventKind = "delta"
+	EventMessage   EventKind = "message"
+	EventInterrupt EventKind = "interrupt"
+	EventDone      EventKind = "done"
+	EventError     EventKind = "error"
+)
+
+// Event is one item of a run stream.
+type Event struct {
+	Kind EventKind `json:"event"`
+	// Text is a streamed fragment of assistant text (EventDelta).
+	Text string `json:"text,omitempty"`
+	// Message is a complete message added by this run (EventMessage).
+	Message *llm.Message `json:"message,omitempty"`
+	// Interrupts are tool calls awaiting review; the run has stopped (EventInterrupt).
+	Interrupts []Interrupt `json:"interrupts,omitempty"`
+	// Error is set on EventError (HTTP transport only).
+	Error string `json:"error,omitempty"`
+}
+
+// Interrupt is one pending review.
+type Interrupt struct {
+	ID             string               `json:"id"`
+	ActionRequests []hitl.ActionRequest `json:"action_requests"`
+}
+
+// ThreadState is the latest persisted state of a thread.
+type ThreadState struct {
+	ThreadID   string        `json:"thread_id"`
+	Messages   []llm.Message `json:"messages"`
+	Interrupts []Interrupt   `json:"interrupts,omitempty"`
+}
+
+// Server is what clients talk to, in-process (Service) or over HTTP.
 type Server interface {
-	Run(ctx context.Context, req RunRequest) iter.Seq2[runtime.Event, error]
-	GetState(ctx context.Context, threadID string) (*runtime.State, error)
-	Cancel(ctx context.Context, threadID string) error
+	// Run streams events for one run. Stopping iteration or cancelling ctx
+	// cancels the run.
+	Run(ctx context.Context, req RunRequest) iter.Seq2[Event, error]
+	// GetThread returns nil when the thread has no state.
+	GetThread(ctx context.Context, threadID string) (*ThreadState, error)
+	ListThreads(ctx context.Context, f sessions.Filter) ([]sessions.Info, error)
 	Close() error
 }
 
-// Config configures a server instance.
-type Config struct {
-	Settings *config.Settings
-	Paths    config.Paths
-	// Addr is the listen address; empty runs in-process.
-	Addr string
-	// ModelSpec ("provider:model") takes precedence over DCODE_MODEL.
-	ModelSpec string
-}
-
-// New builds the server runtime (model, tools, MCP, sandbox, graph).
-func New(ctx context.Context, cfg Config) (Server, error) {
-	if cfg.Addr != "" {
-		return nil, notimpl.Err("server.New(Addr)")
-	}
-	spec := resolveModelSpec(cfg)
-	a, err := deepagents.CreateDeepAgent(deepagents.WithModelSpec(spec))
-	if err != nil {
-		return nil, fmt.Errorf("create agent with model %q: %w", spec, err)
-	}
-	return &inProcess{agent: a}, nil
-}
-
+// resolveModelSpec picks the model: Config.ModelSpec (flag), then
+// DCODE_MODEL, then models.default from config.toml, then DefaultModelSpec.
 func resolveModelSpec(cfg Config) string {
 	if cfg.ModelSpec != "" {
 		return cfg.ModelSpec
@@ -67,44 +108,16 @@ func resolveModelSpec(cfg Config) string {
 	if spec := os.Getenv(ModelEnvVar); spec != "" {
 		return spec
 	}
+	if cfg.Settings != nil && cfg.Settings.Model != "" {
+		return cfg.Settings.Model
+	}
 	return DefaultModelSpec
 }
 
-// inProcess runs the agent in the calling process.
-type inProcess struct {
-	agent agent.Agent
-}
-
-// Run invokes the agent to completion and yields the final state as a single
-// StreamValues event.
-func (s *inProcess) Run(ctx context.Context, req RunRequest) iter.Seq2[runtime.Event, error] {
-	return func(yield func(runtime.Event, error) bool) {
-		if req.ThreadID != "" {
-			yield(runtime.Event{}, notimpl.Err("server.Run(ThreadID)"))
-			return
-		}
-		state, err := s.agent.Invoke(ctx, req.Input, runtime.RunConfig{})
-		if err != nil {
-			yield(runtime.Event{}, err)
-			return
-		}
-		yield(runtime.Event{Mode: runtime.StreamValues, Data: state}, nil)
+// modelOptions returns provider settings derived from config.toml.
+func modelOptions(cfg Config) map[string]any {
+	if cfg.Settings == nil || cfg.Settings.MaxRetries == nil {
+		return nil
 	}
-}
-
-func (s *inProcess) GetState(ctx context.Context, threadID string) (*runtime.State, error) {
-	return nil, notimpl.Err("server.GetState")
-}
-
-func (s *inProcess) Cancel(ctx context.Context, threadID string) error {
-	return notimpl.Err("server.Cancel")
-}
-
-func (s *inProcess) Close() error { return nil }
-
-// Manager starts, restarts and stops a server subprocess for the client.
-type Manager interface {
-	Start(ctx context.Context) (Server, error)
-	Restart(ctx context.Context) (Server, error)
-	Stop(ctx context.Context) error
+	return map[string]any{"max_retries": *cfg.Settings.MaxRetries}
 }

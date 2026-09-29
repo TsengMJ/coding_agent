@@ -4,8 +4,8 @@ import "fmt"
 
 // Interrupt pauses a run and surfaces Value to the caller (LangGraph `interrupt()`).
 type Interrupt struct {
-	ID    string
-	Value any
+	ID    string `json:"id"`
+	Value any    `json:"value,omitempty"`
 }
 
 // InterruptError is returned from a run that paused on one or more interrupts.

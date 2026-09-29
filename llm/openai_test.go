@@ -55,8 +55,11 @@ func TestOpenAIRequestShape(t *testing.T) {
 	assistant := msgs[2].(map[string]any)
 	call := assistant["tool_calls"].([]any)[0].(map[string]any)
 	fn := call["function"].(map[string]any)
-	if fn["name"] != "ls" || fn["arguments"] != `{"path":"/"}` || assistant["content"] != nil {
+	if fn["name"] != "ls" || fn["arguments"] != `{"path":"/"}` {
 		t.Fatalf("unexpected assistant message: %v", assistant)
+	}
+	if content, ok := assistant["content"].(string); ok && content != "" {
+		t.Fatalf("assistant content = %q", content)
 	}
 	if toolMsg := msgs[3].(map[string]any); toolMsg["role"] != "tool" || toolMsg["tool_call_id"] != "c1" {
 		t.Fatalf("unexpected tool message: %v", toolMsg)

@@ -3,9 +3,11 @@ package deepagents
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
+	"github.com/tsengmingchun/deepagents_golang/backend"
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/asyncsubagents"
@@ -90,10 +92,72 @@ func TestCreateDeepAgentRunsToolRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCancelledToolCallIsPatchedOnNextTurn(t *testing.T) {
+	model := llm.NewFakeModel(
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "slow"}}},
+		llm.NewAssistantMessage("recovered"),
+	)
+	started := make(chan struct{})
+	slow := &tool.Func{
+		ToolName: "slow",
+		Fn: func(ctx context.Context, _ *tool.Runtime, _ map[string]any) (*tool.Result, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	a, err := CreateDeepAgent(WithModel(model), WithTools(slow), WithCheckpointer(runtime.NewMemoryCheckpointer()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := runtime.RunConfig{ThreadID: "t1"}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-started; cancel() }()
+	if _, err := a.Invoke(ctx, agent.Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, cfg); !errors.Is(err, context.Canceled) {
+		t.Fatalf("first run err = %v", err)
+	}
+
+	state, err := a.Invoke(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage("again")}}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Messages[len(state.Messages)-1].Text(); got != "recovered" {
+		t.Fatalf("final text = %q", got)
+	}
+	sent := model.Requests()[1].Messages
+	var roles []llm.Role
+	for _, m := range sent {
+		roles = append(roles, m.Role)
+	}
+	want := []llm.Role{llm.RoleUser, llm.RoleAssistant, llm.RoleTool, llm.RoleUser}
+	if !slices.Equal(roles, want) {
+		t.Fatalf("second request roles = %v", roles)
+	}
+}
+
 func TestCreateDeepAgentRejectsSubAgents(t *testing.T) {
 	_, err := CreateDeepAgent(WithModel(llm.NewFakeModel()), WithSubAgents(subagents.SubAgent{}))
 	if !errors.Is(err, notimpl.ErrNotImplemented) {
 		t.Fatalf("want ErrNotImplemented, got %v", err)
+	}
+}
+
+func TestCreateDeepAgentWithBackendExposesFilesystemTools(t *testing.T) {
+	model := llm.NewFakeModel(llm.NewAssistantMessage("ok"))
+	b := backend.NewFilesystemBackend(backend.FilesystemOptions{RootDir: t.TempDir(), VirtualMode: true})
+	a, err := CreateDeepAgent(WithModel(model), WithBackend(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage("hi")}}, runtime.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, spec := range model.Requests()[0].Tools {
+		names = append(names, spec.Name)
+	}
+	if want := []string{"ls", "read_file", "write_file", "edit_file", "glob", "grep"}; !slices.Equal(names, want) {
+		t.Fatalf("tools = %v, want %v", names, want)
 	}
 }
 
@@ -106,8 +170,13 @@ func TestRequiredMiddlewareNames(t *testing.T) {
 	}
 }
 
-func TestFilesystemExposesAllToolsByDefault(t *testing.T) {
-	if got := len(filesystem.New(filesystem.Options{}).Tools()); got != len(filesystem.AllTools) {
-		t.Fatalf("want %d tools, got %d", len(filesystem.AllTools), got)
+func TestFilesystemExposesDefaultToolsWithShellBackend(t *testing.T) {
+	b := backend.NewLocalShellBackend(backend.LocalShellOptions{FilesystemOptions: backend.FilesystemOptions{RootDir: t.TempDir(), VirtualMode: true}})
+	m, err := filesystem.New(filesystem.Options{Backend: b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(m.Tools()); got != len(filesystem.DefaultTools) {
+		t.Fatalf("want %d tools, got %d", len(filesystem.DefaultTools), got)
 	}
 }
