@@ -20,6 +20,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 )
 
 // Options configures the TUI.
@@ -398,6 +399,10 @@ func (m *model) message(msg llm.Message) {
 			m.entries = append(m.entries, entry{kind: entryAssistant, text: text})
 		}
 		for _, call := range msg.ToolCalls {
+			if list, ok := todoChecklist(call); ok {
+				m.entries = append(m.entries, entry{kind: entryTool, text: list})
+				continue
+			}
 			m.entries = append(m.entries, entry{kind: entryTool, text: strings.TrimPrefix(client.ToolCallLine(call), "[tool] ")})
 		}
 	case llm.RoleTool:
@@ -571,6 +576,31 @@ func (m *model) info(text string) { m.entries = append(m.entries, entry{kind: en
 
 func (m *model) errorf(format string, args ...any) {
 	m.entries = append(m.entries, entry{kind: entryError, text: fmt.Sprintf(format, args...)})
+}
+
+// todoChecklist renders a write_todos call as a checklist instead of its raw
+// JSON arguments.
+func todoChecklist(call llm.ToolCall) (string, bool) {
+	if call.Name != todolist.ToolName {
+		return "", false
+	}
+	todos, err := todolist.ParseTodos(call.Args["todos"])
+	if err != nil {
+		return "", false
+	}
+	var b strings.Builder
+	b.WriteString("todos")
+	for _, t := range todos {
+		mark := "○"
+		switch t.Status {
+		case todolist.StatusInProgress:
+			mark = "▸"
+		case todolist.StatusCompleted:
+			mark = "✓"
+		}
+		fmt.Fprintf(&b, "\n  %s %s", mark, t.Content)
+	}
+	return b.String(), true
 }
 
 func firstLine(s string) string {

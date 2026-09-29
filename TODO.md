@@ -184,7 +184,7 @@
   - [~] `middleware`（`WithMiddleware`：目前直接作為完整 stack，尚無同名取代規則）
   - [~] `subagents`（`WithSubAgents`：SubAgent / CompiledSubAgent / AsyncSubAgent）
   - [~] `skills`（`WithSkills`）
-  - [~] `memory`（`WithMemory`）
+  - [x] `memory`（`WithMemory`：以主 backend 讀取，放在 caller middleware 之後、HITL 之前）
   - [~] `permissions`（`WithPermissions`）
   - [~] `backend`（`WithBackend` 會加入 FilesystemMiddleware；未給時預設 StateBackend 尚未實作，暫不加檔案工具）
   - [x] `interrupt_on`（`WithInterruptOn`：HITL middleware 放在 stack 最後）
@@ -321,7 +321,7 @@
 - [ ] system prompt：composite route host-path 說明（`_route_host_path_prompt`）
 - [x] 非 sandbox backend 時移除 `execute`（在 `New` 決定工具清單）
 - [ ] 權限檢查：read / write / delete 規則、ls / glob / grep 結果過濾
-- [ ] 平行檔案異動保護（`_parallel_file_mutation_error`）
+- [x] 平行檔案異動保護（`_parallel_file_mutation_error`：同一輪對同一路徑的第二個以後的 write / edit / delete 回錯誤）
 - [ ] 大型 tool 結果 eviction 到 backend（`_message_eviction.py`：preview head/tail、`/large_tool_results/`）
 - [ ] 大型 human message eviction
 - [ ] media 結果重排到 tool results 之後、rejected content 替換
@@ -388,11 +388,11 @@
 
 ### 4.6 Memory `middleware/memory`（py: `middleware/memory.py`）
 
-- [~] `ContentsStateKey`（private）、`Options`、`Middleware`（BeforeAgent / WrapModelCall）
-- [ ] `MEMORY_SYSTEM_PROMPT` 模板
-- [ ] BeforeAgent：依序載入 sources（每 thread 一次）
-- [ ] 去除 HTML 註解
-- [ ] 注入 system prompt、Anthropic cache_control breakpoint
+- [x] `ContentsStateKey`（private）、`Options`、`Middleware`（BeforeAgent / WrapModelCall）
+- [x] `MEMORY_SYSTEM_PROMPT` 模板（需含 `{agent_memory}`）
+- [x] BeforeAgent：依序載入 sources（每 thread 一次，檔案不存在略過）
+- [x] 去除 HTML 註解
+- [~] 注入 system prompt（Anthropic cache_control breakpoint 待 Anthropic provider）
 
 ### 4.7 Skills `middleware/skills`（py: `middleware/skills.py`）
 
@@ -433,8 +433,8 @@
   - [x] approve / reject（reject 產生 error tool message，可附理由）
   - [ ] edit / respond
   - [x] `Merge`（`_merge_fs_interrupt_on`）
-- [~] TodoList `middleware/todolist`（langchain `TodoListMiddleware`）
-  - [ ] `write_todos` 工具與 system prompt
+- [x] TodoList `middleware/todolist`（langchain `TodoListMiddleware`）
+  - [x] `write_todos` 工具與 system prompt；同一輪多次呼叫全部回錯誤；TUI 以 checklist 顯示
 - [~] PromptCaching `middleware/promptcaching`（py: `_prompt_caching.py`）
   - [~] `AppendDefaults`
   - [ ] Anthropic cache_control 標記
@@ -442,7 +442,7 @@
   - [ ] Fireworks 標記
 - [~] ToolExclusion `middleware/toolexclusion`（py: `_tool_exclusion.py`）
   - [ ] WrapModelCall 過濾工具
-- [ ] `middleware/_utils.append_to_system_message`
+- [x] `middleware/_utils.append_to_system_message` — go: `agent.AppendToSystemMessage`
 - [-] `middleware/permissions.py`（Python 僅為 re-export 模組）
 
 ---
@@ -511,8 +511,8 @@
 
 ### 6.2 Agent `code/agent`（code: `agent.py`）
 
-- [~] `CreateCLIAgent` / `Options`（LocalShellBackend virtual mode 以 cwd 為根 + system prompt + HITL `DefaultInterruptOn`：write_file / edit_file / execute；subagents、MCP 未接）
-- [~] `SystemPrompt`（headless / interactive、model identity、cwd 與虛擬路徑說明；git 資訊、skills、web search 段落未做）— go: `code/agent/system_prompt.md`
+- [~] `CreateCLIAgent` / `Options`（LocalShellBackend virtual mode 以 cwd 為根 + system prompt + TodoList + Memory（`~/.deepagents/<agent>/AGENTS.md`、`/.deepagents/AGENTS.md`、`/AGENTS.md`；headless 用 `_MEMORY_HEADLESS_SYSTEM_PROMPT`）+ HITL `DefaultInterruptOn`；MCP 未接）
+- [~] `SystemPrompt`（headless / interactive、model identity、cwd 與虛擬路徑說明、Project Context；skills、web search 段落未做）— go: `code/agent/system_prompt.md`
 - [~] `ListAgents` / `ResetAgent`
 - [x] shell allow-list（`IsShellCommandAllowed`，移植 `contains_dangerous_patterns` / `is_shell_command_allowed`）— 以 hitl `When` 讓符合的 execute 免核准，`all` 取消 execute 核准；取代 `ShellAllowListMiddleware` stub
 - [ ] 任務錯誤格式化（`_format_task_error`）
@@ -524,7 +524,7 @@
 
 - [x] `Scope`、`Settings`、`Source`、`Paths`、`Resolver`、`NewResolver`（使用者層 + env）
 - [x] `DefaultPaths`（`~/.deepagents`、`cwd/.deepagents`；尚未處理 profile state dir）
-- [x] config.toml 解析（`github.com/BurntSushi/toml`）：`models.default`、`startup.mode`（manual / yolo）、`shell.allow_list`（陣列、逗號字串、`recommended`、`all`）、`retries.max_retries`、`server.url`；其餘 key 放 `Raw`；錯誤帶行號
+- [x] config.toml 解析（`github.com/BurntSushi/toml`）：`models.default`、`startup.mode`（manual / yolo，預設 yolo）、`shell.allow_list`（陣列、逗號字串、`recommended`、`all`）、`retries.max_retries`、`server.url`；其餘 key 放 `Raw`；錯誤帶行號
 - [~] 分層合併：flag > env（`DCODE_MODEL`、`DCODE_SERVER`、`DEEPAGENTS_CODE_SHELL_ALLOW_LIST`）> 使用者 config.toml > 預設；managed / project / session 層未做
 - [x] .env 載入（shell > 最近的專案 `.env` > `~/.deepagents/.env`）— go: `code/config/dotenv.go`
   - [ ] 拒絕危險 key（`_DOTENV_DENIED_ENV_KEYS`、專案 `.env` 不可設定的 LangSmith key）
@@ -657,7 +657,7 @@
 - [ ] OpenAI Codex 整合 — code: `integrations/openai_codex.py`
 - [ ] btw（旁支問題）— code: `btw*.py`
 - [ ] ask_user 工具 — code: `ask_user.py`
-- [ ] local context（git、專案資訊）— code: `local_context.py`, `_git.py`, `project_utils.py`
+- [~] local context（git、專案資訊）— code: `local_context.py`, `_git.py`, `project_utils.py`；go: `code/agent/localcontext.go`（git 分支、`git status` 前 20 筆、專案標記檔；project root 用 cwd，不找 git root）
 - [ ] workspace / repository bounds — code: `workspace.py`, `_repository_bounds.py`
 - [ ] memory guard — code: `memory_guard.py`
 - [ ] session stats / tokens — code: `_session_stats.py`

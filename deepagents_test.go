@@ -3,7 +3,10 @@ package deepagents
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
@@ -178,5 +181,24 @@ func TestFilesystemExposesDefaultToolsWithShellBackend(t *testing.T) {
 	}
 	if got := len(m.Tools()); got != len(filesystem.DefaultTools) {
 		t.Fatalf("want %d tools, got %d", len(filesystem.DefaultTools), got)
+	}
+}
+
+func TestCreateDeepAgentWithMemoryInjectsAgentsMD(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("always run tests"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model := llm.NewFakeModel(llm.NewAssistantMessage("ok"))
+	b := backend.NewFilesystemBackend(backend.FilesystemOptions{RootDir: dir, VirtualMode: true})
+	a, err := CreateDeepAgent(WithModel(model), WithBackend(b), WithMemory("/AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage("hi")}}, runtime.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if sys := model.Requests()[0].Messages[0].Text(); !strings.Contains(sys, "always run tests") {
+		t.Fatalf("system prompt:\n%s", sys)
 	}
 }

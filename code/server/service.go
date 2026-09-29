@@ -39,6 +39,7 @@ type Config struct {
 // Service runs the coding agent for many threads and working directories.
 type Service struct {
 	settings     *config.Settings
+	paths        config.Paths
 	model        llm.ChatModel
 	checkpointer runtime.Checkpointer
 	sessions     sessions.Store
@@ -74,6 +75,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	s := &Service{
 		settings: cfg.Settings,
+		paths:    cfg.Paths,
 		model:    model,
 		agents:   map[agentKey]*agentEntry{},
 		busy:     map[string]bool{},
@@ -308,6 +310,7 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest) (agent.Agent, er
 			Settings:     s.settings,
 			Model:        s.model,
 			Cwd:          req.Cwd,
+			UserDir:      s.paths.UserDir,
 			Checkpointer: s.checkpointer,
 			Interactive:  req.Interactive,
 		})

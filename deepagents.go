@@ -13,6 +13,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/filesystem"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/deepagents_golang/middleware/memory"
 	"github.com/tsengmingchun/deepagents_golang/middleware/patchtoolcalls"
 	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
 	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
@@ -147,7 +148,6 @@ func rejectUnsupported(o Options) error {
 	}{
 		{"WithSubAgents", len(o.SubAgents) > 0},
 		{"WithSkills", len(o.Skills) > 0},
-		{"WithMemory", len(o.Memory) > 0},
 		{"WithPermissions", len(o.Permissions) > 0},
 		{"WithResponseFormat", o.ResponseFormat != nil},
 	}
@@ -174,6 +174,16 @@ func buildMiddleware(o Options) ([]agent.Middleware, error) {
 	}
 	stack = append(stack, patchtoolcalls.New())
 	stack = append(stack, o.Middleware...)
+	if len(o.Memory) > 0 {
+		if o.Backend == nil {
+			return nil, errors.New("deepagents.CreateDeepAgent: WithMemory requires WithBackend")
+		}
+		mem, err := memory.New(memory.Options{Backend: o.Backend, Sources: o.Memory})
+		if err != nil {
+			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+		}
+		stack = append(stack, mem)
+	}
 	if len(o.InterruptOn) > 0 {
 		stack = append(stack, hitl.New(o.InterruptOn))
 	}

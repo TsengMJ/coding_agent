@@ -121,23 +121,8 @@ func (m *Middleware) WrapModelCall(ctx context.Context, req *agent.ModelRequest,
 		return next(ctx, req)
 	}
 	updated := *req
-	updated.SystemMessage = appendToSystemMessage(req.SystemMessage, m.opts.SystemPrompt)
+	updated.SystemMessage = agent.AppendToSystemMessage(req.SystemMessage, m.opts.SystemPrompt)
 	return next(ctx, &updated)
-}
-
-// appendToSystemMessage returns a copy of msg with text appended as a new
-// block, keeping existing blocks (and their cache markers) intact.
-func appendToSystemMessage(msg *llm.Message, text string) *llm.Message {
-	if msg == nil {
-		out := llm.NewSystemMessage(text)
-		return &out
-	}
-	out := *msg
-	if len(out.Content) > 0 {
-		text = "\n\n" + text
-	}
-	out.Content = append(slices.Clone(msg.Content), llm.TextBlock(text))
-	return &out
 }
 
 // WrapToolCall rejects a second mutation of the same file in one model turn

@@ -7,6 +7,7 @@ package agent
 
 import (
 	"context"
+	"slices"
 
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
@@ -102,4 +103,20 @@ type ToolProvider interface {
 // StateSchemaProvider contributes state keys (`AgentMiddleware.state_schema`).
 type StateSchemaProvider interface {
 	StateSchema() runtime.Schema
+}
+
+// AppendToSystemMessage returns a copy of msg with text appended as a new
+// block, keeping existing blocks (and their cache markers) intact
+// (`append_to_system_message`).
+func AppendToSystemMessage(msg *llm.Message, text string) *llm.Message {
+	if msg == nil {
+		out := llm.NewSystemMessage(text)
+		return &out
+	}
+	out := *msg
+	if len(out.Content) > 0 {
+		text = "\n\n" + text
+	}
+	out.Content = append(slices.Clone(msg.Content), llm.TextBlock(text))
+	return &out
 }

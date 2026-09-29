@@ -357,3 +357,24 @@ func TestCtrlCCancelsRunAndSecondCtrlCQuits(t *testing.T) {
 		t.Fatal("ctrl+c on an empty idle prompt must quit")
 	}
 }
+
+func TestWriteTodosRendersChecklist(t *testing.T) {
+	m := newTestModel(t, newService(t), t.TempDir())
+	msg := llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "t", Name: "write_todos", Args: map[string]any{
+		"todos": []any{
+			map[string]any{"content": "read code", "status": "completed"},
+			map[string]any{"content": "write tests", "status": "in_progress"},
+			map[string]any{"content": "ship", "status": "pending"},
+		},
+	}}}}
+	m.Update(eventMsg{ev: server.Event{Kind: server.EventMessage, Message: &msg}})
+	out := ansi.Strip(m.transcript())
+	for _, want := range []string{"✓ read code", "▸ write tests", "○ ship"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "content") {
+		t.Fatalf("raw JSON shown:\n%s", out)
+	}
+}

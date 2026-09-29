@@ -18,6 +18,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 	rt "github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
 )
@@ -32,6 +33,9 @@ type Options struct {
 	AgentName string
 	// Cwd is the project root; file tools see it as "/" and commands run in it.
 	Cwd string
+	// UserDir is ~/.deepagents; its <agent>/AGENTS.md is loaded as memory.
+	// Empty skips user-level memory.
+	UserDir string
 	// Backend defaults to a LocalShellBackend rooted at Cwd in virtual mode.
 	Backend      backend.Backend
 	ExtraTools   []tool.Tool
@@ -41,6 +45,9 @@ type Options struct {
 	AutoApprove bool
 	// Interactive tailors the prompt for a human in the loop; false means headless.
 	Interactive bool
+	// ProjectContext is the rendered "Project Context" section;
+	// CreateCLIAgent fills it from LocalContext.
+	ProjectContext string
 }
 
 // CreateCLIAgent assembles the coding agent on top of deepagents.CreateDeepAgent.
@@ -58,7 +65,14 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 			InheritEnv:        true,
 		})
 	}
+	if opts.ProjectContext == "" {
+		opts.ProjectContext = LocalContext(ctx, opts.Cwd)
+	}
 	prompt, err := SystemPrompt(opts)
+	if err != nil {
+		return nil, err
+	}
+	mem, err := newMemory(b, opts.UserDir, MemorySources(opts.UserDir, opts.AgentName), opts.Interactive)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +81,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		deepagents.WithBackend(b),
 		deepagents.WithSystemPrompt(prompt),
 		deepagents.WithTools(opts.ExtraTools...),
+		deepagents.WithMiddleware(todolist.New("", ""), mem),
 		deepagents.WithCheckpointer(opts.Checkpointer),
 		deepagents.WithStore(opts.Store),
 		deepagents.WithName(opts.AgentName),
@@ -106,7 +121,8 @@ func InterruptOn(s *config.Settings) map[string]hitl.InterruptOnConfig {
 	return cfg
 }
 
-// SystemPrompt renders the CLI system prompt (mode, model identity, cwd).
+// SystemPrompt renders the CLI system prompt (mode, model identity, cwd,
+// project context).
 func SystemPrompt(opts Options) (string, error) {
 	if opts.Cwd == "" {
 		return "", errors.New("code/agent.SystemPrompt: Cwd is required")
@@ -131,6 +147,7 @@ func SystemPrompt(opts Options) (string, error) {
 			"- After repeated failures, use a different permitted approach. If none is available, report the blocker and any completed work."),
 		"{model_identity_section}", modelIdentitySection(opts.Model),
 		"{working_dir_section}", workingDirSection(opts.Cwd),
+		"{project_context_section}", opts.ProjectContext,
 	)
 	return r.Replace(systemPromptTemplate), nil
 }

@@ -118,7 +118,7 @@
 - todos / memory / local context / TUI checklist
 - summarization 觸發、cutoff 不切斷 tool call 配對、state messages 不變、offload、overflow 重試、`/compact` 端到端
 - middleware 組裝順序與同名取代、excluded middleware 驗證、prompt 組裝、`task` isolated 與平行呼叫
-**Status**: In Progress（7a 完成）
+**Status**: In Progress（7a、7b 完成）
 
 ## Stage 8: 進階 middleware
 
