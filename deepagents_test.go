@@ -1,11 +1,13 @@
 package deepagents
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/asyncsubagents"
 	"github.com/tsengmingchun/deepagents_golang/middleware/filesystem"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
@@ -19,6 +21,8 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 	"github.com/tsengmingchun/deepagents_golang/middleware/toolexclusion"
 	"github.com/tsengmingchun/deepagents_golang/middleware/unsupportedcontent"
+	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/deepagents_golang/tool"
 )
 
 // Hook conformance: each middleware exposes the hooks its Python counterpart overrides.
@@ -59,8 +63,36 @@ var (
 	_ subagents.Spec = asyncsubagents.AsyncSubAgent{}
 )
 
-func TestCreateDeepAgentNotImplemented(t *testing.T) {
-	if _, err := CreateDeepAgent(WithModelSpec("openai:gpt-5.5")); !errors.Is(err, notimpl.ErrNotImplemented) {
+func TestCreateDeepAgentRunsToolRoundTrip(t *testing.T) {
+	model := llm.NewFakeModel(
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "add"}}},
+		llm.NewAssistantMessage("the answer is 3"),
+	)
+	add := &tool.Func{
+		ToolName: "add",
+		Fn: func(context.Context, *tool.Runtime, map[string]any) (*tool.Result, error) {
+			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("3")}}, nil
+		},
+	}
+	a, err := CreateDeepAgent(WithModel(model), WithTools(add), WithSystemPrompt("you add numbers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := a.Invoke(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage("1+2")}}, runtime.RunConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Messages[len(state.Messages)-1].Text(); got != "the answer is 3" {
+		t.Fatalf("final text = %q", got)
+	}
+	if first := model.Requests()[0].Messages[0]; first.Role != llm.RoleSystem || first.Text() != "you add numbers" {
+		t.Fatalf("system prompt not sent first: %+v", first)
+	}
+}
+
+func TestCreateDeepAgentRejectsSubAgents(t *testing.T) {
+	_, err := CreateDeepAgent(WithModel(llm.NewFakeModel()), WithSubAgents(subagents.SubAgent{}))
+	if !errors.Is(err, notimpl.ErrNotImplemented) {
 		t.Fatalf("want ErrNotImplemented, got %v", err)
 	}
 }

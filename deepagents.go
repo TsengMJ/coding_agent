@@ -4,6 +4,8 @@
 package deepagents
 
 import (
+	"errors"
+
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/backend"
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
@@ -102,10 +104,73 @@ func WithResponseFormat(f agent.ResponseFormat) Option {
 // caller middleware -> profile extra middleware -> prompt caching ->
 // Memory (if memory) -> HITL (if interrupts) -> UnsupportedContent ->
 // ToolExclusion (if profile excludes tools).
+//
+// The default stack is not assembled yet: only the caller's middleware runs,
+// and options that depend on the stack return notimpl.ErrNotImplemented.
 func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
 	var o Options
 	for _, opt := range opts {
 		opt(&o)
 	}
-	return nil, notimpl.Err("deepagents.CreateDeepAgent")
+	if err := rejectUnsupported(o); err != nil {
+		return nil, err
+	}
+	model, err := resolveModel(o)
+	if err != nil {
+		return nil, err
+	}
+	return agent.CreateAgent(agent.Config{
+		Model:          model,
+		SystemMessage:  resolveSystemMessage(o),
+		Tools:          o.Tools,
+		Middleware:     o.Middleware,
+		StateSchema:    o.StateSchema,
+		Store:          o.Store,
+		Name:           o.Name,
+		Debug:          o.Debug,
+		RecursionLimit: runtime.DefaultRecursionLimit,
+	})
+}
+
+func rejectUnsupported(o Options) error {
+	unsupported := []struct {
+		option string
+		set    bool
+	}{
+		{"WithSubAgents", len(o.SubAgents) > 0},
+		{"WithSkills", len(o.Skills) > 0},
+		{"WithMemory", len(o.Memory) > 0},
+		{"WithPermissions", len(o.Permissions) > 0},
+		{"WithInterruptOn", len(o.InterruptOn) > 0},
+		{"WithResponseFormat", o.ResponseFormat != nil},
+		{"WithCheckpointer", o.Checkpointer != nil},
+		{"WithBackend", o.Backend != nil},
+	}
+	for _, u := range unsupported {
+		if u.set {
+			return notimpl.Err("deepagents.CreateDeepAgent(" + u.option + ")")
+		}
+	}
+	return nil
+}
+
+func resolveModel(o Options) (llm.ChatModel, error) {
+	if o.Model != nil {
+		return o.Model, nil
+	}
+	if o.ModelSpec == "" {
+		return nil, errors.New("deepagents.CreateDeepAgent: WithModel or WithModelSpec is required")
+	}
+	return llm.InitChatModel(o.ModelSpec, nil)
+}
+
+func resolveSystemMessage(o Options) *llm.Message {
+	if o.SystemMessage != nil {
+		return o.SystemMessage
+	}
+	if o.SystemPrompt == "" {
+		return nil
+	}
+	msg := llm.NewSystemMessage(o.SystemPrompt)
+	return &msg
 }
