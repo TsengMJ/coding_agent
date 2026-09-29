@@ -4,7 +4,6 @@ import (
 	"context"
 	"iter"
 
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
@@ -47,5 +46,5 @@ type Agent interface {
 
 // CreateAgent builds the model/tool loop with the given middleware stack.
 func CreateAgent(cfg Config) (Agent, error) {
-	return nil, notimpl.Err("agent.CreateAgent")
+	return newLoopAgent(cfg)
 }
