@@ -13,6 +13,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
 	"github.com/tsengmingchun/deepagents_golang/middleware/memory"
 	"github.com/tsengmingchun/deepagents_golang/middleware/patchtoolcalls"
+	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
 	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
 	"github.com/tsengmingchun/deepagents_golang/middleware/toolexclusion"
@@ -120,8 +121,12 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 		}
 		stack = append(stack, mem)
 	}
-	if len(o.InterruptOn) > 0 {
-		stack = append(stack, hitl.New(o.InterruptOn))
+	generated, err := permissions.BuildInterruptOn(o.Permissions)
+	if err != nil {
+		return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+	}
+	if interruptOn := hitl.Merge(generated, o.InterruptOn); len(interruptOn) > 0 {
+		stack = append(stack, hitl.New(interruptOn))
 	}
 
 	stack, coreLen = a.exclude(stack, coreLen)
@@ -141,7 +146,11 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 }
 
 func (a *assembly) filesystem(b backend.Backend) (*filesystem.Middleware, error) {
-	fs, err := filesystem.New(filesystem.Options{Backend: b, CustomToolDescriptions: a.profile.ToolDescriptionOverrides})
+	fs, err := filesystem.New(filesystem.Options{
+		Backend:                b,
+		CustomToolDescriptions: a.profile.ToolDescriptionOverrides,
+		Permissions:            a.o.Permissions,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
 	}
@@ -185,9 +194,10 @@ func (a *assembly) subagentSpecs() ([]subagents.Spec, error) {
 // middleware that replaces one of those slots by name is inherited.
 //
 // Parent InterruptOn is not inherited: a subagent cannot pause the parent
-// run for approval yet, so review would fail every gated call.
+// run for approval yet, so review would fail every gated call. Parent
+// permissions are inherited with interrupt rules hardened to deny.
 func (a *assembly) generalPurpose() (subagents.SubAgent, error) {
-	mw, err := a.subagentBase(a.model, a.profile)
+	mw, err := a.subagentBase(a.model, a.profile, a.o.Permissions)
 	if err != nil {
 		return subagents.SubAgent{}, err
 	}
@@ -235,13 +245,15 @@ func (a *assembly) generalPurpose() (subagents.SubAgent, error) {
 
 // resolveSubAgent fills in a declarative subagent: model (default: the
 // parent's), tools (nil inherits the parent's), the base middleware stack
-// for its model's profile, and the profile prompt overlay.
+// for its model's profile, and the profile prompt overlay. Permissions
+// default to the parent's; interrupt rules become deny (see generalPurpose).
 func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, error) {
 	if len(s.Skills) > 0 {
 		return s, notimpl.Err("deepagents.CreateDeepAgent(SubAgent.Skills)")
 	}
-	if len(s.Permissions) > 0 {
-		return s, notimpl.Err("deepagents.CreateDeepAgent(SubAgent.Permissions)")
+	perms := s.Permissions
+	if perms == nil {
+		perms = a.o.Permissions
 	}
 	model, spec := s.Model, ""
 	if model == nil && s.ModelSpec != "" {
@@ -261,9 +273,9 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 	if err := validateExcluded(profile); err != nil {
 		return s, err
 	}
-	mw, err := a.subagentBase(model, profile)
+	mw, err := a.subagentBase(model, profile, perms)
 	if err != nil {
-		return s, err
+		return s, fmt.Errorf("%w (subagent %q)", err, s.Name)
 	}
 	coreLen := len(mw)
 	mw = append(mw, profile.Materialize()...)
@@ -285,6 +297,7 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 		tools = a.o.Tools
 	}
 	s.Model, s.ModelSpec = model, ""
+	s.Permissions = nil
 	s.Tools = append([]tool.Tool{}, tool.ApplyDescriptionOverrides(tools, profile.ToolDescriptionOverrides)...)
 	s.Middleware = mw
 	s.SystemPrompt = profiles.ApplyPrompt(profile, s.SystemPrompt)
@@ -292,10 +305,14 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 }
 
 // subagentBase is the core stack every declarative subagent starts from.
-func (a *assembly) subagentBase(model llm.ChatModel, profile profiles.HarnessProfile) ([]agent.Middleware, error) {
+func (a *assembly) subagentBase(model llm.ChatModel, profile profiles.HarnessProfile, perms []permissions.FilesystemPermission) ([]agent.Middleware, error) {
 	var mw []agent.Middleware
 	if b := a.o.Backend; b != nil {
-		fs, err := filesystem.New(filesystem.Options{Backend: b, CustomToolDescriptions: profile.ToolDescriptionOverrides})
+		fs, err := filesystem.New(filesystem.Options{
+			Backend:                b,
+			CustomToolDescriptions: profile.ToolDescriptionOverrides,
+			Permissions:            permissions.InterruptAsDeny(perms),
+		})
 		if err != nil {
 			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
 		}

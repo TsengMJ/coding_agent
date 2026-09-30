@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"mime"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/tsengmingchun/deepagents_golang/backend"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
 )
@@ -130,9 +132,20 @@ func validPath(a args, key string) (string, *tool.Result) {
 	return p, nil
 }
 
+// denied returns the permission error for op on p, or nil when allowed.
+func (m *Middleware) denied(op permissions.Operation, p string) *tool.Result {
+	if permissions.Check(m.opts.Permissions, op, p) == permissions.ModeDeny {
+		return errorResult("Error: permission denied for %s on %s", op, p)
+	}
+	return nil
+}
+
 func (m *Middleware) ls(ctx context.Context, a args) *tool.Result {
 	p, errRes := validPath(a, "path")
 	if errRes != nil {
+		return errRes
+	}
+	if errRes := m.denied(permissions.OpRead, p); errRes != nil {
 		return errRes
 	}
 	res := m.opts.Backend.Ls(ctx, p)
@@ -143,7 +156,7 @@ func (m *Middleware) ls(ctx context.Context, a args) *tool.Result {
 	for i, e := range res.Entries {
 		paths[i] = e.Path
 	}
-	return textResult(formatPaths(paths))
+	return textResult(formatPaths(permissions.FilterPaths(m.opts.Permissions, permissions.OpRead, paths)))
 }
 
 func formatPaths(paths []string) string {
@@ -156,6 +169,9 @@ func formatPaths(paths []string) string {
 func (m *Middleware) readFile(ctx context.Context, a args) *tool.Result {
 	p, errRes := validPath(a, "file_path")
 	if errRes != nil {
+		return errRes
+	}
+	if errRes := m.denied(permissions.OpRead, p); errRes != nil {
 		return errRes
 	}
 	offset, err := a.optionalInt("offset", defaultReadOffset)
@@ -234,6 +250,9 @@ func (m *Middleware) writeFile(ctx context.Context, a args) *tool.Result {
 	if errRes != nil {
 		return errRes
 	}
+	if errRes := m.denied(permissions.OpWrite, p); errRes != nil {
+		return errRes
+	}
 	content, err := a.requiredString("content")
 	if err != nil {
 		return errorResult("Error: %v", err)
@@ -248,6 +267,9 @@ func (m *Middleware) writeFile(ctx context.Context, a args) *tool.Result {
 func (m *Middleware) editFile(ctx context.Context, a args) *tool.Result {
 	p, errRes := validPath(a, "file_path")
 	if errRes != nil {
+		return errRes
+	}
+	if errRes := m.denied(permissions.OpWrite, p); errRes != nil {
 		return errRes
 	}
 	oldString, err := a.requiredString("old_string")
@@ -278,11 +300,41 @@ func (m *Middleware) delete(ctx context.Context, a args) *tool.Result {
 	if !ok {
 		return errorResult("Error: delete is not supported by this backend")
 	}
+	if len(m.opts.Permissions) > 0 {
+		patterns := permissions.DeleteDenyPatterns(m.opts.Permissions, p, m.hasDescendants(ctx, p))
+		if len(patterns) > 0 {
+			return errorResult("Error: permission denied for write on %s (matches deny rule(s): %s)", p, strings.Join(patterns, ", "))
+		}
+	}
 	res := d.Delete(ctx, p)
 	if res.Error != "" {
 		return errorResult("%s", res.Error)
 	}
 	return textResult("Deleted " + res.Path)
+}
+
+// hasDescendants reports whether deleting p may remove more than one file.
+// Anything not confirmed to be a plain file counts as a directory, so
+// recursive deny checks apply.
+func (m *Middleware) hasDescendants(ctx context.Context, p string) bool {
+	res := m.opts.Backend.Ls(ctx, p)
+	if res.Error != "" {
+		if !strings.Contains(res.Error, "not_a_directory") {
+			return true
+		}
+	} else if len(res.Entries) > 0 {
+		return true
+	}
+	if p == "/" {
+		return true
+	}
+	parent := m.opts.Backend.Ls(ctx, path.Dir(p))
+	for _, e := range parent.Entries {
+		if strings.TrimRight(e.Path, "/") == p {
+			return e.IsDir
+		}
+	}
+	return true
 }
 
 func (m *Middleware) glob(ctx context.Context, a args) *tool.Result {
@@ -297,6 +349,12 @@ func (m *Middleware) glob(ctx context.Context, a args) *tool.Result {
 	if searchPath, err = backend.ValidatePath(searchPath, nil); err != nil {
 		return errorResult("Error: %v", err)
 	}
+	if errRes := m.denied(permissions.OpRead, searchPath); errRes != nil {
+		if a["path"] == nil {
+			errRes.Content[0].Text += globPathlessDeniedHint
+		}
+		return errRes
+	}
 	res := m.opts.Backend.Glob(ctx, pattern, searchPath)
 	if res.Error != "" && len(res.Matches) == 0 {
 		return errorResult("Error: %s", res.Error)
@@ -305,7 +363,7 @@ func (m *Middleware) glob(ctx context.Context, a args) *tool.Result {
 	for i, info := range res.Matches {
 		paths[i] = info.Path
 	}
-	out := formatPaths(paths)
+	out := formatPaths(permissions.FilterPaths(m.opts.Permissions, permissions.OpRead, paths))
 	if res.Truncated {
 		out += "\n\n" + globTruncationNote
 	}
@@ -327,6 +385,9 @@ func (m *Middleware) grep(ctx context.Context, a args) *tool.Result {
 	if searchPath, err = backend.ValidatePath(searchPath, nil); err != nil {
 		return errorResult("Error: %v", err)
 	}
+	if errRes := m.denied(permissions.OpRead, searchPath); errRes != nil {
+		return errRes
+	}
 	glob, err := a.optionalString("glob", "")
 	if err != nil {
 		return errorResult("Error: %v", err)
@@ -343,7 +404,13 @@ func (m *Middleware) grep(ctx context.Context, a args) *tool.Result {
 	if res.Error != "" && len(res.Matches) == 0 {
 		return errorResult("%s", res.Error)
 	}
-	formatted, err := backend.FormatGrepMatches(res.Matches, backend.GrepOutputMode(mode))
+	matches := res.Matches
+	if len(m.opts.Permissions) > 0 {
+		matches = slices.DeleteFunc(slices.Clone(matches), func(g backend.GrepMatch) bool {
+			return permissions.Check(m.opts.Permissions, permissions.OpRead, g.Path) == permissions.ModeDeny
+		})
+	}
+	formatted, err := backend.FormatGrepMatches(matches, backend.GrepOutputMode(mode))
 	if err != nil {
 		return errorResult("Error: %v", err)
 	}

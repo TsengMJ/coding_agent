@@ -109,7 +109,10 @@ func WithResponseFormat(f agent.ResponseFormat) Option {
 // entry replaces it in place. A general-purpose subagent is added unless the
 // harness profile disables it or a subagent of that name is given.
 //
-// Skills, permissions, response formats, async subagents, prompt caching
+// Permissions deny or filter filesystem tool paths; interrupt rules add HITL
+// configs merged under WithInterruptOn (user entries win per tool).
+//
+// Skills, response formats, async subagents, prompt caching
 // and unsupported-content handling are not implemented yet.
 func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
 	var o Options
@@ -154,7 +157,6 @@ func rejectUnsupported(o Options) error {
 		set    bool
 	}{
 		{"WithSkills", len(o.Skills) > 0},
-		{"WithPermissions", len(o.Permissions) > 0},
 		{"WithResponseFormat", o.ResponseFormat != nil},
 	}
 	for _, u := range unsupported {

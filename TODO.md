@@ -175,7 +175,7 @@
 ## 2. graph.py：`create_deep_agent` — go: `deepagents.go`
 
 - [x] `CreateDeepAgent(opts ...Option)` 入口（預設 middleware stack、profiles、general-purpose subagent）
-  - 備註：skills / permissions / response_format / async subagents 仍回 `ErrNotImplemented`；未給 backend 時用 StateBackend
+  - 備註：skills / response_format / async subagents 仍回 `ErrNotImplemented`；未給 backend 時用 StateBackend
 - [~] 參數（functional options）
   - [x] `model`（`WithModel` 優先，否則 `WithModelSpec` 經 `InitChatModel` 解析）
   - [ ] `model=None` 預設 `claude-sonnet-4-6`（Python 已 deprecated）
@@ -185,7 +185,7 @@
   - [x] `subagents`（`WithSubAgents`：SubAgent / CompiledSubAgent；AsyncSubAgent 回 `ErrNotImplemented`）
   - [~] `skills`（`WithSkills`）
   - [x] `memory`（`WithMemory`：以主 backend 讀取，放在 caller middleware 之後、HITL 之前）
-  - [~] `permissions`（`WithPermissions`）
+  - [x] `permissions`（`WithPermissions`：傳給主 agent 與 subagent 的 Filesystem；interrupt 規則經 `BuildInterruptOn` 併入 HITL；不能搭配有 execute 的 backend）
   - [x] `backend`（`WithBackend`；未給時預設 `StateBackend`，Filesystem 與 Summarization 一律加入）
   - [x] `interrupt_on`（`WithInterruptOn`：HITL middleware 放在 stack 最後）
   - [~] `response_format`（`WithResponseFormat`）
@@ -201,9 +201,9 @@
 - [x] Required middleware 保護（Filesystem / SubAgent 不可被排除）— go: `RequiredMiddleware`
 - [x] `_excluded_middleware.py`：`_validate_excluded_middleware_config` / `_apply_excluded_middleware` / `_verify_excluded_middleware_coverage`（Go 只有名稱形式，無類別衝突檢查）
 - [x] 預設 general-purpose subagent（可被 profile 關閉、可被同名 spec 取代、繼承同名 middleware；不繼承 interrupt_on，因 subagent 尚不能暫停 parent run）
-- [~] 宣告式 SubAgent 處理（已完成 model 解析、subagent profile、tools 繼承；permissions / skills / fork / interrupt_on 繼承未做）：model 解析、subagent profile、permissions 繼承、interrupt_on 繼承與合併、tools 繼承、skills、fork 模式（鏡射 parent prompt middleware、system prompt addendum）
+- [~] 宣告式 SubAgent 處理（已完成 model 解析、subagent profile、tools 繼承、permissions 繼承（自己的 Permissions 優先；interrupt 規則轉成 deny，因 subagent 不能暫停 parent run）；skills / fork / interrupt_on 繼承未做）：model 解析、subagent profile、permissions 繼承、interrupt_on 繼承與合併、tools 繼承、skills、fork 模式（鏡射 parent prompt middleware、system prompt addendum）
 - [ ] AsyncSubAgent 分流到 AsyncSubAgentMiddleware
-- [ ] permissions → interrupt_on 合併（`_merge_fs_interrupt_on`）— go: `hitl.Merge` 已實作，尚未接到 permissions
+- [x] permissions → interrupt_on 合併（`_merge_fs_interrupt_on`）— go: `hitl.Merge(permissions.BuildInterruptOn(...), WithInterruptOn)`，使用者設定優先
 - [x] private state keys 注入 SubAgentMiddleware
 - [ ] `with_config`：recursion_limit=9999、metadata（ls_integration / lc_versions / lc_agent_name）
 - [~] `DeepAgentState`（對應 `runtime.State` + messages delta reducer，見 1.4）
@@ -295,7 +295,8 @@
 - [x] `GrepMatchesFromFiles` / `GlobSearchFiles`
 - [x] `GrepOutputMode` / `FormatGrepMatches`（files_with_matches / content / count、context 分組）
 - [x] `RegexLiteralHint`
-- [ ] `build_grep_results_dict`、`_glob_anchor`、`_paths_overlap`
+- [ ] `build_grep_results_dict`
+- [x] `_glob_anchor`、`_paths_overlap` — go: `permissions.GlobAnchor` / `PathsOverlap`
 
 ---
 
@@ -304,7 +305,7 @@
 ### 4.1 Filesystem `middleware/filesystem`（py: `middleware/filesystem.py`）
 
 - [x] `ToolName`（`FsToolName`）與 `AllTools`、`DefaultTools`（同 Python `tools=None`：全部工具；backend 不支援時略過 `delete` / `execute`）
-- [~] `Options`（backend / system_prompt / custom_tool_descriptions / max_execute_timeout / grep_max_count / tools 已生效；token eviction 門檻與 permissions 尚未使用，給 permissions 會回錯誤；Backend 必填）
+- [~] `Options`（backend / system_prompt / custom_tool_descriptions / max_execute_timeout / grep_max_count / tools / permissions 已生效；token eviction 門檻尚未使用；Backend 必填）
 - [x] `Middleware`（Name / Tools / StateSchema / WrapModelCall 附加 system prompt / WrapToolCall 截斷過長文字結果）
 - [~] 工具實作 — go: `middleware/filesystem/tools.go`
   - [x] `ls`
@@ -313,14 +314,14 @@
   - [ ] `read_file` 影片：抽幀（py: `_video.py`，需 ffmpeg 或等效函式庫）
   - [x] `write_file`
   - [x] `edit_file`（replace_all）
-  - [~] `delete`（Deleter backend 預設提供；目錄遞迴刪除、symlink 只刪 link、拒絕刪根目錄；dcode 需核准（approve / reject）；萬用字元 deny 重疊檢查未做）
+  - [~] `delete`（Deleter backend 預設提供；目錄遞迴刪除、symlink 只刪 link、拒絕刪根目錄；dcode 需核准（approve / reject）；permissions 以 write 檢查，目錄刪除會檢查所有可能重疊的 deny 規則）
   - [x] `glob`（截斷 note）
   - [x] `grep`（output_mode、max_count、regex 提示、截斷 note）
   - [~] `execute`（timeout 上限、ExecuteArtifact；offload 大輸出未做）
 - [x] 工具 schema 與預設描述文字（`LsSchema` ... `ExecuteSchema`）
 - [ ] system prompt：composite route host-path 說明（`_route_host_path_prompt`）
 - [x] 非 sandbox backend 時移除 `execute`（在 `New` 決定工具清單）
-- [ ] 權限檢查：read / write / delete 規則、ls / glob / grep 結果過濾
+- [x] 權限檢查：read / write / delete 規則、ls / glob / grep 結果過濾、無 path 的 glob 被拒時附提示；搭配有 execute 的 backend 時 `New` 回錯誤
 - [x] 平行檔案異動保護（`_parallel_file_mutation_error`：同一輪對同一路徑的第二個以後的 write / edit / delete 回錯誤）
 - [ ] 大型 tool 結果 eviction 到 backend（`_message_eviction.py`：preview head/tail、`/large_tool_results/`）
 - [ ] 大型 human message eviction
@@ -329,17 +330,19 @@
 
 ### 4.2 Permissions `middleware/permissions`（py: `FilesystemPermission`, `_fs_interrupt.py`）
 
-- [~] `Operation`（read / write / delete）、`Mode`（allow / deny / interrupt）
-- [~] `FilesystemPermission` + `Validate`
-- [~] `Check`（first match wins，無匹配 = allow）
-- [~] `FilterPaths`
-- [~] `BuildInterruptOn`（exact / bulk when-predicate、anchor 重疊判斷）
+- [x] `Operation`（read / write；delete 歸 write，同 Python）、`Mode`（allow / deny / interrupt）
+- [x] `FilesystemPermission` + `Validate`（開頭 `/`、不可含 `..` / `~`）
+- [x] `Check`（first match wins，無匹配 = allow；doublestar 比對，`*` / `**` 會比對到 dotfile，比 wcmatch 嚴格）
+- [x] `FilterPaths`（只濾 deny，interrupt 放行）
+- [x] `DeleteDenyPatterns`（`_find_delete_deny_patterns`：遞迴刪除收集所有重疊的 deny 規則）
+- [x] `BuildInterruptOn`（exact / bulk when-predicate、anchor 重疊判斷、glob 絕對 pattern 與 `..`）
+- [x] `InterruptAsDeny`（Go 專屬：subagent 不能暫停時把 interrupt 規則轉 deny）
 
 ### 4.3 SubAgents `middleware/subagents`（py: `middleware/subagents.py`）
 
 - [x] `TaskToolName`、`GeneralPurposeName` / `GeneralPurposeDescription` / `DefaultSubagentPrompt`
 - [x] `Mode`（isolated / fork；legacy `handoff` = isolated）
-- [x] `Spec` 介面、`SubAgent`、`CompiledSubAgent`（宣告式 spec 由 `New` 編譯；Skills / Permissions 尚未支援）
+- [x] `Spec` 介面、`SubAgent`、`CompiledSubAgent`（宣告式 spec 由 `New` 編譯；Skills 尚未支援；Permissions 由 CreateDeepAgent 套到 subagent 的 Filesystem）
 - [x] `Options` / `Middleware` / `AddPrivateStateKeys`
 - [x] `ValidateSpecs`（名稱唯一、mode 合法、fork 不可有 skills；fork 回 `ErrNotImplemented`）
 - [x] `task` 工具（同一輪多個 task 平行執行）

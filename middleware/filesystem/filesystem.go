@@ -60,7 +60,10 @@ type Options struct {
 	GrepMaxCount int
 	// Tools allowlists exposed tools; nil exposes DefaultTools. `execute` and
 	// `delete` are dropped when the backend lacks the capability.
-	Tools       []ToolName
+	Tools []ToolName
+	// Permissions deny paths per operation and filter listings. Interrupt
+	// rules only take effect through permissions.BuildInterruptOn + HITL.
+	// Not allowed with execution-capable backends.
 	Permissions []permissions.FilesystemPermission
 }
 
@@ -76,7 +79,12 @@ func New(opts Options) (*Middleware, error) {
 		return nil, errors.New("filesystem.New: Backend is required")
 	}
 	if len(opts.Permissions) > 0 {
-		return nil, errors.New("filesystem.New: Permissions are not supported yet")
+		if backend.SupportsExecution(opts.Backend) {
+			return nil, errors.New("filesystem.New: permissions are not supported with backends that provide command execution; shell commands would bypass the path rules")
+		}
+		if err := permissions.ValidateAll(opts.Permissions); err != nil {
+			return nil, fmt.Errorf("filesystem.New: %w", err)
+		}
 	}
 	if opts.MaxExecuteTimeout <= 0 {
 		opts.MaxExecuteTimeout = DefaultMaxExecuteTimeout

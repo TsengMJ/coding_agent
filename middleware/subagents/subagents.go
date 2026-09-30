@@ -79,11 +79,13 @@ type SubAgent struct {
 	Mode         Mode
 	Tools        []tool.Tool
 	// Model overrides the parent model; ModelSpec ("provider:model") is used when Model is nil.
-	Model          llm.ChatModel
-	ModelSpec      string
-	Middleware     []agent.Middleware
-	InterruptOn    map[string]hitl.InterruptOnConfig
-	Skills         []string
+	Model       llm.ChatModel
+	ModelSpec   string
+	Middleware  []agent.Middleware
+	InterruptOn map[string]hitl.InterruptOnConfig
+	Skills      []string
+	// Permissions are applied by deepagents.CreateDeepAgent to the
+	// subagent's filesystem middleware; used directly here they are rejected.
 	Permissions    []permissions.FilesystemPermission
 	ResponseFormat agent.ResponseFormat
 }

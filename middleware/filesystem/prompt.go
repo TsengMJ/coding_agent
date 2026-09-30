@@ -88,6 +88,10 @@ const (
 		"valid but incomplete. Narrow the search (a more specific pattern or a narrower path) to see " +
 		"the rest."
 
+	globPathlessDeniedHint = ". A glob without 'path' is authorized against the backend's default root, not the " +
+		"directories named in 'pattern'. Retry with an explicit 'path' inside an allowed directory and a " +
+		"'pattern' relative to it."
+
 	executeUnavailable = "Error: Execution not available. This agent's backend " +
 		"does not support command execution (SandboxBackendProtocol). " +
 		"To use the execute tool, provide a backend that implements SandboxBackendProtocol."
