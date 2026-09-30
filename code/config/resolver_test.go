@@ -121,6 +121,24 @@ func TestResolverReadsBraveAPIKey(t *testing.T) {
 	}
 }
 
+func TestResolverReadsBraveAPIKeyFromDotEnv(t *testing.T) {
+	clearEnv(t)
+	if err := os.Unsetenv(BraveAPIKeyEnvVar); err != nil {
+		t.Fatal(err)
+	}
+	dotEnv := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(dotEnv, []byte("BRAVE_API_KEY=from-dotenv\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := Paths{ConfigFile: filepath.Join(t.TempDir(), "absent.toml"), GlobalDotEnv: dotEnv}
+	if err := LoadDotEnv(p, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if s := resolve(t, p); s.WebSearchAPIKey != "from-dotenv" {
+		t.Errorf("WebSearchAPIKey = %q", s.WebSearchAPIKey)
+	}
+}
+
 func TestResolverParseErrorReportsLine(t *testing.T) {
 	clearEnv(t)
 	_, err := NewResolver(writeConfig(t, "[models]\ndefault = \"x\"\nbroken = \n"))

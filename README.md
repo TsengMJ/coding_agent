@@ -183,4 +183,6 @@ make run PROMPT='hello'
 2. 專案 `.env`：從目前目錄往上找到的第一個 `.env`
 3. 全域 `~/.deepagents/.env`
 
+`BRAVE_API_KEY`（Brave Search）也放在 `.env`：有設定時 dcode 才會掛上 `web_search` 工具，`fetch_url` 不需要 key。
+
 `.env` 已列在 `.gitignore`，只有 `.env.example` 會進版控。
