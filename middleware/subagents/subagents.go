@@ -83,7 +83,9 @@ type SubAgent struct {
 	ModelSpec   string
 	Middleware  []agent.Middleware
 	InterruptOn map[string]hitl.InterruptOnConfig
-	Skills      []string
+	// Skills are skill source paths; like Permissions, they are applied by
+	// deepagents.CreateDeepAgent and rejected when used directly here.
+	Skills []string
 	// Permissions are applied by deepagents.CreateDeepAgent to the
 	// subagent's filesystem middleware; used directly here they are rejected.
 	Permissions    []permissions.FilesystemPermission

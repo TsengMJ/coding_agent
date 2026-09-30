@@ -161,4 +161,4 @@
 - Brave 參數對應、驗證、錯誤轉換、後續呼叫；fetch_url 封鎖私有 IP 與 redirect
 - SKILL.md frontmatter 解析與驗證、多來源覆蓋
 - HITL edit 決策（取代 AI 訊息中的 tool call 參數）、respond
-**Status**: In Progress（8.0、8a、8b、8c 完成）
+**Status**: In Progress（8.0、8a、8b、8c、8d 完成）

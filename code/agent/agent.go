@@ -19,6 +19,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/deepagents_golang/middleware/skills"
 	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 	rt "github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
@@ -64,6 +65,8 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if b == nil {
 		b = NewBackend(opts.Cwd)
 	}
+	b = withHostRoutes(b, userSkillRoots(opts.UserDir, opts.AgentName))
+	skillSources := existingSkillSources(ctx, b, SkillSources(opts.UserDir, opts.AgentName))
 	b = trace.WrapBackend(b)
 	if opts.ProjectContext == "" {
 		opts.ProjectContext = LocalContext(ctx, opts.Cwd)
@@ -80,12 +83,20 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	mws := []core.Middleware{summ, todolist.New("", ""), mem}
+	if len(skillSources) > 0 {
+		sk, err := skills.New(skills.Options{Backend: b, Sources: skillSources})
+		if err != nil {
+			return nil, err
+		}
+		mws = append(mws, sk)
+	}
 	dopts := []deepagents.Option{
 		deepagents.WithModel(opts.Model),
 		deepagents.WithBackend(b),
 		deepagents.WithSystemPrompt(prompt),
 		deepagents.WithTools(append(WebTools(opts.Settings), opts.ExtraTools...)...),
-		deepagents.WithMiddleware(summ, todolist.New("", ""), mem, trace.Middleware{}),
+		deepagents.WithMiddleware(append(mws, trace.Middleware{})...),
 		deepagents.WithCheckpointer(opts.Checkpointer),
 		deepagents.WithStore(opts.Store),
 		deepagents.WithName(opts.AgentName),

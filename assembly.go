@@ -14,6 +14,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/middleware/memory"
 	"github.com/tsengmingchun/deepagents_golang/middleware/patchtoolcalls"
 	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
+	"github.com/tsengmingchun/deepagents_golang/middleware/skills"
 	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
 	"github.com/tsengmingchun/deepagents_golang/middleware/toolexclusion"
@@ -69,7 +70,7 @@ func validateExcluded(p profiles.HarnessProfile) error {
 }
 
 // buildMiddleware assembles the main stack:
-// Filesystem -> SubAgent -> Summarization -> PatchToolCalls -> [caller] ->
+// Skills -> Filesystem -> SubAgent -> Summarization -> PatchToolCalls -> [caller] ->
 // profile extra -> Memory -> HITL -> ToolExclusion.
 // Filesystem and Summarization need a backend; SubAgent is present when any
 // subagent is configured (including the default general-purpose one).
@@ -81,6 +82,13 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 	}
 	var stack []agent.Middleware
 	var sub *subagents.Middleware
+	if len(o.Skills) > 0 {
+		sk, err := a.skills(o.Skills)
+		if err != nil {
+			return nil, err
+		}
+		stack = append(stack, sk)
+	}
 	if o.Backend != nil {
 		fs, err := a.filesystem(o.Backend)
 		if err != nil {
@@ -145,6 +153,14 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 	return stack, nil
 }
 
+func (a *assembly) skills(sources []string) (*skills.Middleware, error) {
+	sk, err := skills.New(skills.Options{Backend: a.o.Backend, Sources: skills.SourcesFromPaths(sources)})
+	if err != nil {
+		return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+	}
+	return sk, nil
+}
+
 func (a *assembly) filesystem(b backend.Backend) (*filesystem.Middleware, error) {
 	fs, err := filesystem.New(filesystem.Options{
 		Backend:                b,
@@ -197,7 +213,7 @@ func (a *assembly) subagentSpecs() ([]subagents.Spec, error) {
 // run for approval yet, so review would fail every gated call. Parent
 // permissions are inherited with interrupt rules hardened to deny.
 func (a *assembly) generalPurpose() (subagents.SubAgent, error) {
-	mw, err := a.subagentBase(a.model, a.profile, a.o.Permissions)
+	mw, err := a.subagentBase(a.model, a.profile, a.o.Permissions, a.o.Skills)
 	if err != nil {
 		return subagents.SubAgent{}, err
 	}
@@ -248,8 +264,9 @@ func (a *assembly) generalPurpose() (subagents.SubAgent, error) {
 // for its model's profile, and the profile prompt overlay. Permissions
 // default to the parent's; interrupt rules become deny (see generalPurpose).
 func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, error) {
-	if len(s.Skills) > 0 {
-		return s, notimpl.Err("deepagents.CreateDeepAgent(SubAgent.Skills)")
+	var skillSources []string
+	if s.Mode != subagents.ModeFork {
+		skillSources, s.Skills = s.Skills, nil
 	}
 	perms := s.Permissions
 	if perms == nil {
@@ -273,7 +290,7 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 	if err := validateExcluded(profile); err != nil {
 		return s, err
 	}
-	mw, err := a.subagentBase(model, profile, perms)
+	mw, err := a.subagentBase(model, profile, perms, skillSources)
 	if err != nil {
 		return s, fmt.Errorf("%w (subagent %q)", err, s.Name)
 	}
@@ -304,8 +321,9 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 	return s, nil
 }
 
-// subagentBase is the core stack every declarative subagent starts from.
-func (a *assembly) subagentBase(model llm.ChatModel, profile profiles.HarnessProfile, perms []permissions.FilesystemPermission) ([]agent.Middleware, error) {
+// subagentBase is the core stack every declarative subagent starts from:
+// Filesystem -> Summarization -> PatchToolCalls -> Skills (if any).
+func (a *assembly) subagentBase(model llm.ChatModel, profile profiles.HarnessProfile, perms []permissions.FilesystemPermission, skillSources []string) ([]agent.Middleware, error) {
 	var mw []agent.Middleware
 	if b := a.o.Backend; b != nil {
 		fs, err := filesystem.New(filesystem.Options{
@@ -322,7 +340,15 @@ func (a *assembly) subagentBase(model llm.ChatModel, profile profiles.HarnessPro
 		}
 		mw = append(mw, fs, summ)
 	}
-	return append(mw, patchtoolcalls.New()), nil
+	mw = append(mw, patchtoolcalls.New())
+	if len(skillSources) > 0 {
+		sk, err := a.skills(skillSources)
+		if err != nil {
+			return nil, err
+		}
+		mw = append(mw, sk)
+	}
+	return mw, nil
 }
 
 // exclude drops middleware named in the profile's ExcludedMiddleware and

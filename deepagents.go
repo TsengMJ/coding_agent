@@ -102,7 +102,7 @@ func WithResponseFormat(f agent.ResponseFormat) Option {
 //
 // Without WithBackend, files live in agent state (backend.StateBackend).
 //
-// Main stack order: Filesystem -> SubAgent -> Summarization
+// Main stack order: Skills (if skills) -> Filesystem -> SubAgent -> Summarization
 // -> PatchToolCalls -> caller middleware -> profile extra
 // middleware -> Memory (if memory) -> HITL (if interrupts) -> ToolExclusion
 // (if the profile excludes tools). Caller middleware whose Name matches an
@@ -112,7 +112,10 @@ func WithResponseFormat(f agent.ResponseFormat) Option {
 // Permissions deny or filter filesystem tool paths; interrupt rules add HITL
 // configs merged under WithInterruptOn (user entries win per tool).
 //
-// Skills, response formats, async subagents, prompt caching
+// Skills are listed in the prompt of the main agent and the general-purpose
+// subagent; declarative subagents use their own SubAgent.Skills.
+//
+// Response formats, async subagents, prompt caching
 // and unsupported-content handling are not implemented yet.
 func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
 	var o Options
@@ -156,7 +159,6 @@ func rejectUnsupported(o Options) error {
 		option string
 		set    bool
 	}{
-		{"WithSkills", len(o.Skills) > 0},
 		{"WithResponseFormat", o.ResponseFormat != nil},
 	}
 	for _, u := range unsupported {

@@ -175,7 +175,7 @@
 ## 2. graph.py：`create_deep_agent` — go: `deepagents.go`
 
 - [x] `CreateDeepAgent(opts ...Option)` 入口（預設 middleware stack、profiles、general-purpose subagent）
-  - 備註：skills / response_format / async subagents 仍回 `ErrNotImplemented`；未給 backend 時用 StateBackend
+  - 備註：response_format / async subagents 仍回 `ErrNotImplemented`；未給 backend 時用 StateBackend
 - [~] 參數（functional options）
   - [x] `model`（`WithModel` 優先，否則 `WithModelSpec` 經 `InitChatModel` 解析）
   - [ ] `model=None` 預設 `claude-sonnet-4-6`（Python 已 deprecated）
@@ -183,7 +183,7 @@
   - [x] `system_prompt`（`WithSystemMessage` 優先，否則 `WithSystemPrompt`）
   - [x] `middleware`（`WithMiddleware`：同名取代 base stack 原位置，其餘插在 base 之後；重複名稱報錯）
   - [x] `subagents`（`WithSubAgents`：SubAgent / CompiledSubAgent；AsyncSubAgent 回 `ErrNotImplemented`）
-  - [~] `skills`（`WithSkills`）
+  - [x] `skills`（`WithSkills`：主 agent stack 最前面；general-purpose subagent 繼承；宣告式 subagent 用自己的 `Skills`）
   - [x] `memory`（`WithMemory`：以主 backend 讀取，放在 caller middleware 之後、HITL 之前）
   - [x] `permissions`（`WithPermissions`：傳給主 agent 與 subagent 的 Filesystem；interrupt 規則經 `BuildInterruptOn` 併入 HITL；不能搭配有 execute 的 backend）
   - [x] `backend`（`WithBackend`；未給時預設 `StateBackend`，Filesystem 與 Summarization 一律加入）
@@ -196,12 +196,12 @@
   - [ ] `cache`
 - [x] Model 解析（`resolve_model`）+ harness profile 查找（`WithModelSpec` 用 spec，`WithModel` 用 `Info()`）
 - [x] Prompt 組裝：USER → BASE → SUFFIX（`_apply_profile_prompt`）；SystemMessage 保留 cache_control blocks
-- [~] Main agent middleware 組裝順序（Skills / AsyncSubAgent / prompt caching / UnsupportedContent 尚未加入）：Skills → Filesystem → SubAgent → Summarization → PatchToolCalls → AsyncSubAgent → [caller] → profile extra → prompt caching → Memory → HITL → UnsupportedContent → ToolExclusion
+- [~] Main agent middleware 組裝順序（AsyncSubAgent / prompt caching / UnsupportedContent 尚未加入）：Skills → Filesystem → SubAgent → Summarization → PatchToolCalls → AsyncSubAgent → [caller] → profile extra → prompt caching → Memory → HITL → UnsupportedContent → ToolExclusion
 - [x] `_apply_custom_middleware`：同名取代原位置、新增者插在 core 之後 tail 之前 — go: `mergeMiddleware`
 - [x] Required middleware 保護（Filesystem / SubAgent 不可被排除）— go: `RequiredMiddleware`
 - [x] `_excluded_middleware.py`：`_validate_excluded_middleware_config` / `_apply_excluded_middleware` / `_verify_excluded_middleware_coverage`（Go 只有名稱形式，無類別衝突檢查）
 - [x] 預設 general-purpose subagent（可被 profile 關閉、可被同名 spec 取代、繼承同名 middleware；不繼承 interrupt_on，因 subagent 尚不能暫停 parent run）
-- [~] 宣告式 SubAgent 處理（已完成 model 解析、subagent profile、tools 繼承、permissions 繼承（自己的 Permissions 優先；interrupt 規則轉成 deny，因 subagent 不能暫停 parent run）；skills / fork / interrupt_on 繼承未做）：model 解析、subagent profile、permissions 繼承、interrupt_on 繼承與合併、tools 繼承、skills、fork 模式（鏡射 parent prompt middleware、system prompt addendum）
+- [~] 宣告式 SubAgent 處理（已完成 model 解析、subagent profile、tools 繼承、permissions 繼承（自己的 Permissions 優先；interrupt 規則轉成 deny，因 subagent 不能暫停 parent run）、skills（subagent 自己的 `Skills`，放在 stack 最後）；fork / interrupt_on 繼承未做）：model 解析、subagent profile、permissions 繼承、interrupt_on 繼承與合併、tools 繼承、skills、fork 模式（鏡射 parent prompt middleware、system prompt addendum）
 - [ ] AsyncSubAgent 分流到 AsyncSubAgentMiddleware
 - [x] permissions → interrupt_on 合併（`_merge_fs_interrupt_on`）— go: `hitl.Merge(permissions.BuildInterruptOn(...), WithInterruptOn)`，使用者設定優先
 - [x] private state keys 注入 SubAgentMiddleware
@@ -342,7 +342,7 @@
 
 - [x] `TaskToolName`、`GeneralPurposeName` / `GeneralPurposeDescription` / `DefaultSubagentPrompt`
 - [x] `Mode`（isolated / fork；legacy `handoff` = isolated）
-- [x] `Spec` 介面、`SubAgent`、`CompiledSubAgent`（宣告式 spec 由 `New` 編譯；Skills 尚未支援；Permissions 由 CreateDeepAgent 套到 subagent 的 Filesystem）
+- [x] `Spec` 介面、`SubAgent`、`CompiledSubAgent`（宣告式 spec 由 `New` 編譯；Skills / Permissions 由 CreateDeepAgent 套到 subagent 的 middleware stack）
 - [x] `Options` / `Middleware` / `AddPrivateStateKeys`
 - [x] `ValidateSpecs`（名稱唯一、mode 合法、fork 不可有 skills；fork 回 `ErrNotImplemented`）
 - [x] `task` 工具（同一輪多個 task 平行執行）
@@ -400,16 +400,17 @@
 
 ### 4.7 Skills `middleware/skills`（py: `middleware/skills.py`）
 
-- [~] 限制常數（檔案大小、name / description / compatibility 長度、warning 數量）
-- [~] `Metadata`（`SkillMetadata`）、`Source`、`SourcesFromPaths`
-- [~] `Middleware`（BeforeAgent / WrapModelCall / StateSchema）
-- [~] `ParseMetadata`、`ListSkills`
-- [ ] SKILL.md frontmatter（YAML）解析
-- [ ] name 驗證（長度、字元、與目錄名一致）
-- [ ] allowed-tools 解析
-- [ ] 多來源覆蓋（後者優先）、source label 推導
-- [ ] 載入錯誤收集與截斷
-- [ ] `SKILLS_SYSTEM_PROMPT` + skills 清單 / 位置 / 警告格式化
+- [x] 限制常數（檔案大小、name / description / compatibility 長度、warning 數量）
+- [x] `Metadata`（`SkillMetadata`）、`Source`、`SourcesFromPaths`
+- [x] `Middleware`（BeforeAgent / WrapModelCall / StateSchema；`skills_metadata` 為 nil 時才重新載入）
+- [x] `ParseMetadata`、`ListSkills`
+- [x] SKILL.md frontmatter（YAML）解析
+- [x] name 驗證（長度、字元、與目錄名一致；不合規只記 log，仍載入）
+- [x] allowed-tools 解析
+- [x] 多來源覆蓋（後者優先）、source label 推導
+- [x] 載入錯誤收集與截斷
+- [x] `SKILLS_SYSTEM_PROMPT` + skills 清單 / 位置 / 警告格式化
+- [ ] `KeySpec.OmitFromOutput` 尚未在 runtime 生效：`skills_metadata` 仍出現在 `Invoke` 回傳的 state（subagent 已靠排除清單不回傳）
 
 ### 4.8 Rubric `middleware/rubric`（py: `middleware/rubric.py`）
 
@@ -522,8 +523,8 @@
 
 ### 6.2 Agent `code/agent`（code: `agent.py`）
 
-- [~] `CreateCLIAgent` / `Options`（LocalShellBackend virtual mode 以 cwd 為根 + system prompt + TodoList + Memory（`~/.deepagents/<agent>/AGENTS.md`、`/.deepagents/AGENTS.md`、`/AGENTS.md`；headless 用 `_MEMORY_HEADLESS_SYSTEM_PROMPT`）+ HITL `DefaultInterruptOn`（含 web_search / fetch_url，description 照 Python 格式）+ `WebTools`（有 `BRAVE_API_KEY` 才掛 web_search，fetch_url 一律掛）；MCP 未接）
-- [~] `SystemPrompt`（headless / interactive、model identity、cwd 與虛擬路徑說明、Project Context、web search 段落（有 key 才加，另說明 freshness / result_filter / offset / summary）；skills 段落未做）— go: `code/agent/system_prompt.md`
+- [~] `CreateCLIAgent` / `Options`（LocalShellBackend virtual mode 以 cwd 為根 + system prompt + TodoList + Memory（`~/.deepagents/<agent>/AGENTS.md`、`/.deepagents/AGENTS.md`、`/AGENTS.md`；headless 用 `_MEMORY_HEADLESS_SYSTEM_PROMPT`）+ HITL `DefaultInterruptOn`（含 web_search / fetch_url，description 照 Python 格式）+ `WebTools`（有 `BRAVE_API_KEY` 才掛 web_search，fetch_url 一律掛）+ SkillsMiddleware（`SkillSources`，見 6.10）；MCP 未接）
+- [~] `SystemPrompt`（headless / interactive、model identity、cwd 與虛擬路徑說明、Project Context、web search 段落（有 key 才加，另說明 freshness / result_filter / offset / summary）；skills 段落由 SkillsMiddleware 注入）— go: `code/agent/system_prompt.md`
 - [~] `ListAgents` / `ResetAgent`
 - [x] shell allow-list（`IsShellCommandAllowed`，移植 `contains_dangerous_patterns` / `is_shell_command_allowed`）— 以 hitl `When` 讓符合的 execute 免核准，`all` 取消 execute 核准；取代 `ShellAllowListMiddleware` stub
 - [ ] 任務錯誤格式化（`_format_task_error`）
@@ -646,6 +647,7 @@
 
 ### 6.10 Skills / Subagents 載入
 
+- [x] dcode 的 SkillsMiddleware 來源（`code/agent/skills.go`）：User Deepagents（`~/.deepagents/<agent>/skills`）→ User Agents（`~/.agents/skills`）→ Project Deepagents（`/.deepagents/skills`）→ Project Agents（`/.agents/skills`）；不存在的目錄略過；使用者層目錄經唯讀 host route 給檔案工具讀取
 - [~] `code/skills`：`Location`、`Skill`、`Discover`、`InvocationPrompt`
   - [ ] built-in skills（skill-creator、thread-inspector）
   - [ ] skill trust、slash command 化
