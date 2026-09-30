@@ -180,3 +180,30 @@
 - model：不同 request 不同 model（含 subagent）、未知 spec 400、thread 記住模型、`--default` 寫回 config.toml、回覆帶 `model_name`
 - usage：profile 前綴比對、價格計算（含 cache read）、未定價、覆寫檔、多模型加總、指令輸出、summarization 改用比例觸發
 **Status**: Complete（真模型 smoke 已跑：`seq 1 300000` 只回路徑且檔案可讀回；`/model` 切換後續聊並經 `dcode serve` + `-r` 沿用；`/cost` 顯示金額。偏離計畫：eviction 門檻 0 代表預設值、負數才關閉）
+
+## Stage B: dbench（SWE-bench Pro V2 評測）
+
+之後的迭代以真實能力為準：用 SWE-bench Pro V2 固定 50 題（`code/bench/subsets/smoke50.txt`）衡量 dcode，結果、測試明細、過程指標與成本寫進 PostgreSQL（`bench_*` 表），表現穩定後再跑 `full`（642 題）與 `hard`（51 題）。agent 階段遵照官方 locked protocol：容器 `--network none`、無 web 工具、每題 50 分鐘；patch 在乾淨映像上用官方 `tests/test.sh` 重新評分。
+
+### Stage B1: Task catalog 與 smoke50
+**Goal**: `dbench prepare` 抓固定 commit 的 `v2/`（sparse checkout）、驗證 SHA256SUMS、從 HF datasets-server 取 metadata 並寫入 `bench_tasks`；`dbench subset` 依語言分層、HARD 比例、repo 輪流抽樣。
+**Success Criteria**: 642 題、6436 個 checksum 通過；smoke50 = go 20 / python 18 / js+ts 12、HARD 4、11 個 repo 都有；同一 seed 兩次輸出相同。
+**Tests**: `config.json` 三種清單格式、Python literal 跳脫、patch 統計、verifier 測試路徑規則、gold 檔案 precision / recall、分層配額與決定性、HF 分頁、checksum 竄改偵測、Postgres / memory store 來回（無 `POSTGRES_CONN_STRING` 時 skip）
+**Status**: Complete
+
+### Stage B2: 評分器與驗收
+**Goal**: Docker 封裝；新容器套 patch（官方 PatchReplayAgent 指令鏈）→ `bash /tests/test.sh` → `reward.txt` 與 `output.json` 算出 F2P / P2P；`dbench gate` 跑 oracle 與 nop。
+**Success Criteria**: oracle 全過、nop 全不過；fake docker 單元測試涵蓋套用失敗、verifier 逾時、缺 output.json。
+**Status**: In Progress
+
+### Stage B3: agent 階段
+**Goal**: `/app` 複製到主機 workspace 並掛回斷網容器；檔案工具走 FilesystemBackend，`execute` 走 `docker exec`；不掛 web 工具、不載入使用者層設定；50 分鐘預算；照官方指令擷取 `git diff`；收集步數、工具、token、成本、時間、定位指標。
+**Status**: Not Started
+
+### Stage B4: 報表與比較
+**Goal**: SQL views、`dbench report / compare / history`、Wilson、McNemar、paired bootstrap、`dbench refs import` 做同題比較。
+**Status**: Not Started
+
+### Stage B5: 第一輪基準線
+**Goal**: 用官方 harness 研究中的開源模型跑 smoke50，和 mini-swe-agent / Pi / OpenCode 同題同模型比較，產出下一步優化清單。
+**Status**: Not Started
