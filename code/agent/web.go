@@ -152,7 +152,7 @@ const webSearchPromptSection = "### Web Search Tool Usage\n\n" +
 	"Always provide a complete, natural language answer after using web_search.\n\n"
 
 func webSearchSection(opts Options) string {
-	if !hasWebSearch(opts.Settings) {
+	if opts.NoWebTools || !hasWebSearch(opts.Settings) {
 		return ""
 	}
 	return fmt.Sprintf(webSearchPromptSection, pick(opts.Interactive, " and ask clarifying questions", ""))

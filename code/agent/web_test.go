@@ -56,6 +56,32 @@ func TestCLIAgentOffersWebTools(t *testing.T) {
 	}
 }
 
+func TestNoWebToolsRemovesWebTools(t *testing.T) {
+	model := llm.NewFakeModel(llm.NewAssistantMessage("ok"))
+	a, err := CreateCLIAgent(context.Background(), Options{
+		Model: model, Cwd: t.TempDir(), Settings: &config.Settings{WebSearchAPIKey: "k"}, AutoApprove: true,
+		NoWebTools: true, WorkingDirSection: "### Current Working Directory\n\nThe project root is `/app`.\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(context.Background(), core.Input{Messages: []llm.Message{llm.NewUserMessage("hi")}}, rt.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range model.Requests()[0].Tools {
+		if spec.Name == "web_search" || spec.Name == "fetch_url" {
+			t.Errorf("offline agent offers %s", spec.Name)
+		}
+	}
+	prompt := model.Requests()[0].Messages[0].Text()
+	if strings.Contains(prompt, "Web Search Tool Usage") {
+		t.Error("offline prompt has web search guidance")
+	}
+	if !strings.Contains(prompt, "The project root is `/app`.") || strings.Contains(prompt, "use virtual absolute paths") {
+		t.Error("WorkingDirSection should replace the default section")
+	}
+}
+
 func TestSystemPromptWebSearchSectionOnlyWithKey(t *testing.T) {
 	without, _ := SystemPrompt(Options{Cwd: "/w"})
 	if strings.Contains(without, "Web Search Tool Usage") {

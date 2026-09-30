@@ -227,6 +227,36 @@ func (s *Store) LLMCall(threadID string, seq int) (*LLMCallDetail, error) {
 	return d, nil
 }
 
+// Details returns every model call of threadID with its full request, in
+// one pass over the trace (LLMCall rescans the file for each seq).
+func (s *Store) Details(threadID string) ([]LLMCallDetail, error) {
+	blobs := map[string]json.RawMessage{}
+	var out []LLMCallDetail
+	var decodeErr error
+	err := s.each(threadID, func(rec record) bool {
+		switch {
+		case rec.Blob != nil:
+			blobs[rec.Blob.Hash] = rec.Blob.Data
+		case rec.LLM != nil:
+			d := LLMCallDetail{LLMCall: rec.LLM.LLMCall, ToolChoice: rec.LLM.ToolChoice, Settings: rec.LLM.Settings,
+				Response: rec.LLM.Response, Messages: make([]llm.Message, 0, len(rec.LLM.MessageRefs))}
+			for _, h := range rec.LLM.MessageRefs {
+				var m llm.Message
+				if decodeErr = decodeBlob(blobs, h, &m); decodeErr != nil {
+					return false
+				}
+				d.Messages = append(d.Messages, m)
+			}
+			out = append(out, d)
+		}
+		return true
+	})
+	if err == nil {
+		err = decodeErr
+	}
+	return out, err
+}
+
 func decodeBlob(blobs map[string]json.RawMessage, hash string, v any) error {
 	raw, ok := blobs[hash]
 	if !ok {

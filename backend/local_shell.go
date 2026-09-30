@@ -113,7 +113,12 @@ func (b *LocalShellBackend) Execute(ctx context.Context, command string, timeout
 	case err != nil:
 		return errorResponse(fmt.Sprintf("Error executing command: %v", err), 1)
 	}
+	return renderOutput(stdout, stderr, exitCode, b.opts.MaxOutputBytes)
+}
 
+// renderOutput formats a finished command: stdout, then stderr lines
+// prefixed with "[stderr] ", capped at limit bytes, then a non-zero exit code.
+func renderOutput(stdout, stderr *cappedBuffer, exitCode, limit int) ExecuteResponse {
 	var parts []string
 	if stdout.buf.Len() > 0 {
 		parts = append(parts, stdout.String())
@@ -128,12 +133,12 @@ func (b *LocalShellBackend) Execute(ctx context.Context, command string, timeout
 		output = "<no output>"
 	}
 	truncated := stdout.dropped > 0 || stderr.dropped > 0
-	if len(output) > b.opts.MaxOutputBytes {
-		output = truncateUTF8(output, b.opts.MaxOutputBytes)
+	if len(output) > limit {
+		output = truncateUTF8(output, limit)
 		truncated = true
 	}
 	if truncated {
-		output += fmt.Sprintf("\n\n... Output truncated at %d bytes.", b.opts.MaxOutputBytes)
+		output += fmt.Sprintf("\n\n... Output truncated at %d bytes.", limit)
 	}
 	if exitCode != 0 {
 		output = fmt.Sprintf("%s\n\nExit code: %d", strings.TrimRight(output, " \t\n"), exitCode)

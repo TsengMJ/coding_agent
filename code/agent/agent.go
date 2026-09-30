@@ -41,7 +41,9 @@ type Options struct {
 	// Backend defaults to a LocalShellBackend rooted at Cwd in virtual mode.
 	Backend backend.Backend
 	// ExtraTools are added after WebTools(Settings).
-	ExtraTools   []tool.Tool
+	ExtraTools []tool.Tool
+	// NoWebTools leaves out web_search and fetch_url (offline evaluation).
+	NoWebTools   bool
 	Checkpointer rt.Checkpointer
 	Store        rt.Store
 	// AutoApprove disables human review of tool calls (YOLO mode).
@@ -51,6 +53,9 @@ type Options struct {
 	// ProjectContext is the rendered "Project Context" section;
 	// CreateCLIAgent fills it from LocalContext.
 	ProjectContext string
+	// WorkingDirSection replaces the rendered working-directory and path
+	// section, for a Backend whose commands do not run in Cwd on this host.
+	WorkingDirSection string
 }
 
 // CreateCLIAgent assembles the coding agent on top of deepagents.CreateDeepAgent.
@@ -91,11 +96,15 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		}
 		mws = append(mws, sk)
 	}
+	var tools []tool.Tool
+	if !opts.NoWebTools {
+		tools = WebTools(opts.Settings)
+	}
 	dopts := []deepagents.Option{
 		deepagents.WithModel(opts.Model),
 		deepagents.WithBackend(b),
 		deepagents.WithSystemPrompt(prompt),
-		deepagents.WithTools(append(WebTools(opts.Settings), opts.ExtraTools...)...),
+		deepagents.WithTools(append(tools, opts.ExtraTools...)...),
 		deepagents.WithMiddleware(append(mws, trace.Middleware{})...),
 		deepagents.WithCheckpointer(opts.Checkpointer),
 		deepagents.WithStore(opts.Store),
@@ -148,6 +157,10 @@ func SystemPrompt(opts Options) (string, error) {
 	if opts.Cwd == "" {
 		return "", errors.New("code/agent.SystemPrompt: Cwd is required")
 	}
+	wd := opts.WorkingDirSection
+	if wd == "" {
+		wd = workingDirSection(opts.Cwd)
+	}
 	r := strings.NewReplacer(
 		"{mode_description}", pick(opts.Interactive, "an interactive TUI on the user's computer",
 			"non-interactive (headless) mode — there is no human operator monitoring your output in real time"),
@@ -167,7 +180,7 @@ func SystemPrompt(opts Options) (string, error) {
 			"- On the third attempt, stop and ask the user what to do\n- If you notice yourself going in circles, stop and ask the user for help",
 			"- After repeated failures, use a different permitted approach. If none is available, report the blocker and any completed work."),
 		"{model_identity_section}", modelIdentitySection(opts.Model),
-		"{working_dir_section}", workingDirSection(opts.Cwd),
+		"{working_dir_section}", wd,
 		"{web_search_section}", webSearchSection(opts),
 		"{project_context_section}", opts.ProjectContext,
 	)

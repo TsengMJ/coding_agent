@@ -61,6 +61,26 @@ func TestLLMCallDetailRestoresFullRequest(t *testing.T) {
 	}
 }
 
+func TestDetailsReturnsEveryCallInOrder(t *testing.T) {
+	s, r := newRecorder(t)
+	sys, user := llm.NewSystemMessage("you are dcode"), llm.NewUserMessage("find handlers")
+	for _, msgs := range [][]llm.Message{{sys, user}, {sys, user, llm.NewUserMessage("again")}} {
+		if _, err := r.RecordLLMCall(call(msgs...)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ds, err := s.Details("thread-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ds) != 2 || ds[0].Seq != 1 || ds[1].Seq != 2 || len(ds[1].Messages) != 3 || ds[1].Messages[2].Text() != "again" {
+		t.Fatalf("details = %+v", ds)
+	}
+	if ds[0].Response == nil || ds[0].Response.ToolCalls[0].Name != "grep" {
+		t.Fatalf("response = %+v", ds[0].Response)
+	}
+}
+
 func TestLoadSummarizesCallsWithoutBodies(t *testing.T) {
 	s, r := newRecorder(t)
 	if _, err := r.RecordLLMCall(call(llm.NewUserMessage("hi"))); err != nil {
