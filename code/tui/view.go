@@ -77,6 +77,9 @@ func (m *model) statusLine() string {
 	if m.tokens > 0 {
 		parts = append(parts, formatTokens(m.tokens)+" tokens")
 	}
+	if m.ctxPct >= 0 {
+		parts = append(parts, fmt.Sprintf("context %.0f%%", m.ctxPct))
+	}
 	if m.auto {
 		parts = append(parts, "AUTO-APPROVE")
 	}

@@ -42,6 +42,8 @@ func (funcServer) GetLLMCall(context.Context, string, int) (*trace.LLMCallDetail
 	return nil, nil
 }
 
+func (funcServer) GetUsage(context.Context, string) (*ThreadUsage, error) { return nil, nil }
+
 func (funcServer) Close() error { return nil }
 
 func startServe(t *testing.T, srv Server) (string, context.CancelFunc, <-chan error) {

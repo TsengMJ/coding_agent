@@ -39,6 +39,7 @@ var (
 //	GET  /threads/{id}/trace -> trace.Trace (model call summaries, diffs, subagent messages)
 //	GET  /threads/{id}/trace/llm/{seq} -> trace.LLMCallDetail (404 when unknown)
 //	POST /threads/{id}/compact -> CompactResult (404 unknown, 409 busy/pending/too short)
+//	GET  /threads/{id}/usage -> ThreadUsage (404 when unknown)
 //	GET  /commands        -> []commands.Command (dcode slash commands, hidden ones omitted)
 func NewHandler(srv Server) http.Handler {
 	mux := http.NewServeMux()
@@ -86,6 +87,18 @@ func NewHandler(srv Server) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, ts)
+	})
+	mux.HandleFunc("GET /threads/{id}/usage", func(w http.ResponseWriter, r *http.Request) {
+		u, err := srv.GetUsage(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		if u == nil {
+			writeError(w, http.StatusNotFound, errors.New("thread not found"))
+			return
+		}
+		writeJSON(w, http.StatusOK, u)
 	})
 	mux.HandleFunc("GET /threads/{id}/trace", func(w http.ResponseWriter, r *http.Request) {
 		t, err := srv.GetTrace(r.Context(), r.PathValue("id"))

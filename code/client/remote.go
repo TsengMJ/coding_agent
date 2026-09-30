@@ -143,6 +143,25 @@ func (r *Remote) GetThread(ctx context.Context, threadID string) (*server.Thread
 	return &ts, nil
 }
 
+func (r *Remote) GetUsage(ctx context.Context, threadID string) (*server.ThreadUsage, error) {
+	resp, err := r.do(ctx, http.MethodGet, "/threads/"+url.PathEscape(threadID)+"/usage", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+	var u server.ThreadUsage
+	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
+		return nil, fmt.Errorf("decode usage: %w", err)
+	}
+	return &u, nil
+}
+
 func (r *Remote) ListThreads(ctx context.Context, f sessions.Filter) ([]sessions.Info, error) {
 	q := url.Values{}
 	if f.Cwd != "" {

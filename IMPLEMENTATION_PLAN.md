@@ -179,4 +179,4 @@
 - registry：alias、建議、隱藏指令、TUI / REPL 既有指令、`/commands` 路由、GUI 自動完成
 - model：不同 request 不同 model（含 subagent）、未知 spec 400、thread 記住模型、`--default` 寫回 config.toml、回覆帶 `model_name`
 - usage：profile 前綴比對、價格計算（含 cache read）、未定價、覆寫檔、多模型加總、指令輸出、summarization 改用比例觸發
-**Status**: In Progress
+**Status**: Complete（真模型 smoke 已跑：`seq 1 300000` 只回路徑且檔案可讀回；`/model` 切換後續聊並經 `dcode serve` + `-r` 沿用；`/cost` 顯示金額。偏離計畫：eviction 門檻 0 代表預設值、負數才關閉）

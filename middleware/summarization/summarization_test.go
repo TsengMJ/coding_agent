@@ -257,3 +257,23 @@ func TestComputeDefaults(t *testing.T) {
 		t.Fatalf("defaults = %+v", d)
 	}
 }
+
+func TestComputeDefaultsUsesFractionsWhenContextWindowKnown(t *testing.T) {
+	d, err := ComputeDefaults(llm.NewFakeModel().WithProfile(llm.ModelProfile{MaxInputTokens: 128000}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Trigger != (ContextSize{SizeFraction, 0.85}) || d.Keep != (ContextSize{SizeFraction, 0.10}) {
+		t.Fatalf("defaults = %+v", d)
+	}
+}
+
+func TestDefaultOptionsForKnownOpenAIModelTriggerAtFraction(t *testing.T) {
+	opts, err := DefaultOptions(llm.NewOpenAIModel(llm.ProviderConfig{Model: "gpt-4o"}, false), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts.Trigger) != 1 || opts.Trigger[0][0] != (ContextSize{SizeFraction, 0.85}) {
+		t.Fatalf("trigger = %+v", opts.Trigger)
+	}
+}

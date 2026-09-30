@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tsengmingchun/deepagents_golang/code/commands"
+	"github.com/tsengmingchun/deepagents_golang/code/server"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 )
 
@@ -26,6 +27,8 @@ type Session interface {
 	Model() string
 	// SetModel makes later runs use spec.
 	SetModel(spec string)
+	// ShowUsage fetches the current thread's usage and shows format(usage).
+	ShowUsage(ctx context.Context, format func(*server.ThreadUsage) string)
 	Quit()
 	// Info shows a line of command output.
 	Info(text string)
@@ -81,6 +84,18 @@ func NewCommandRegistry(s Session, opts CommandOptions) *commands.Registry {
 		},
 		"/model": func(_ context.Context, args string) error {
 			return modelCommand(s, opts.SaveDefaultModel, args)
+		},
+		"/tokens": func(ctx context.Context, _ string) error {
+			s.ShowUsage(ctx, FormatTokens)
+			return nil
+		},
+		"/context": func(ctx context.Context, _ string) error {
+			s.ShowUsage(ctx, FormatContext)
+			return nil
+		},
+		"/cost": func(ctx context.Context, _ string) error {
+			s.ShowUsage(ctx, FormatCost)
+			return nil
 		},
 		"/quit": func(context.Context, string) error {
 			s.Quit()

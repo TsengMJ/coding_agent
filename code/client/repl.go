@@ -163,6 +163,18 @@ func (r *repl) Model() string { return r.model.Current() }
 
 func (r *repl) SetModel(spec string) { r.model.Override = spec }
 
+func (r *repl) ShowUsage(ctx context.Context, format func(*server.ThreadUsage) string) {
+	u, err := r.srv.GetUsage(ctx, r.thread)
+	switch {
+	case err != nil:
+		fmt.Fprintln(r.opts.Err, "error:", err)
+	case u == nil:
+		fmt.Fprintln(r.opts.Out, "no messages in this thread yet")
+	default:
+		fmt.Fprintln(r.opts.Out, format(u))
+	}
+}
+
 func (r *repl) Quit() { r.quit = true }
 
 func (r *repl) Info(text string) { fmt.Fprintln(r.opts.Out, text) }

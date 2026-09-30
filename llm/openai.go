@@ -68,7 +68,11 @@ func NewOpenAIModel(cfg ProviderConfig, useResponses bool) *OpenAIModel {
 
 func (m *OpenAIModel) Info() ModelInfo { return ModelInfo{Provider: m.provider, Model: m.cfg.Model} }
 
-func (m *OpenAIModel) Profile() ModelProfile { return ModelProfile{} }
+// Profile comes from the built-in context-window table (KnownProfile).
+func (m *OpenAIModel) Profile() ModelProfile {
+	p, _ := KnownProfile(m.cfg.Model)
+	return p
+}
 
 // Generate implements ChatModel by calling langchaingo's OpenAI client.
 func (m *OpenAIModel) Generate(ctx context.Context, req ChatRequest) (*Message, error) {

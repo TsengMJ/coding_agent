@@ -18,6 +18,7 @@ type FakeModel struct {
 	script   []Message
 	next     int
 	requests []ChatRequest
+	profile  ModelProfile
 }
 
 // NewFakeModel returns a FakeModel that replies with replies in order.
@@ -29,7 +30,13 @@ func NewFakeModel(replies ...Message) *FakeModel {
 func (f *FakeModel) Info() ModelInfo { return ModelInfo{Provider: "fake", Model: "fake"} }
 
 // Profile implements ChatModel.
-func (f *FakeModel) Profile() ModelProfile { return ModelProfile{} }
+func (f *FakeModel) Profile() ModelProfile { return f.profile }
+
+// WithProfile makes Profile return p, for code that reads the context window.
+func (f *FakeModel) WithProfile(p ModelProfile) *FakeModel {
+	f.profile = p
+	return f
+}
 
 // Generate implements ChatModel.
 func (f *FakeModel) Generate(ctx context.Context, req ChatRequest) (*Message, error) {

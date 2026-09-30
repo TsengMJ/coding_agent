@@ -46,6 +46,9 @@ func (f *fakeServer) GetTrace(context.Context, string) (*trace.Trace, error) { r
 func (f *fakeServer) GetLLMCall(context.Context, string, int) (*trace.LLMCallDetail, error) {
 	return nil, nil
 }
+func (f *fakeServer) GetUsage(context.Context, string) (*server.ThreadUsage, error) {
+	return nil, nil
+}
 func (f *fakeServer) Close() error { return nil }
 
 func msg(m llm.Message) server.Event { return server.Event{Kind: server.EventMessage, Message: &m} }

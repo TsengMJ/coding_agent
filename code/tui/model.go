@@ -124,6 +124,13 @@ type (
 		res *server.CompactResult
 		err error
 	}
+	// usageMsg answers fetchUsage; a nil format only refreshes the status bar.
+	usageMsg struct {
+		thread string
+		u      *server.ThreadUsage
+		err    error
+		format func(*server.ThreadUsage) string
+	}
 )
 
 type model struct {
@@ -159,7 +166,10 @@ type model struct {
 
 	llmCalls int
 	tokens   int
-	batch    *toolBatch
+	// ctxPct is the context window share the latest call used; negative
+	// when unknown.
+	ctxPct float64
+	batch  *toolBatch
 	// replied is set when the main agent answered without tool calls, so no
 	// model call is in flight until the next run or tool results.
 	replied       bool
@@ -208,6 +218,7 @@ func newModel(ctx context.Context, opts Options) *model {
 		height:     24,
 		mdStyle:    opts.MarkdownStyle,
 		previewIdx: -1,
+		ctxPct:     -1,
 		live:       map[int]bool{},
 		subs:       map[string]*subRun{},
 	}
@@ -257,6 +268,9 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		return m.runEnded(msg.err)
 	case threadLoadedMsg:
 		m.threadLoaded(msg)
+		return m.fetchUsage(nil)
+	case usageMsg:
+		m.usageArrived(msg)
 		return nil
 	case threadsMsg:
 		if msg.err != nil {
@@ -367,6 +381,7 @@ func (s tuiSession) Thread() string { return s.m.thread }
 func (s tuiSession) NewThread() {
 	s.m.thread = sessions.NewThreadID()
 	s.m.model.Thread = ""
+	s.m.ctxPct = -1
 	s.m.resetEntries()
 	s.m.info("new thread " + s.m.thread)
 }
@@ -408,6 +423,10 @@ func (s tuiSession) SetAutoApprove(on bool) {
 func (s tuiSession) Model() string { return s.m.model.Current() }
 
 func (s tuiSession) SetModel(spec string) { s.m.model.Override = spec }
+
+func (s tuiSession) ShowUsage(_ context.Context, format func(*server.ThreadUsage) string) {
+	s.m.queued = append(s.m.queued, s.m.fetchUsage(format))
+}
 
 func (s tuiSession) Quit() { s.m.queued = append(s.m.queued, tea.Quit) }
 
@@ -533,7 +552,32 @@ func (m *model) runEnded(err error) tea.Cmd {
 	}
 	m.pending = nil
 	m.mode = modeIdle
-	return nil
+	return m.fetchUsage(nil)
+}
+
+func (m *model) fetchUsage(format func(*server.ThreadUsage) string) tea.Cmd {
+	srv, ctx, thread := m.srv, m.ctx, m.thread
+	return func() tea.Msg {
+		u, err := srv.GetUsage(ctx, thread)
+		return usageMsg{thread: thread, u: u, err: err, format: format}
+	}
+}
+
+func (m *model) usageArrived(msg usageMsg) {
+	if msg.thread == m.thread && msg.u != nil && msg.u.ContextLimit > 0 {
+		m.ctxPct = msg.u.ContextPercent
+	}
+	if msg.format == nil {
+		return
+	}
+	switch {
+	case msg.err != nil:
+		m.errorf("usage: %v", msg.err)
+	case msg.u == nil:
+		m.info("no messages in this thread yet")
+	default:
+		m.info(msg.format(msg.u))
+	}
 }
 
 func (m *model) current() hitl.ActionRequest { return m.pending[len(m.decisions)] }

@@ -7,6 +7,7 @@ import type {
   SlashCommand,
   ThreadInfo,
   ThreadState,
+  ThreadUsage,
   Trace,
 } from "./types";
 
@@ -80,6 +81,15 @@ export class Api {
   async thread(id: string): Promise<ThreadState | null> {
     try {
       return await this.json(`/threads/${encodeURIComponent(id)}`);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  async usage(id: string): Promise<ThreadUsage | null> {
+    try {
+      return await this.json(`/threads/${encodeURIComponent(id)}/usage`);
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) return null;
       throw e;

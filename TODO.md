@@ -16,7 +16,7 @@
 
 ## 進度總覽
 
-- 最後更新：2026-09-30（Stage 10 進行中：context 管理與 dcode 日常體驗）
+- 最後更新：2026-09-30（Stage 10 完成：context 管理與 dcode 日常體驗）
 - 核心 SDK：圖、in-memory / Postgres checkpoint（每 thread 保留最新 10 筆）、interrupt、OpenAI Generate / Stream 走套件（含重試與串流閒置逾時）；FilesystemBackend / LocalShellBackend / FilesystemMiddleware / HITL（approve / reject、`When`）/ PatchToolCalls 可用；StateBackend（CreateDeepAgent 預設）可用；其餘 middleware、Store 仍為 stub
 - CLI：`dcode serve`（HTTP + NDJSON、兩階段關閉）、預設瀏覽器 GUI（可展開每一步、GitHub 樣式 diff、LLM 檢視器；trace 存在 `~/.deepagents/traces`）、`-tui` Bubble Tea TUI（markdown、diff 預覽）與 line REPL、`-n` / `-thread` / `-r` / `-y` / `-q` / `-no-stream` / `-timeout`、`dcode threads [-json]`；使用者層 `config.toml` 與 shell allow-list
 
@@ -54,6 +54,7 @@
 - [~] `ChatModel` 介面（`Info` / `Profile` / `Generate` / `Stream`）
 - [~] `ChatRequest` / `ToolSpec` / `ResponseFormat` / `Chunk`
 - [~] `ModelInfo`、`ModelProfile`（max_input_tokens、多模態支援旗標）
+- [x] `KnownProfile`：常見 OpenAI / OpenRouter / Claude / Gemini 等模型的 context window 表（模型名最長前綴；OpenRouter 取 `/` 後）；OpenAI / OpenRouter `Profile()` 用它，summarization 因此改以 85% context 觸發
 - [x] `TokenCounter` 型別
 - [x] `ApproximateTokenCounter`（`count_tokens_approximately`：字元數 / 4 + 每則訊息固定成本）— go: `llm/tokens.go`
 - [x] `ModelSpec` / `ParseModelSpec`（`provider:model`，只以第一個 `:` 切分）
@@ -590,10 +591,10 @@
   - [ ] `/btw`
   - [ ] `/changelog`
   - [x] `/clear`（dcode 的 `/new` alias）
-  - [ ] `/context`
+  - [x] `/context`（最近一次呼叫的 input：system prompt + tools 與對話的估算、剩餘空間）
   - [ ] `/context-doctor`
   - [ ] `/copy`
-  - [ ] `/cost`
+  - [x] `/cost`（各模型 calls / input（含 cached）/ output / 預估金額；未定價模型另列，不算成 0）
   - [ ] `/docs`
   - [ ] `/editor`
   - [ ] `/effort`
@@ -622,7 +623,7 @@
   - [ ] `/theme`
   - [x] `/threads`
   - [ ] `/timestamps`
-  - [ ] `/tokens`
+  - [x] `/tokens`（`used / limit (pct%) · model`；TUI / GUI 狀態列顯示 context 百分比）
   - [ ] `/tools`
   - [ ] `/trace`
   - [ ] `/uninstall`
@@ -671,7 +672,8 @@
 - [~] Goal `code/goal`（`Goal`、`ToolsMiddleware`、`update_goal`）— code: `goal_*.py`
   - [ ] goal rubric、state limits、notice
 - [~] Offload `code/offload`（`Result`、`Run`）— code: `offload*.py`
-- [~] Cost `code/cost`（`Price`、`Table`、`LoadTable`、`Estimate`）— code: `cost_tracking.py`
+- [x] Cost `code/cost`（`Price`、`Table`、`LoadTable`（內嵌 `prices.json` + `~/.deepagents/prices.json` 覆寫）、`Lookup`（spec → 模型名 → `-` 邊界前綴）、`Estimate`（cache read / write 分開計價，查不到回 `ErrUnpriced`））— code: `cost_tracking.py`
+- [x] `GET /threads/{id}/usage` / `Server.GetUsage`：由 checkpoint 訊息依 `model_name` 分模型加總（只含主 agent；subagent 呼叫不在 thread state）
 - [~] Plugins `code/plugins`（`Manifest`、`Store`、`OpenStore`）— code: `plugins/*`
   - [ ] marketplace、discovery、substitution
 - [~] Extensions `code/extensions`（`Extension`、`Register`、`Loaded`）— code: `extensions/*`

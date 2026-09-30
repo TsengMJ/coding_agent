@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/tsengmingchun/deepagents_golang/code/commands"
+	"github.com/tsengmingchun/deepagents_golang/code/server"
 )
 
 type fakeSession struct {
@@ -13,6 +14,7 @@ type fakeSession struct {
 	auto  bool
 	info  []string
 	model string
+	usage *server.ThreadUsage
 }
 
 func (s *fakeSession) Thread() string                      { return "t1" }
@@ -26,6 +28,9 @@ func (s *fakeSession) Quit()                               { s.calls = append(s.
 func (s *fakeSession) Info(text string)                    { s.info = append(s.info, text) }
 func (s *fakeSession) Model() string                       { return s.model }
 func (s *fakeSession) SetModel(spec string)                { s.model = spec }
+func (s *fakeSession) ShowUsage(_ context.Context, format func(*server.ThreadUsage) string) {
+	s.Info(format(s.usage))
+}
 
 func TestCommandRegistryCoversEveryDCodeCommand(t *testing.T) {
 	s := &fakeSession{}

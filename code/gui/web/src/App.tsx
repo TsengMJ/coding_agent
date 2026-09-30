@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { Api, ApiError } from "./api";
-import type { Decision, Info, Message, SlashCommand, ThreadInfo } from "./types";
+import type { Decision, Info, Message, SlashCommand, ThreadInfo, ThreadUsage } from "./types";
 import { helpText, parseModelArgs, resolveCommand } from "./model/commands";
+import { contextText, costText, tokensText } from "./model/usage";
 import { applyEvent, emptyView, endRun, fromHistory, startRun, type ThreadView } from "./model/state";
 import { buildTimeline, type LLMStep, type Turn } from "./model/timeline";
 import { matchTurn, type Filter } from "./model/filter";
@@ -65,6 +66,7 @@ export function App({ api }: { api: Api }) {
   // is the model the current thread last ran with.
   const [modelOverride, setModelOverride] = useState("");
   const [threadModel, setThreadModel] = useState("");
+  const [usage, setUsage] = useState<ThreadUsage | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const listRef = useRef<VirtuosoHandle | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -81,6 +83,17 @@ export function App({ api }: { api: Api }) {
     [api, allDirs],
   );
 
+  const refreshUsage = useCallback(
+    async (id: string) => {
+      try {
+        setUsage(await api.usage(id));
+      } catch {
+        setUsage(null);
+      }
+    },
+    [api],
+  );
+
   const loadThread = useCallback(
     async (id: string) => {
       abortRef.current?.abort();
@@ -90,6 +103,8 @@ export function App({ api }: { api: Api }) {
       setInspect(null);
       setView(emptyView());
       setThreadModel("");
+      setUsage(null);
+      void refreshUsage(id);
       try {
         const [ts, trace] = await Promise.all([api.thread(id), api.trace(id)]);
         setThreadModel(ts?.model ?? "");
@@ -98,7 +113,7 @@ export function App({ api }: { api: Api }) {
         setView({ ...emptyView(), error: `Could not load thread ${id}: ${(e as Error).message}` });
       }
     },
-    [api],
+    [api, refreshUsage],
   );
 
   useEffect(() => {
@@ -166,9 +181,10 @@ export function App({ api }: { api: Api }) {
         abortRef.current = null;
         void refreshThreads(info?.cwd ?? "");
         if (modelOverride) setThreadModel(modelOverride);
+        void refreshUsage(threadId);
       }
     },
-    [api, threadId, runCwd, autoApprove, modelOverride, refreshThreads, info],
+    [api, threadId, runCwd, autoApprove, modelOverride, refreshThreads, refreshUsage, info],
   );
 
   const newThread = useCallback(() => {
@@ -246,6 +262,19 @@ export function App({ api }: { api: Api }) {
         case "/quit":
           setNotice("Close this tab to leave; the dcode process keeps running until you stop it in the terminal.");
           return;
+        case "/tokens":
+        case "/context":
+        case "/cost": {
+          const format = { "/tokens": tokensText, "/context": contextText, "/cost": costText }[cmd.name];
+          try {
+            const u = await api.usage(threadId);
+            setUsage(u);
+            setNotice(u ? format(u) : "No messages in this thread yet.");
+          } catch (e) {
+            setNotice(`Could not load usage: ${(e as Error).message}`);
+          }
+          return;
+        }
         case "/compact":
           try {
             const r = await api.compact(threadId);
@@ -389,6 +418,11 @@ export function App({ api }: { api: Api }) {
             <span className="pill" title="LLM calls and tokens in this thread">
               {timeline.llmCount} LLM calls · {formatTokens(timeline.tokens)} tokens
             </span>
+            {usage?.context_limit ? (
+              <span className="pill" title={tokensText(usage)}>
+                context {Math.round(usage.context_percent ?? 0)}%
+              </span>
+            ) : null}
             {view.running && <span className="pill running">running</span>}
             <button
               className={`pill ${autoApprove ? "on" : ""}`}

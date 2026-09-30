@@ -128,6 +128,30 @@ export interface ThreadState {
   model?: string;
 }
 
+// ThreadUsage mirrors server.ThreadUsage from GET /api/threads/{id}/usage.
+export interface ModelUsage {
+  model: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  cost_usd?: number;
+}
+
+export interface ThreadUsage {
+  thread_id: string;
+  model: string;
+  context_tokens: number;
+  context_limit?: number;
+  context_percent?: number;
+  conversation_tokens: number;
+  fixed_tokens: number;
+  models: ModelUsage[];
+  total_cost_usd: number;
+  unpriced?: string[];
+}
+
 export interface ThreadInfo {
   thread_id: string;
   cwd: string;

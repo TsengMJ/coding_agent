@@ -16,6 +16,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
 	"github.com/tsengmingchun/deepagents_golang/code/config"
+	"github.com/tsengmingchun/deepagents_golang/code/cost"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
@@ -53,6 +54,7 @@ type Service struct {
 	newModel     func(spec string) (llm.ChatModel, error)
 	// models caches traced models by spec, guarded by mu.
 	models       map[string]llm.ChatModel
+	prices       cost.Table
 	checkpointer runtime.Checkpointer
 	sessions     sessions.Store
 	storage      string
@@ -91,7 +93,16 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		spec = specOf(model)
 	}
 	def := runModel{spec: spec, model: trace.WrapModel(model)}
+	pricesPath := ""
+	if cfg.Paths.UserDir != "" {
+		pricesPath = filepath.Join(cfg.Paths.UserDir, PricesFile)
+	}
+	prices, err := cost.LoadTable(pricesPath)
+	if err != nil {
+		return nil, err
+	}
 	s := &Service{
+		prices:       prices,
 		settings:     cfg.Settings,
 		paths:        cfg.Paths,
 		model:        &switchModel{def: def},

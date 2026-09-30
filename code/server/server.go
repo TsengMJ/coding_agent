@@ -132,6 +132,9 @@ type Server interface {
 	// GetLLMCall returns one recorded model call with its full request;
 	// the error wraps trace.ErrNotFound when there is none.
 	GetLLMCall(ctx context.Context, threadID string, seq int) (*trace.LLMCallDetail, error)
+	// GetUsage reports context size, tokens and cost; nil when the thread
+	// has no state.
+	GetUsage(ctx context.Context, threadID string) (*ThreadUsage, error)
 	Close() error
 }
 

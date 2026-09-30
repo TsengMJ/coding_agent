@@ -335,6 +335,10 @@ func (blockingServer) Run(ctx context.Context, _ server.RunRequest) iter.Seq2[se
 	}
 }
 
+func (blockingServer) GetUsage(context.Context, string) (*server.ThreadUsage, error) {
+	return nil, nil
+}
+
 func (blockingServer) ListThreads(context.Context, sessions.Filter) ([]sessions.Info, error) {
 	return nil, nil
 }
@@ -620,5 +624,26 @@ func TestBatchSummaryVerdict(t *testing.T) {
 	}
 	if !strings.HasSuffix(seq, "sequential") {
 		t.Errorf("sequential summary = %q", seq)
+	}
+}
+
+func TestStatusShowsContextShareAndCostCommand(t *testing.T) {
+	reply := llm.NewAssistantMessage("hi")
+	reply.Usage = &llm.Usage{InputTokens: 2500, OutputTokens: 10, TotalTokens: 2510}
+	model := llm.NewFakeModel(reply).WithProfile(llm.ModelProfile{MaxInputTokens: 10000})
+	svc, err := server.New(context.Background(), server.Config{Model: model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	m := newTestModel(t, svc, t.TempDir())
+	drain(t, m, m.submit("hello"))
+	if !strings.Contains(m.statusLine(), "context 25%") {
+		t.Fatalf("status line = %q", m.statusLine())
+	}
+	drain(t, m, m.submit("/cost"))
+	last := m.entries[len(m.entries)-1].text
+	if !strings.Contains(last, "fake:fake  1 call · in 2.5k · out 10") {
+		t.Fatalf("/cost = %q", last)
 	}
 }
