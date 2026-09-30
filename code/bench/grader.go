@@ -90,6 +90,11 @@ func (g Grader) Grade(ctx context.Context, task Task, patch string, opts GradeOp
 		res.ApplyOutput = clipTail(string(ar.Stdout)+string(ar.Stderr), 6000)
 		res.ApplyFailed = ar.ExitCode != 0
 	}
+	// Harbor mounts /logs/verifier; test.sh only creates it in its exit trap,
+	// after it has already tried (quietly) to copy output.json there.
+	if mr, err := g.Docker.Exec(ctx, id, ExecSpec{Cmd: []string{"mkdir", "-p", "/logs/verifier"}, Timeout: time.Minute}); err != nil || mr.ExitCode != 0 {
+		return res, fmt.Errorf("create /logs/verifier: %v %s", err, mr.Stderr)
+	}
 	timeout := time.Duration(task.VerifyTimeout * float64(time.Second))
 	vr, err := g.Docker.Exec(ctx, id, ExecSpec{Cmd: []string{"bash", "/tests/test.sh"}, Timeout: timeout})
 	if err != nil {
@@ -121,6 +126,10 @@ func (g Grader) Grade(ctx context.Context, task Task, patch string, opts GradeOp
 	}
 	res.tally(scoreTests(task, out))
 	res.Duration = time.Since(start)
+	if res.Resolved && (res.F2PPassed < res.F2PTotal || res.P2PPassed < res.P2PTotal) {
+		return res, fmt.Errorf("verifier reward 1 disagrees with output.json (f2p %d/%d, p2p %d/%d)",
+			res.F2PPassed, res.F2PTotal, res.P2PPassed, res.P2PTotal)
+	}
 	return res, nil
 }
 

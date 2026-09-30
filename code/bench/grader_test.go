@@ -24,6 +24,7 @@ type fakeDocker struct {
 	imageErr   error
 	runErr     error
 	patches    map[string]string
+	logsDir    map[string]bool
 	calls      []string
 	removed    int
 	nextID     int
@@ -33,7 +34,7 @@ type fakeDocker struct {
 }
 
 func newFakeDocker() *fakeDocker {
-	return &fakeDocker{patches: map[string]string{}, verify: func(string) (string, map[string]string) { return "0", nil }}
+	return &fakeDocker{patches: map[string]string{}, logsDir: map[string]bool{}, verify: func(string) (string, map[string]string) { return "0", nil }}
 }
 
 func (f *fakeDocker) record(s string) {
@@ -72,6 +73,11 @@ func (f *fakeDocker) Exec(_ context.Context, id string, spec ExecSpec) (ExecResu
 		}
 	}
 	switch {
+	case cmd == "mkdir -p /logs/verifier":
+		f.mu.Lock()
+		f.logsDir[id] = true
+		f.mu.Unlock()
+		return ExecResult{}, nil
 	case strings.Contains(cmd, "git apply"):
 		return ExecResult{ExitCode: f.applyExit}, nil
 	case cmd == "bash /tests/test.sh":
@@ -118,7 +124,12 @@ func (f *fakeDocker) CopyFrom(_ context.Context, id, src, dst string) error {
 	if err := os.WriteFile(filepath.Join(dst, "reward.txt"), []byte(reward+"\n"), 0o644); err != nil {
 		return err
 	}
-	if tests == nil {
+	// Like the real test.sh, output.json only lands in /logs/verifier when
+	// the directory existed before the tests ran.
+	f.mu.Lock()
+	hasLogsDir := f.logsDir[id]
+	f.mu.Unlock()
+	if tests == nil || !hasLogsDir {
 		return nil
 	}
 	var out verifierOutput
@@ -240,6 +251,14 @@ func TestGradeVerifierTimeout(t *testing.T) {
 	}
 	if !g.VerifierTimedOut || g.Resolved || g.F2PPassed != 0 {
 		t.Fatalf("result %+v", g)
+	}
+}
+
+func TestGradeRewardWithoutPassingTestsIsError(t *testing.T) {
+	d := newFakeDocker()
+	d.verify = func(string) (string, map[string]string) { return "1", nil }
+	if _, err := (Grader{Docker: d}).Grade(context.Background(), gradeTask(), "diff", GradeOptions{LogDir: t.TempDir()}); err == nil {
+		t.Fatal("reward 1 with no passing tests must not count as resolved")
 	}
 }
 
