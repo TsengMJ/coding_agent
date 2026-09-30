@@ -351,7 +351,7 @@
   - [x] subagent 的 state update 回寫 parent（files 等）
   - [ ] response_format（per-subagent）
   - [x] 未知 subagent_type 錯誤
-- [ ] 事件 namespace / tracing metadata（`ls_agent_type`）
+- [~] 事件 namespace / tracing metadata（`ls_agent_type`）— 串流時 subagent 的 values 事件以 `task:<tool call id>` namespace 轉發給 parent；tracing metadata 未做
 
 ### 4.4 AsyncSubAgents `middleware/asyncsubagents`（py: `middleware/async_subagents.py`）
 
@@ -507,8 +507,9 @@
   - [x] `/new` `/thread` `/threads`（picker）`/resume` `/yolo` `/help` `/quit`；Ctrl-C 取消 run，閒置時離開
   - [x] markdown（glamour，完成的 assistant 訊息）、核准框 unified diff（write / edit 對照磁碟檔案）
   - [x] 效能：已完成訊息依寬度快取、內容沒變就不重排、捲上去時串流不拉回底部
+  - [x] 呼叫樹：main / subagent 標示；subagent（#1、#2… 各自顏色）的 LLM 與 tool 呼叫巢狀顯示在 task 列下並附報告摘要；進行中的列顯示 spinner 與經過時間、thinking 列；狀態列顯示執行中的 subagent 數
   - [ ] 自動完成、貼上收合、ask_user
-  - [ ] model / agent / theme 選擇器、context 用量、通知中心、subagent 面板
+  - [ ] model / agent / theme 選擇器、context 用量、通知中心
 
 ### 6.2 Agent `code/agent`（code: `agent.py`）
 

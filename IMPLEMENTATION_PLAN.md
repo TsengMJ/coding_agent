@@ -120,6 +120,17 @@
 - middleware 組裝順序與同名取代、excluded middleware 驗證、prompt 組裝、`task` isolated 與平行呼叫
 **Status**: Complete
 
+## Stage 7e: TUI 顯示 subagent 活動與進行中狀態
+
+**Goal**: TUI 能分辨 main 與各 subagent 的 LLM / tool 呼叫，平行的 subagent 有各自編號；執行中的東西有 spinner 與經過時間，不會看起來像卡住。
+**Success Criteria**: 串流時 subagent 事件帶 `task:<tool call id>` namespace 傳到 client；TUI 在 task 列下巢狀顯示 subagent 的呼叫與報告摘要；main / subagent 等待模型時顯示 thinking 列；取消後沒有殘留 spinner；line 輸出不受影響。
+**Tests**:
+- loop：Stream 下 tool 拿得到 emitter；巢狀 Invoke 的模型文字不混進 parent 串流（`-race`）
+- `task`：串流時轉發的事件帶正確 namespace，報告與 Invoke 路徑一致
+- server：主 agent 與多個 namespace 交錯時各自增量輸出；line printer 忽略 subagent 事件
+- TUI：平行 task 得到 #1 / #2 且列在各自 task 下、task 完成顯示 ✓ 與報告、端到端 subagent 執行、thinking 列、tick 只重繪進行中的 entry、取消與 resume 後無 spinner
+**Status**: Complete
+
 ## Stage 8: 進階 middleware
 
 **Goal**: Skills 完成；HITL 補上 edit / respond 決策。
