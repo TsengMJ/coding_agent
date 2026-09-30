@@ -31,8 +31,8 @@ func TestStateBackendDoesNotSupportExecution(t *testing.T) {
 }
 
 func TestStubReportsNotImplemented(t *testing.T) {
-	res := NewStateBackend().Ls(context.Background(), "/")
-	if !strings.Contains(res.Error, "backend.StateBackend.Ls: not implemented") {
+	res := NewStoreBackend(nil, nil).Ls(context.Background(), "/")
+	if !strings.Contains(res.Error, "backend.StoreBackend.Ls: not implemented") {
 		t.Fatalf("unexpected error text: %q", res.Error)
 	}
 }

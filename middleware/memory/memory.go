@@ -64,6 +64,7 @@ func (m *Middleware) BeforeAgent(ctx context.Context, state *runtime.State, _ *a
 		return nil, nil
 	}
 	contents := map[string]string{}
+	ctx = backend.WithRunContext(ctx, backend.NewRunContext(state))
 	for i, res := range m.opts.Backend.DownloadFiles(ctx, m.opts.Sources) {
 		path := m.opts.Sources[i]
 		switch {

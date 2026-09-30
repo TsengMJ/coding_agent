@@ -10,6 +10,7 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/backend"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
 )
 
@@ -46,8 +47,16 @@ func (m *Middleware) newTool(name ToolName, def string, schema tool.Schema, fn f
 		ToolName:        string(name),
 		ToolDescription: m.description(name, def),
 		ToolSchema:      schema,
-		Fn: func(ctx context.Context, _ *tool.Runtime, raw map[string]any) (*tool.Result, error) {
-			return fn(ctx, args(raw)), nil
+		Fn: func(ctx context.Context, rt *tool.Runtime, raw map[string]any) (*tool.Result, error) {
+			rc := backend.NewRunContext(nil)
+			if rt != nil {
+				rc.State, rc.Store, rc.Config = rt.State, rt.Store, rt.Config
+			}
+			res := fn(backend.WithRunContext(ctx, rc), args(raw))
+			if files := rc.FilesUpdate(); files != nil {
+				res.Update = &runtime.Update{Values: map[string]any{backend.FilesStateKey: files}}
+			}
+			return res, nil
 		},
 	}
 }

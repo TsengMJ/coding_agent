@@ -100,8 +100,10 @@ func WithResponseFormat(f agent.ResponseFormat) Option {
 
 // CreateDeepAgent builds a deep agent.
 //
-// Main stack order: Filesystem (with a backend) -> SubAgent -> Summarization
-// (with a backend) -> PatchToolCalls -> caller middleware -> profile extra
+// Without WithBackend, files live in agent state (backend.StateBackend).
+//
+// Main stack order: Filesystem -> SubAgent -> Summarization
+// -> PatchToolCalls -> caller middleware -> profile extra
 // middleware -> Memory (if memory) -> HITL (if interrupts) -> ToolExclusion
 // (if the profile excludes tools). Caller middleware whose Name matches an
 // entry replaces it in place. A general-purpose subagent is added unless the
@@ -116,6 +118,9 @@ func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
 	}
 	if err := rejectUnsupported(o); err != nil {
 		return nil, err
+	}
+	if o.Backend == nil {
+		o.Backend = backend.NewStateBackend()
 	}
 	model, err := resolveModel(o)
 	if err != nil {

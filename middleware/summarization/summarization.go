@@ -277,7 +277,8 @@ func (m *Middleware) summarize(ctx context.Context, state *runtime.State, event 
 	}
 	evicted, preserved := effective[:cutoff], effective[cutoff:]
 	session := sessionID(state)
-	path := m.offload(ctx, evicted, session)
+	rc := backend.NewRunContext(state)
+	path := m.offload(backend.WithRunContext(ctx, rc), evicted, session)
 	summary, err := m.createSummary(ctx, evicted, model)
 	if err != nil {
 		return nil, nil, fmt.Errorf("summarization: %w", err)
@@ -292,6 +293,9 @@ func (m *Middleware) summarize(ctx context.Context, state *runtime.State, event 
 		EventStateKey:     Event{CutoffIndex: stateCutoff, SummaryMessage: summaryMsg, FilePath: path},
 		SessionIDStateKey: session,
 	}}
+	if files := rc.FilesUpdate(); files != nil {
+		upd.Values[backend.FilesStateKey] = files
+	}
 	return upd, append([]llm.Message{summaryMsg}, preserved...), nil
 }
 

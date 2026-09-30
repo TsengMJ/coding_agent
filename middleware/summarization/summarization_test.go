@@ -216,6 +216,26 @@ func TestCompactNothingToDo(t *testing.T) {
 	}
 }
 
+func TestCompactOffloadsIntoStateFiles(t *testing.T) {
+	mw, err := New(Options{
+		Backend: backend.NewStateBackend(),
+		Model:   llm.NewFakeModel(llm.NewAssistantMessage("SUMMARY TEXT")),
+		Keep:    ContextSize{SizeMessages, 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upd, err := mw.Compact(context.Background(), &runtime.State{Messages: history()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := upd.Values[EventStateKey].(Event).FilePath
+	files, _ := upd.Values[backend.FilesStateKey].(map[string]*backend.FileData)
+	if path == "" || files[path] == nil || !strings.Contains(files[path].Content, "## Summarized at") {
+		t.Fatalf("path = %q, files = %+v", path, files)
+	}
+}
+
 func TestEventSurvivesJSONRoundTrip(t *testing.T) {
 	ev := Event{CutoffIndex: 4, SummaryMessage: summaryMessage("s", "/p.md"), FilePath: "/p.md"}
 	state := &runtime.State{Values: map[string]any{EventStateKey: map[string]any{

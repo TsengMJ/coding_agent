@@ -644,7 +644,13 @@ func (a *loopAgent) applyToolResult(state *runtime.State, call llm.ToolCall, res
 		}
 	}
 	msg := llm.WithTiming(toolMessage(call, res), t)
-	return state.Apply(runtime.Update{Messages: []llm.Message{msg}}, a.schema)
+	upd := runtime.Update{Messages: []llm.Message{msg}}
+	if res.Update != nil {
+		upd.Messages = append(slices.Clone(res.Update.Messages), msg)
+		upd.StructuredResponse = res.Update.StructuredResponse
+		upd.Values = res.Update.Values
+	}
+	return state.Apply(upd, a.schema)
 }
 
 // callTool is the innermost tool handler. Unknown tools, tool failures, and

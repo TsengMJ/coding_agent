@@ -43,6 +43,9 @@ func CallIDFrom(ctx context.Context) string {
 type Result struct {
 	Content []llm.ContentBlock
 	Command *runtime.Command
+	// Update is applied together with the ToolMessage built from Content
+	// (e.g. "files" written through StateBackend). Ignored with a Command.
+	Update *runtime.Update
 	// Artifact is attached to the ToolMessage but not sent to the model.
 	Artifact any
 	IsError  bool

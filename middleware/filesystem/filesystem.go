@@ -45,7 +45,7 @@ const (
 
 // Options configures the middleware; zero values take the Python defaults.
 type Options struct {
-	// Backend is required (StateBackend is not implemented yet).
+	// Backend is required; use backend.NewStateBackend() to keep files in state.
 	Backend backend.Backend
 	// SystemPrompt is appended to the system message on every model call.
 	SystemPrompt           string
@@ -111,7 +111,7 @@ func (m *Middleware) Tools() []tool.Tool { return m.tools }
 
 // StateSchema declares the "files" key with its merge reducer.
 func (m *Middleware) StateSchema() runtime.Schema {
-	return runtime.Schema{backend.FilesStateKey: {Name: backend.FilesStateKey}}
+	return runtime.Schema{backend.FilesStateKey: {Name: backend.FilesStateKey, Reducer: backend.FilesReducer}}
 }
 
 // WrapModelCall appends Options.SystemPrompt to the system message.

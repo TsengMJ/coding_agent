@@ -17,7 +17,7 @@
 ## 進度總覽
 
 - 最後更新：2026-09-30（Stage 9：dcode GUI）
-- 核心 SDK：圖、in-memory / Postgres checkpoint（每 thread 保留最新 10 筆）、interrupt、OpenAI Generate / Stream 走套件（含重試與串流閒置逾時）；FilesystemBackend / LocalShellBackend / FilesystemMiddleware / HITL（approve / reject、`When`）/ PatchToolCalls 可用；其餘 middleware、StateBackend、Store 仍為 stub
+- 核心 SDK：圖、in-memory / Postgres checkpoint（每 thread 保留最新 10 筆）、interrupt、OpenAI Generate / Stream 走套件（含重試與串流閒置逾時）；FilesystemBackend / LocalShellBackend / FilesystemMiddleware / HITL（approve / reject、`When`）/ PatchToolCalls 可用；StateBackend（CreateDeepAgent 預設）可用；其餘 middleware、Store 仍為 stub
 - CLI：`dcode serve`（HTTP + NDJSON、兩階段關閉）、預設瀏覽器 GUI（可展開每一步、GitHub 樣式 diff、LLM 檢視器；trace 存在 `~/.deepagents/traces`）、`-tui` Bubble Tea TUI（markdown、diff 預覽）與 line REPL、`-n` / `-thread` / `-r` / `-y` / `-q` / `-no-stream` / `-timeout`、`dcode threads [-json]`；使用者層 `config.toml` 與 shell allow-list
 
 ---
@@ -109,7 +109,7 @@
 - [x] `State.Clone`（淺層複製：messages slice 與 Values map 另外複製）
 - [-] `MessagesReducer`（`add_messages`：append、依 ID 取代）— 合併交給 langgraphgo `AddMessages`，不再自寫。`RemoveAllMessages` 套件不認得，仍在 `runtime` 先切開。`files` reducer 仍自建
 - [ ] `_messages_delta_reducer` + `DeltaChannel`（checkpoint 只存增量，snapshot_frequency=50）— py: `_messages_reducer.py`, `graph.DeepAgentState`
-- [ ] files reducer（`_file_data_reducer`：None 值代表刪除）— py: `middleware/filesystem.py`
+- [x] files reducer（`_file_data_reducer`：None 值代表刪除）— go: `backend.FilesReducer`（也吃 checkpoint JSON 讀回的 `map[string]any`，每次回傳新 map）
 
 ### 1.5 Checkpointer `runtime/checkpoint.go`
 
@@ -175,7 +175,7 @@
 ## 2. graph.py：`create_deep_agent` — go: `deepagents.go`
 
 - [x] `CreateDeepAgent(opts ...Option)` 入口（預設 middleware stack、profiles、general-purpose subagent）
-  - 備註：skills / permissions / response_format / async subagents 仍回 `ErrNotImplemented`；未給 backend 時沒有檔案工具與 summarization
+  - 備註：skills / permissions / response_format / async subagents 仍回 `ErrNotImplemented`；未給 backend 時用 StateBackend
 - [~] 參數（functional options）
   - [x] `model`（`WithModel` 優先，否則 `WithModelSpec` 經 `InitChatModel` 解析）
   - [ ] `model=None` 預設 `claude-sonnet-4-6`（Python 已 deprecated）
@@ -186,7 +186,7 @@
   - [~] `skills`（`WithSkills`）
   - [x] `memory`（`WithMemory`：以主 backend 讀取，放在 caller middleware 之後、HITL 之前）
   - [~] `permissions`（`WithPermissions`）
-  - [~] `backend`（`WithBackend` 會加入 FilesystemMiddleware；未給時預設 StateBackend 尚未實作，暫不加檔案工具）
+  - [x] `backend`（`WithBackend`；未給時預設 `StateBackend`，Filesystem 與 Summarization 一律加入）
   - [x] `interrupt_on`（`WithInterruptOn`：HITL middleware 放在 stack 最後）
   - [~] `response_format`（`WithResponseFormat`）
   - [~] `state_schema`（`WithStateSchema`）
@@ -240,10 +240,10 @@
 
 ### 3.3 實作
 
-- [~] `StateBackend` — py: `backends/state.py`
-  - [ ] ls / read / write / edit / delete / grep / glob
-  - [ ] upload_files / download_files
-  - [ ] 透過 RunContext 讀寫 `files` state、產生 Pending update
+- [x] `StateBackend` — py: `backends/state.py`；go: `backend/state.go`
+  - [x] ls / read / write / edit / delete（目錄前綴遞迴）/ grep / glob
+  - [x] upload_files / download_files（非 UTF-8 存成 base64）
+  - [x] 透過 RunContext 讀寫 `files` state、產生 Pending update（同一次呼叫內 read-your-writes）；filesystem 工具、summarization offload、memory 載入都會設定 RunContext
 - [~] `StoreBackend` — py: `backends/store.py`
   - [~] `NamespaceFactory`、`ValidateNamespace`
   - [ ] ls / read / write / edit / delete / grep / glob
@@ -325,7 +325,7 @@
 - [ ] 大型 tool 結果 eviction 到 backend（`_message_eviction.py`：preview head/tail、`/large_tool_results/`）
 - [ ] 大型 human message eviction
 - [ ] media 結果重排到 tool results 之後、rejected content 替換
-- [ ] `files` state reducer
+- [x] `files` state reducer（`StateSchema` 掛 `backend.FilesReducer`）；工具每次呼叫建立 `RunContext`，StateBackend 寫入經 `tool.Result.Update` 與 tool message 一起套用
 
 ### 4.2 Permissions `middleware/permissions`（py: `FilesystemPermission`, `_fs_interrupt.py`）
 
