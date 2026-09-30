@@ -1,4 +1,4 @@
-.PHONY: help test vet fmt build check run serve install web web-test
+.PHONY: help test vet fmt build check run serve install web web-test bench-prepare bench-gate bench-smoke
 
 .DEFAULT_GOAL := help
 
@@ -18,7 +18,7 @@ ADDR ?= 127.0.0.1:8123
 help: ## Show targets
 	@echo "Usage: make <target> [PKG=./...] [ARGS='-v'] [PROMPT='...'] [THREAD=id] [MODEL=provider:model]"
 	@echo ""
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-8s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 test: ## Run tests
 	go test $(ARGS) $(PKG)
@@ -55,3 +55,12 @@ web: ## Rebuild the GUI bundle into code/gui/dist (needs Node)
 
 web-test: ## Typecheck and test the GUI frontend (needs Node)
 	cd code/gui/web && npm ci && npm run typecheck && npm test
+
+bench-prepare: ## Fetch and verify SWE-bench Pro V2 tasks, fill bench_tasks (needs POSTGRES_CONN_STRING)
+	go run ./cmd/dbench prepare
+
+bench-gate: ## Grade gold (oracle) and empty (nop) patches on smoke50; all must pass / fail
+	go run ./cmd/dbench gate
+
+bench-smoke: ## Run dcode on smoke50: make bench-smoke [MODEL=provider:model]
+	go run ./cmd/dbench run -subset smoke50 $(if $(MODEL),-model=$(MODEL),)

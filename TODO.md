@@ -711,7 +711,7 @@
   - [ ] cron 排程（expression / jobs / scheduler / tools）
   - [ ] history（backends / vectors / embeddings / postgres / profiles）
   - [ ] archive、pairing、tool approvals、MCP、speech、media、observability
-- [ ] Evals — py: `libs/evals`（harbor adapters、benchmarks、radar、scorecard）
+- [-] Evals — py: `libs/evals`（harbor adapters、benchmarks、radar、scorecard）— 改以 `dbench`（`cmd/dbench`、`code/bench`）跑 SWE-bench Pro V2：固定 smoke50、官方 verifier 重新評分、結果與過程指標寫進 Postgres、報表與同題比較
 - [ ] Partners sandbox 整合
   - [ ] Daytona — py: `libs/partners/daytona`
   - [ ] Modal — py: `libs/partners/modal`

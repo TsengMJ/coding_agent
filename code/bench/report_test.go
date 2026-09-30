@@ -55,8 +55,8 @@ func TestSummarizeExcludesInfraErrors(t *testing.T) {
 	}
 	cost := 0.5
 	attempts := []Attempt{
-		{InstanceID: "a", Phase: PhaseDone, Resolved: true, FailureCategory: CategoryResolved, Metrics: Metrics{Steps: 10, CostUSD: &cost}},
-		{InstanceID: "a", Trial: 1, Phase: PhaseDone, FailureCategory: CategoryIncompleteFix, Metrics: Metrics{Steps: 30}},
+		{InstanceID: "a", Phase: PhaseDone, Resolved: true, FailureCategory: CategoryResolved, Patch: "diff", Metrics: Metrics{Steps: 10, CostUSD: &cost}},
+		{InstanceID: "a", Trial: 1, Phase: PhaseDone, FailureCategory: CategoryIncompleteFix, Patch: "diff", Metrics: Metrics{Steps: 30}},
 		{InstanceID: "b", Phase: PhaseDone, FailureCategory: CategoryEmptyPatch},
 		{InstanceID: "c", Phase: PhaseDone, FailureCategory: CategoryInfraError},
 		{InstanceID: "c", Trial: 1, Phase: PhaseAgentDone},
@@ -71,11 +71,11 @@ func TestSummarizeExcludesInfraErrors(t *testing.T) {
 	if s.ByLanguage["js"].Total != 1 || s.ByHard["hard"].Total != 1 || s.ByRepo["r1"].Resolved != 1 {
 		t.Fatalf("breakdowns %+v %+v %+v", s.ByLanguage, s.ByHard, s.ByRepo)
 	}
-	if s.MedianSteps != 10 || s.TotalCostUSD != 0.5 {
+	if s.MedianSteps != 10 || s.TotalCostUSD != 0.5 || !near(s.EmptyPatchPct, 100.0/3, 1e-9) || s.GoldRecallN != 0 {
 		t.Fatalf("metrics %+v", s)
 	}
 	md := RenderReport(&Run{ID: "r", Trials: 2}, s)
-	for _, want := range []string{"1/3 = 33.3%", "pass@2", "| empty_patch | 1 |", "### By language"} {
+	for _, want := range []string{"1/3 = 33.3%", "pass@2", "| empty_patch | 1 |", "### By language", "| mean gold-file recall | - |"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("report lacks %q", want)
 		}

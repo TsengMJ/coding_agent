@@ -194,15 +194,20 @@
 ### Stage B2: 評分器與驗收
 **Goal**: Docker 封裝；新容器套 patch（官方 PatchReplayAgent 指令鏈）→ `bash /tests/test.sh` → `reward.txt` 與 `output.json` 算出 F2P / P2P；`dbench gate` 跑 oracle 與 nop。
 **Success Criteria**: oracle 全過、nop 全不過；fake docker 單元測試涵蓋套用失敗、verifier 逾時、缺 output.json。
-**Status**: In Progress
+**Tests**: F2P / P2P 計數、套用失敗仍跑 verifier、空 patch（nop 仍跑 verifier）、verifier 逾時、reward 與 output.json 矛盾時報錯、runner 續跑 / 跳過已完成 / infra 重試 / 取消、重新評分
+**Notes**: `test.sh` 只在 exit trap 建立 `/logs/verifier`（Harbor 會預先掛載），所以評分前要先 `mkdir -p /logs/verifier`，否則 output.json 靜默遺失。
+**Status**: Complete（實機 gate 前 2 題：oracle 2/2、nop 0/2；完整 50 題要先拉完映像，約 0.5 MB/s、每題約 1 GB）
 
 ### Stage B3: agent 階段
 **Goal**: `/app` 複製到主機 workspace 並掛回斷網容器；檔案工具走 FilesystemBackend，`execute` 走 `docker exec`；不掛 web 工具、不載入使用者層設定；50 分鐘預算；照官方指令擷取 `git diff`；收集步數、工具、token、成本、時間、定位指標。
-**Status**: Not Started
+**Success Criteria**: 單題實跑產生 patch、trace 與過程指標並完成評分；prompt 只看到 `/app`、沒有 web 工具。
+**Tests**: `DockerExecBackend`（工作目錄與環境變數、與檔案工具共用檔案、逾時、輸出上限）、`NoWebTools` / `WorkingDirSection`、solver 擷取 patch 與指標、`/testbed` 後備、成本上限、錯誤分類、trace 指標（排除 summarization 呼叫）
+**Status**: Complete（實機單題：GLM-5.3 跑滿 30 分鐘上限、65 步、$1.43，patch、trace、指標與評分都寫進 Postgres）
 
 ### Stage B4: 報表與比較
 **Goal**: SQL views、`dbench report / compare / history`、Wilson、McNemar、paired bootstrap、`dbench refs import` 做同題比較。
-**Status**: Not Started
+**Tests**: Wilson 區間、精確 McNemar、bootstrap 決定性、summary 排除 infra、pass@k、同題配對與翻轉清單、CSV / JSON 參考成績解析
+**Status**: Complete
 
 ### Stage B5: 第一輪基準線
 **Goal**: 用官方 harness 研究中的開源模型跑 smoke50，和 mini-swe-agent / Pi / OpenCode 同題同模型比較，產出下一步優化清單。

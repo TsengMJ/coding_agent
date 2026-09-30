@@ -44,12 +44,14 @@ type Summary struct {
 	ByHard     map[string]Rate
 	Categories map[string]int
 	// Medians over scored attempts.
-	MedianSteps     float64
-	MedianAgentMin  float64
-	MedianTokensIn  float64
-	MedianCostUSD   float64
-	TotalCostUSD    float64
-	MeanGoldRecall  float64
+	MedianSteps    float64
+	MedianAgentMin float64
+	MedianTokensIn float64
+	MedianCostUSD  float64
+	TotalCostUSD   float64
+	MeanGoldRecall float64
+	// GoldRecallN counts attempts whose patch had a defined gold-file recall.
+	GoldRecallN     int
 	MeanTestRuns    float64
 	TouchesTestsPct float64
 	EmptyPatchPct   float64
@@ -109,7 +111,7 @@ func Summarize(attempts []Attempt, tasks map[string]Task) Summary {
 		if a.TouchesTests {
 			touches++
 		}
-		if a.FailureCategory == CategoryEmptyPatch {
+		if strings.TrimSpace(a.Patch) == "" {
 			empty++
 		}
 	}
@@ -132,6 +134,7 @@ func Summarize(attempts []Attempt, tasks map[string]Task) Summary {
 	}
 	s.MedianSteps, s.MedianAgentMin = Median(steps), Median(agentMin)
 	s.MedianTokensIn, s.MedianCostUSD = Median(tokens), Median(costs)
+	s.GoldRecallN = recallN
 	if recallN > 0 {
 		s.MeanGoldRecall = recallSum / float64(recallN)
 	}
@@ -256,7 +259,11 @@ func RenderReport(run *Run, s Summary) string {
 	b.WriteString("\n## How the agent worked (scored attempts)\n\n| metric | value |\n|---|---|\n")
 	fmt.Fprintf(&b, "| median steps | %.0f |\n| median agent minutes | %.1f |\n| median input tokens | %.0f |\n", s.MedianSteps, s.MedianAgentMin, s.MedianTokensIn)
 	fmt.Fprintf(&b, "| median cost | $%.3f |\n| total cost | $%.2f |\n", s.MedianCostUSD, s.TotalCostUSD)
-	fmt.Fprintf(&b, "| mean test runs | %.1f |\n| mean gold-file recall | %.2f |\n", s.MeanTestRuns, s.MeanGoldRecall)
+	recall := "-"
+	if s.GoldRecallN > 0 {
+		recall = fmt.Sprintf("%.2f (%d patches)", s.MeanGoldRecall, s.GoldRecallN)
+	}
+	fmt.Fprintf(&b, "| mean test runs | %.1f |\n| mean gold-file recall | %s |\n", s.MeanTestRuns, recall)
 	fmt.Fprintf(&b, "| patches touching tests | %.0f%% |\n| empty patches | %.0f%% |\n", s.TouchesTestsPct, s.EmptyPatchPct)
 	return b.String()
 }

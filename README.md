@@ -186,3 +186,34 @@ make run PROMPT='hello'
 `BRAVE_API_KEY`（Brave Search）也放在 `.env`：有設定時 dcode 才會掛上 `web_search` 工具，`fetch_url` 不需要 key。
 
 `.env` 已列在 `.gitignore`，只有 `.env.example` 會進版控。
+
+### SWE-bench Pro V2 評測（`dbench`）
+
+之後的迭代以真實能力為準：`dbench` 用 [SWE-bench Pro V2](https://github.com/scaleapi/SWE-bench_Pro-os) 固定 50 題（`code/bench/subsets/smoke50.txt`，依語言、HARD 比例與 repo 分層抽樣）衡量 dcode，表現穩定後再跑 `-subset full`（642 題）或 `-subset hard`（51 題）。每次執行的結果、每題的 F2P / P2P 測試、失敗分類、步數、token、成本與時間都寫進 PostgreSQL（`bench_*` 表與 `bench_run_summary`、`bench_history` 等 view），方便追蹤是否改善。
+
+評測遵照官方 locked protocol：agent 在斷網的 task 映像裡工作（沒有 web 工具、每題 50 分鐘、1 CPU / 4 GB），dcode 編輯掛載進容器的 repo 副本，`execute` 以 `docker exec` 在容器內執行；結束後用 `git add -A; git diff --cached` 取出 patch，在乾淨映像上用官方 `tests/test.sh` 重新評分。
+
+```sh
+# 專用 Postgres（不和其他專案共用）
+docker run -d --name dbench-postgres -p 127.0.0.1:5433:5432 \
+  -e POSTGRES_USER=dbench -e POSTGRES_PASSWORD=dbench -e POSTGRES_DB=dbench \
+  -v dbench-pgdata:/var/lib/postgresql/data postgres:16-alpine
+export POSTGRES_CONN_STRING='postgres://dbench:dbench@127.0.0.1:5433/dbench?sslmode=disable'
+
+make bench-prepare                 # 固定 commit 的 task 目錄、驗證 SHA256SUMS、HF metadata、寫入 bench_tasks
+make bench-gate                    # 驗收評分器：官方 patch（oracle）要全過、空 patch（nop）要全不過
+make bench-smoke MODEL=openrouter:z-ai/glm-5.3   # 跑 smoke50
+
+go run ./cmd/dbench run -limit 3 -model openrouter:moonshotai/kimi-k3   # 先試前 3 題
+go run ./cmd/dbench run -resume <run-id>          # 中斷後接續（已完成的題目不重跑）
+go run ./cmd/dbench report <run-id>               # 解題率（Wilson 95% 區間）、分語言 / repo / 難度、失敗分類、過程指標
+go run ./cmd/dbench compare <base-run> <new-run>  # 同題配對：McNemar、paired bootstrap、翻轉的題目
+go run ./cmd/dbench history                       # 歷次執行
+go run ./cmd/dbench refs import -harness mini-swe-agent -model glm-5.3 eval_results.json
+go run ./cmd/dbench compare -ref mini-swe-agent/glm-5.3 <run-id>          # 和別人同題比較
+```
+
+- 資料放在 `~/.deepagents/bench/`：task repo、metadata、每次嘗試的 log 與 agent trace（`logs/<run>/<instance>/t<trial>/`）、markdown 報表（`reports/`）。
+- 每題映像約 1 GB（`ghcr.io/scaleapi/swe-bench_pro-v2`，linux/amd64）；磁碟吃緊時加 `-prune-images`，網路慢時建議先跑 `bench-gate` 把映像拉好。
+- `-max-cost`（預設每題 3 美元）與 `-max-steps`（預設 250）是額外上限；`infra_error` 不算分，可用 `-retry-infra` 重跑。
+- 比較別的 harness 需要逐題成績：CSV（`instance_id,resolved[,steps,cost_usd]`）或 `{"instance_id": true}` JSON。
