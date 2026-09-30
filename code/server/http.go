@@ -183,6 +183,11 @@ func writeError(w http.ResponseWriter, status int, err error) {
 // runs finish for up to shutdownGrace; runs still going after that are
 // cancelled, so their checkpoints are saved before Serve returns.
 func Serve(ctx context.Context, addr string, srv Server, ready func(net.Addr)) error {
+	return ServeHandler(ctx, addr, NewHandler(srv), ready)
+}
+
+// ServeHandler is Serve for any handler, e.g. the GUI wrapping NewHandler.
+func ServeHandler(ctx context.Context, addr string, h http.Handler, ready func(net.Addr)) error {
 	if err := requireLoopback(addr); err != nil {
 		return err
 	}
@@ -193,7 +198,7 @@ func Serve(ctx context.Context, addr string, srv Server, ready func(net.Addr)) e
 	runsCtx, cancelRuns := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelRuns()
 	hs := &http.Server{
-		Handler:           NewHandler(srv),
+		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return runsCtx },
 	}

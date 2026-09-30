@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"net"
 	"strings"
 	"testing"
 )
@@ -36,6 +37,35 @@ func TestResolvePrompt(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInteractiveUI(t *testing.T) {
+	tests := []struct {
+		name                         string
+		plain, useTUI, stdin, stdout bool
+		want                         ui
+	}{
+		{name: "default is GUI", stdin: true, stdout: true, want: uiGUI},
+		{name: "GUI without a stdout terminal", stdin: true, want: uiGUI},
+		{name: "-tui", useTUI: true, stdin: true, stdout: true, want: uiTUI},
+		{name: "-tui without stdout terminal falls back to REPL", useTUI: true, stdin: true, want: uiREPL},
+		{name: "-plain", plain: true, stdin: true, stdout: true, want: uiREPL},
+		{name: "piped stdin", stdout: true, want: uiREPL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := interactiveUI(tt.plain, tt.useTUI, tt.stdin, tt.stdout); got != tt.want {
+				t.Fatalf("got %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGUIURLKeepsTokenInFragment(t *testing.T) {
+	got := guiURL(&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 4321}, "abc")
+	if got != "http://127.0.0.1:4321/#token=abc" {
+		t.Fatalf("guiURL = %q", got)
 	}
 }
 

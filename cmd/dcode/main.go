@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang"
 	"github.com/tsengmingchun/deepagents_golang/code/client"
 	"github.com/tsengmingchun/deepagents_golang/code/config"
+	"github.com/tsengmingchun/deepagents_golang/code/gui"
 	"github.com/tsengmingchun/deepagents_golang/code/server"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/code/tui"
@@ -142,7 +144,9 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 	threadID := fs.String("thread", "", "thread ID to continue")
 	resume := fs.Bool("r", false, "continue the most recent thread in this directory")
 	autoApprove := fs.Bool("y", false, "approve every tool call without asking, even when startup.mode = \"manual\"")
-	plain := fs.Bool("plain", false, "use the line REPL instead of the full-screen TUI")
+	plain := fs.Bool("plain", false, "use the line REPL instead of the GUI")
+	useTUI := fs.Bool("tui", false, "use the full-screen terminal UI instead of the GUI")
+	noOpen := fs.Bool("no-open", false, "print the GUI URL instead of opening a browser")
 	model := fs.String("model", "", modelFlagUsage)
 	serverFlag := fs.String("server", "", serverFlagUsage+"; empty runs in-process")
 	quiet := fs.Bool("q", false, "with -n: print only the agent's reply (no thread ID or tool lines)")
@@ -152,6 +156,7 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage:\n"+
 			"  dcode [flags] [-n prompt | prompt...]   run the agent in the current directory\n"+
+			"                                         (interactive: web GUI; -tui terminal UI; -plain line REPL)\n"+
 			"  dcode serve [-addr host:port]          run a long-lived agent server\n"+
 			"  dcode threads [-all] [-json]           list threads\n\n"+
 			"Threads are stored in Postgres when $%s is set, otherwise in memory.\n"+
@@ -217,10 +222,18 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 			Stdout: stdout, Stderr: stderr,
 		})
 	}
-	if !*plain && isTerminal(os.Stdin) && isTerminal(os.Stdout) {
+	switch interactiveUI(*plain, *useTUI, isTerminal(os.Stdin), isTerminal(os.Stdout)) {
+	case uiTUI:
 		return 0, tui.Run(ctx, tui.Options{
 			Server: srv, Cwd: e.cwd, ThreadID: thread, AutoApprove: yolo, ModelName: modelName(srv, serverURL),
 		})
+	case uiGUI:
+		if thread == "" {
+			thread = sessions.NewThreadID()
+		}
+		return 0, runGUI(ctx, srv, serverURL, gui.Info{
+			Cwd: e.cwd, ThreadID: thread, Model: modelName(srv, serverURL), AutoApprove: yolo, Version: deepagents.Version,
+		}, *noOpen, stderr)
 	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
@@ -229,6 +242,66 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 		ThreadID: thread, Cwd: e.cwd, AutoApprove: yolo,
 		In: os.Stdin, Out: stdout, Err: stderr, Interrupt: sig,
 	})
+}
+
+type ui int
+
+const (
+	uiREPL ui = iota
+	uiTUI
+	uiGUI
+)
+
+// interactiveUI picks the interactive front end: the GUI by default, the
+// TUI with -tui on a terminal, and the line REPL with -plain or when stdin
+// is not a terminal (scripts piping input).
+func interactiveUI(plain, useTUI, stdinTTY, stdoutTTY bool) ui {
+	switch {
+	case plain || !stdinTTY:
+		return uiREPL
+	case useTUI && stdoutTTY:
+		return uiTUI
+	case useTUI:
+		return uiREPL
+	default:
+		return uiGUI
+	}
+}
+
+// runGUI serves the web UI on a free loopback port until Ctrl-C. The token
+// travels in the URL fragment, which browsers never send to servers.
+func runGUI(ctx context.Context, srv server.Server, serverURL string, info gui.Info, noOpen bool, stderr io.Writer) error {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	context.AfterFunc(ctx, stop)
+	token, err := gui.NewToken()
+	if err != nil {
+		return err
+	}
+	var api http.Handler = server.NewHandler(srv)
+	if serverURL != "" {
+		if api, err = gui.RemoteAPI(serverURL); err != nil {
+			return err
+		}
+	}
+	h, err := gui.Handler(gui.Options{API: api, Token: token, Info: info})
+	if err != nil {
+		return err
+	}
+	return server.ServeHandler(ctx, "127.0.0.1:0", h, func(a net.Addr) {
+		url := guiURL(a, token)
+		fmt.Fprintf(stderr, "dcode GUI: %s\n  thread %s · Ctrl-C to quit\n", url, info.ThreadID)
+		if noOpen {
+			return
+		}
+		if err := gui.OpenBrowser(url); err != nil {
+			fmt.Fprintf(stderr, "dcode: %v; open the URL above yourself\n", err)
+		}
+	})
+}
+
+func guiURL(a net.Addr, token string) string {
+	return "http://" + a.String() + "/#token=" + token
 }
 
 func modelName(srv server.Server, serverURL string) string {
