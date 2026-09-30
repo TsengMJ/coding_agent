@@ -16,6 +16,16 @@ const (
 	CategoryInfraError = "infra_error"
 )
 
+// IsAgentCategory reports whether c describes how the agent phase stopped
+// rather than a grading outcome.
+func IsAgentCategory(c string) bool {
+	switch c {
+	case CategoryAgentTimeout, CategoryAgentError, CategoryModelError, CategoryBudget:
+		return true
+	}
+	return false
+}
+
 // Classify picks the category of a graded attempt. agentCategory is the
 // agent phase outcome ("" when the agent finished normally); when the agent
 // stopped early but its partial patch still resolves the task, the attempt

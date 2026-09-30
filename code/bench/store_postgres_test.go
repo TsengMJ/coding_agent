@@ -59,7 +59,7 @@ func TestStoresRoundTrip(t *testing.T) {
 			prec, cost, first := 0.5, 1.25, 3
 			a := &Attempt{RunID: runID, InstanceID: task.InstanceID, Trial: 0, Phase: PhaseDone, Resolved: true,
 				F2PPassed: 1, F2PTotal: 1, FailureCategory: CategoryResolved, Patch: "diff", GoldPrecision: &prec,
-				Metrics: Metrics{Steps: 7, ToolCalls: map[string]int{"execute": 2}, CostUSD: &cost, FirstEditStep: &first},
+				Metrics:   Metrics{Steps: 7, ToolCalls: map[string]int{"execute": 2}, CostUSD: &cost, FirstEditStep: &first},
 				StartedAt: now}
 			if err := st.SaveAttempt(ctx, a); err != nil {
 				t.Fatal(err)

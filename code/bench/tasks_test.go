@@ -107,8 +107,8 @@ func writeTask(t *testing.T, root, id string) string {
 	t.Helper()
 	dir := filepath.Join(root, "tasks", id)
 	files := map[string]string{
-		"instruction.md":          "fix it",
-		"tests/config.json":       `{"fail_to_pass": "['t1']", "pass_to_pass": ["t2", "t3"], "selected_test_files_to_run": "[\"f.py\"]"}`,
+		"instruction.md":           "fix it",
+		"tests/config.json":        `{"fail_to_pass": "['t1']", "pass_to_pass": ["t2", "t3"], "selected_test_files_to_run": "[\"f.py\"]"}`,
 		"solution/gold_patch.diff": samplePatch,
 		"task.toml": `[verifier]
 network_mode = "public"
