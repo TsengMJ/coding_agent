@@ -443,6 +443,73 @@ func TestLoopStreamWithoutMessagesModeEmitsNoChunks(t *testing.T) {
 	}
 }
 
+// nestedTool runs inner inside the tool call, as the task tool runs a
+// subagent, and forwards a custom event through the tool runtime.
+func nestedTool(inner Agent) tool.Tool {
+	return &tool.Func{
+		ToolName: "nested",
+		Fn: func(ctx context.Context, rt *tool.Runtime, _ map[string]any) (*tool.Result, error) {
+			if rt.Emit == nil {
+				return nil, errors.New("no emitter")
+			}
+			rt.Emit(runtime.Event{Mode: runtime.StreamCustom, Namespace: []string{"inner"}, Data: "hello"})
+			st, err := inner.Invoke(ctx, Input{Messages: []llm.Message{llm.NewUserMessage("inner")}}, runtime.RunConfig{})
+			if err != nil {
+				return nil, err
+			}
+			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock(st.Messages[len(st.Messages)-1].Text())}}, nil
+		},
+	}
+}
+
+func TestLoopStreamGivesToolsAnEmitter(t *testing.T) {
+	inner, err := CreateAgent(Config{Model: llm.NewFakeModel(llm.NewAssistantMessage("inner"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := llm.NewFakeModel(toolCallReply(llm.ToolCall{ID: "c1", Name: "nested"}), llm.NewAssistantMessage("done"))
+	a, err := CreateAgent(Config{Model: model, Tools: []tool.Tool{nestedTool(inner)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var custom []runtime.Event
+	for ev, err := range a.Stream(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, runtime.RunConfig{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Mode == runtime.StreamCustom {
+			custom = append(custom, ev)
+		}
+	}
+	if len(custom) != 1 || custom[0].Namespace[0] != "inner" || custom[0].Data != "hello" {
+		t.Fatalf("custom events = %+v", custom)
+	}
+}
+
+func TestLoopNestedInvokeDoesNotStreamIntoParent(t *testing.T) {
+	inner, err := CreateAgent(Config{Model: llm.NewFakeModel(llm.NewAssistantMessage("inner words"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := llm.NewFakeModel(toolCallReply(llm.ToolCall{ID: "c1", Name: "nested"}), llm.NewAssistantMessage("outer"))
+	a, err := CreateAgent(Config{Model: model, Tools: []tool.Tool{nestedTool(inner)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text strings.Builder
+	for ev, err := range a.Stream(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, runtime.RunConfig{}, runtime.StreamValues, runtime.StreamMessages) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Mode == runtime.StreamMessages {
+			text.WriteString(ev.Data.(llm.Chunk).Delta.Text())
+		}
+	}
+	if text.String() != "outer" {
+		t.Fatalf("streamed text = %q, want only the parent's reply", text.String())
+	}
+}
+
 func TestLoopRecordsModelAndToolTiming(t *testing.T) {
 	sleeper := &tool.Func{
 		ToolName: "sleep",

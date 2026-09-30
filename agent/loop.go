@@ -183,6 +183,9 @@ func collectSchema(cfg Config) runtime.Schema {
 func (a *loopAgent) Name() string { return a.cfg.Name }
 
 func (a *loopAgent) Invoke(ctx context.Context, in Input, cfg runtime.RunConfig) (*runtime.State, error) {
+	// A nested run (a subagent inside a streaming parent) must not stream
+	// its model chunks into the parent's stream.
+	ctx = context.WithValue(ctx, chunkEmitKey{}, nil)
 	st, err := a.invoke(ctx, in, cfg, nil)
 	if err != nil || st == nil {
 		return nil, err
@@ -194,6 +197,9 @@ func (a *loopAgent) invoke(ctx context.Context, in Input, cfg runtime.RunConfig,
 	st, resumeFrom, resumeValue, err := a.prepare(ctx, in, cfg)
 	if err != nil {
 		return nil, err
+	}
+	if emit != nil {
+		st.RT.Emit = func(ev runtime.Event) { emit(ev) }
 	}
 	ctx = context.WithValue(ctx, resumeSlotKey{}, &resumeSlot{value: resumeValue})
 	gcfg := &graph.Config{}
@@ -706,8 +712,13 @@ func (a *loopAgent) Stream(ctx context.Context, in Input, cfg runtime.RunConfig,
 	return func(yield func(runtime.Event, error) bool) {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
+		// Tools running in parallel (e.g. several subagents) emit
+		// concurrently, and yield must not be called concurrently.
+		var mu sync.Mutex
 		stopped := false
 		emit := func(ev runtime.Event) bool {
+			mu.Lock()
+			defer mu.Unlock()
 			if stopped {
 				return false
 			}
@@ -718,10 +729,14 @@ func (a *loopAgent) Stream(ctx context.Context, in Input, cfg runtime.RunConfig,
 			}
 			return true
 		}
+		var chunks any
 		if slices.Contains(modes, runtime.StreamMessages) {
-			ctx = context.WithValue(ctx, chunkEmitKey{}, emit)
+			chunks = emit
 		}
+		ctx = context.WithValue(ctx, chunkEmitKey{}, chunks)
 		_, err := a.invoke(ctx, in, cfg, emit)
+		mu.Lock()
+		defer mu.Unlock()
 		if err != nil && !stopped {
 			yield(runtime.Event{}, err)
 		}
