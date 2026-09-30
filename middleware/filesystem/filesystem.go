@@ -50,9 +50,12 @@ type Options struct {
 	// SystemPrompt is appended to the system message on every model call.
 	SystemPrompt           string
 	CustomToolDescriptions map[string]string
-	// ToolTokenLimitBeforeEvict offloads larger tool results to the backend (default 20000).
+	// ToolTokenLimitBeforeEvict offloads larger tool results to
+	// {artifactsRoot}/large_tool_results (default 20000; negative disables,
+	// leaving plain truncation).
 	ToolTokenLimitBeforeEvict int
-	// HumanMessageTokenLimitBeforeEvict offloads large user messages (default 50000).
+	// HumanMessageTokenLimitBeforeEvict offloads a larger last user message to
+	// {artifactsRoot}/conversation_history (default 50000; negative disables).
 	HumanMessageTokenLimitBeforeEvict int
 	// MaxExecuteTimeout bounds the per-call execute timeout (default 1h).
 	MaxExecuteTimeout time.Duration
@@ -92,6 +95,12 @@ func New(opts Options) (*Middleware, error) {
 	if opts.GrepMaxCount <= 0 {
 		opts.GrepMaxCount = DefaultGrepMaxCount
 	}
+	if opts.ToolTokenLimitBeforeEvict == 0 {
+		opts.ToolTokenLimitBeforeEvict = DefaultToolTokenLimitBeforeEvict
+	}
+	if opts.HumanMessageTokenLimitBeforeEvict == 0 {
+		opts.HumanMessageTokenLimitBeforeEvict = DefaultHumanMessageTokenLimitBeforeEvict
+	}
 	names := opts.Tools
 	if names == nil {
 		names = DefaultTools
@@ -122,18 +131,37 @@ func (m *Middleware) StateSchema() runtime.Schema {
 	return runtime.Schema{backend.FilesStateKey: {Name: backend.FilesStateKey, Reducer: backend.FilesReducer}}
 }
 
-// WrapModelCall appends Options.SystemPrompt to the system message.
+// WrapModelCall appends Options.SystemPrompt to the system message and
+// shows oversized user messages to the model as offloaded previews.
 func (m *Middleware) WrapModelCall(ctx context.Context, req *agent.ModelRequest, next agent.ModelHandler) (*agent.ModelResponse, error) {
-	if m.opts.SystemPrompt == "" {
-		return next(ctx, req)
-	}
 	updated := *req
-	updated.SystemMessage = agent.AppendToSystemMessage(req.SystemMessage, m.opts.SystemPrompt)
-	return next(ctx, &updated)
+	if m.opts.SystemPrompt != "" {
+		updated.SystemMessage = agent.AppendToSystemMessage(req.SystemMessage, m.opts.SystemPrompt)
+	}
+	msgs, upd, evicted := m.evictHumanMessages(ctx, req)
+	if evicted {
+		updated.Messages = msgs
+	}
+	resp, err := next(ctx, &updated)
+	if err != nil || resp == nil || upd == nil {
+		return resp, err
+	}
+	out := *resp
+	if out.Update == nil {
+		out.Update = upd
+	} else {
+		merged := *out.Update
+		merged.Messages = append(slices.Clone(upd.Messages), merged.Messages...)
+		if files, ok := upd.Values[backend.FilesStateKey].(map[string]*backend.FileData); ok {
+			merged = *mergeFilesUpdate(&merged, files)
+		}
+		out.Update = &merged
+	}
+	return &out, nil
 }
 
 // WrapToolCall rejects a second mutation of the same file in one model turn
-// and clips oversized text results to ToolResultTokenLimit.
+// and offloads oversized results (see Options.ToolTokenLimitBeforeEvict).
 func (m *Middleware) WrapToolCall(ctx context.Context, req *agent.ToolCallRequest, next agent.ToolHandler) (*tool.Result, error) {
 	if parallelFileMutation(req) {
 		return &tool.Result{
@@ -145,11 +173,7 @@ func (m *Middleware) WrapToolCall(ctx context.Context, req *agent.ToolCallReques
 	if err != nil || res == nil {
 		return res, err
 	}
-	for i, block := range res.Content {
-		if block.Type == llm.BlockText {
-			res.Content[i].Text = backend.TruncateIfTooLong(block.Text)
-		}
-	}
+	m.evictToolResult(ctx, req, res)
 	return res, nil
 }
 

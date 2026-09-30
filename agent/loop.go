@@ -251,6 +251,7 @@ func (a *loopAgent) invoke(ctx context.Context, in Input, cfg runtime.RunConfig,
 // continue from and the resume value for the pending interrupt.
 func (a *loopAgent) prepare(ctx context.Context, in Input, cfg runtime.RunConfig) (*execState, []string, any, error) {
 	rt := &Runtime{Config: cfg, Store: a.cfg.Store}
+	in.Messages = withMessageIDs(in.Messages)
 	st := &execState{
 		State: &runtime.State{Messages: slices.Clone(in.Messages)},
 		Limit: a.recursionLimit(cfg),
@@ -566,6 +567,18 @@ func (a *loopAgent) callModel(ctx context.Context, req *ModelRequest) (*ModelRes
 		timed.ID = newMessageID()
 	}
 	return &ModelResponse{Messages: []llm.Message{timed}}, nil
+}
+
+// withMessageIDs names unnamed input messages (LangGraph
+// `ensure_message_ids`) so middleware can later replace them by ID.
+func withMessageIDs(msgs []llm.Message) []llm.Message {
+	out := slices.Clone(msgs)
+	for i := range out {
+		if out[i].ID == "" {
+			out[i].ID = newMessageID()
+		}
+	}
+	return out
 }
 
 // newMessageID names a model reply the provider left unnamed, so later

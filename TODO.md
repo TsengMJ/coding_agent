@@ -47,7 +47,7 @@
 - [~] 建構函式 `NewSystemMessage` / `NewUserMessage` / `NewAssistantMessage` / `NewToolMessage` / `TextBlock`
 - [x] `Message.Text()`：串接文字內容
 - [ ] JSON 序列化 / 反序列化（checkpoint 用）
-- [ ] 訊息 ID 自動產生
+- [x] 訊息 ID 自動產生（agent loop：model 回覆與輸入訊息沒有 ID 時補上）
 
 ### 1.2 ChatModel `llm/model.go`, `llm/registry.go`, `llm/providers.go`
 
@@ -307,7 +307,7 @@
 ### 4.1 Filesystem `middleware/filesystem`（py: `middleware/filesystem.py`）
 
 - [x] `ToolName`（`FsToolName`）與 `AllTools`、`DefaultTools`（同 Python `tools=None`：全部工具；backend 不支援時略過 `delete` / `execute`）
-- [~] `Options`（backend / system_prompt / custom_tool_descriptions / max_execute_timeout / grep_max_count / tools / permissions 已生效；token eviction 門檻尚未使用；Backend 必填）
+- [x] `Options`（backend / system_prompt / custom_tool_descriptions / token eviction 門檻 / max_execute_timeout / grep_max_count / tools / permissions；Backend 必填）
 - [x] `Middleware`（Name / Tools / StateSchema / WrapModelCall 附加 system prompt / WrapToolCall 截斷過長文字結果）
 - [~] 工具實作 — go: `middleware/filesystem/tools.go`
   - [x] `ls`
@@ -325,8 +325,8 @@
 - [x] 非 sandbox backend 時移除 `execute`（在 `New` 決定工具清單）
 - [x] 權限檢查：read / write / delete 規則、ls / glob / grep 結果過濾、無 path 的 glob 被拒時附提示；搭配有 execute 的 backend 時 `New` 回錯誤
 - [x] 平行檔案異動保護（`_parallel_file_mutation_error`：同一輪對同一路徑的第二個以後的 write / edit / delete 回錯誤）
-- [ ] 大型 tool 結果 eviction 到 backend（`_message_eviction.py`：preview head/tail、`/large_tool_results/`）
-- [ ] 大型 human message eviction
+- [x] 大型 tool 結果 eviction 到 backend（`_message_eviction.py`：preview head/tail、`{artifactsRoot}/large_tool_results/`；Command 內的 tool message 也處理；寫入失敗或排除的工具退回截斷；門檻負值關閉）— go: `middleware/filesystem/eviction.go`
+- [x] 大型 human message eviction（`{artifactsRoot}/conversation_history/{uuid}.md`、`lc_evicted_to` 標記、model request 用預覽、state 保留全文；agent loop 會替沒有 ID 的輸入訊息補 ID，讓標記版原地取代）
 - [ ] media 結果重排到 tool results 之後、rejected content 替換
 - [x] `files` state reducer（`StateSchema` 掛 `backend.FilesReducer`）；工具每次呼叫建立 `RunContext`，StateBackend 寫入經 `tool.Result.Update` 與 tool message 一起套用
 
