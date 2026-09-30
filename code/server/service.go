@@ -8,6 +8,8 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -220,9 +222,10 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 		return err
 	}
 
-	sent := 0
+	// sent counts the messages already sent per namespace ("" is the main agent).
+	sent := map[string]int{}
 	if prev != nil {
-		sent = len(prev.State.Messages)
+		sent[""] = len(prev.State.Messages)
 	}
 	cfg := runtime.RunConfig{
 		ThreadID:     req.ThreadID,
@@ -234,7 +237,7 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 			runErr = err
 			break
 		}
-		for _, e := range convert(ev, &sent) {
+		for _, e := range convert(ev, sent) {
 			if !yield(e, nil) {
 				return nil
 			}
@@ -243,7 +246,7 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 
 	latest, err := s.checkpointer.Latest(context.WithoutCancel(ctx), req.ThreadID)
 	if err == nil && latest != nil {
-		for _, m := range latest.State.Messages[min(sent, len(latest.State.Messages)):] {
+		for _, m := range latest.State.Messages[min(sent[""], len(latest.State.Messages)):] {
 			if !yield(Event{Kind: EventMessage, Message: &m}, nil) {
 				return nil
 			}
@@ -264,25 +267,28 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 }
 
 // convert maps an agent event to client events. Values events are diffed
-// against the number of messages already sent.
-func convert(ev runtime.Event, sent *int) []Event {
+// against the number of messages already sent in their namespace, so each
+// subagent run is tracked on its own.
+func convert(ev runtime.Event, sent map[string]int) []Event {
+	ns := slices.Clone(ev.Namespace)
 	switch ev.Mode {
 	case runtime.StreamMessages:
 		if c, ok := ev.Data.(llm.Chunk); ok && !c.Done {
 			if text := c.Delta.Text(); text != "" {
-				return []Event{{Kind: EventDelta, Text: text}}
+				return []Event{{Kind: EventDelta, Text: text, Namespace: ns}}
 			}
 		}
 	case runtime.StreamValues:
+		key := strings.Join(ns, "/")
 		st, ok := ev.Data.(*runtime.State)
-		if !ok || len(st.Messages) <= *sent {
+		if !ok || len(st.Messages) <= sent[key] {
 			return nil
 		}
 		var out []Event
-		for _, m := range st.Messages[*sent:] {
-			out = append(out, Event{Kind: EventMessage, Message: &m})
+		for _, m := range st.Messages[sent[key]:] {
+			out = append(out, Event{Kind: EventMessage, Message: &m, Namespace: ns})
 		}
-		*sent = len(st.Messages)
+		sent[key] = len(st.Messages)
 		return out
 	}
 	return nil

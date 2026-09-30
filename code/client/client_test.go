@@ -97,6 +97,17 @@ func TestRunNonInteractiveStreamsDeltasWithoutRepeating(t *testing.T) {
 	}
 }
 
+func TestRunNonInteractiveIgnoresSubagentEvents(t *testing.T) {
+	sub := msg(llm.Message{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.TextBlock("inner")},
+		ToolCalls: []llm.ToolCall{{ID: "g", Name: "grep", Args: map[string]any{"pattern": "x"}}}})
+	sub.Namespace = []string{"task:t"}
+	srv := &fakeServer{events: []server.Event{sub, msg(llm.NewAssistantMessage("done"))}}
+	_, stdout, stderr, _ := runHeadless(t, srv, NonInteractiveOptions{Prompt: "hi", ThreadID: "t1"})
+	if stdout != "done\n" || stderr != "" {
+		t.Fatalf("stdout = %q, stderr = %q", stdout, stderr)
+	}
+}
+
 func TestRunNonInteractiveStartsNewThread(t *testing.T) {
 	srv := &fakeServer{}
 	_, _, stderr, err := runHeadless(t, srv, NonInteractiveOptions{Prompt: "hi"})

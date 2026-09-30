@@ -27,6 +27,11 @@ type printer struct {
 }
 
 func (p *printer) handle(ev server.Event) {
+	if len(ev.Namespace) > 0 {
+		// Plain text output shows only the main agent; a subagent's work
+		// surfaces as its task tool result.
+		return
+	}
 	switch ev.Kind {
 	case server.EventDelta:
 		if p.noStream {

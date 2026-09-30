@@ -87,6 +87,9 @@ type Event struct {
 	Interrupts []Interrupt `json:"interrupts,omitempty"`
 	// Error is set on EventError (HTTP transport only).
 	Error string `json:"error,omitempty"`
+	// Namespace is set when the event comes from a nested subagent run, e.g.
+	// ["task:<tool call id>"]; empty for the main agent.
+	Namespace []string `json:"namespace,omitempty"`
 }
 
 // Interrupt is one pending review.

@@ -12,6 +12,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/deepagents_golang/runtime"
 )
 
 func init() {
@@ -222,6 +223,36 @@ func TestServiceStreamsDeltasBeforeTheMessage(t *testing.T) {
 	}
 	if text.String() != "hello there" {
 		t.Fatalf("streamed = %q", text.String())
+	}
+}
+
+func TestConvertTracksEachNamespaceSeparately(t *testing.T) {
+	values := func(ns []string, texts ...string) runtime.Event {
+		st := &runtime.State{}
+		for _, text := range texts {
+			st.Messages = append(st.Messages, llm.NewAssistantMessage(text))
+		}
+		return runtime.Event{Mode: runtime.StreamValues, Namespace: ns, Data: st}
+	}
+	a, b := []string{"task:a"}, []string{"task:b"}
+	sent := map[string]int{"": 1}
+	var got []string
+	for _, ev := range []runtime.Event{
+		values(nil, "old", "m1"),
+		values(a, "a1"),
+		values(b, "b1"),
+		values(a, "a1", "a2"),
+		values(nil, "old", "m1", "m2"),
+		values(b, "b1"),
+		values(a, "a1", "a2", "a3"),
+	} {
+		for _, e := range convert(ev, sent) {
+			got = append(got, strings.Join(e.Namespace, "/")+":"+e.Message.Text())
+		}
+	}
+	want := ":m1 task:a:a1 task:b:b1 task:a:a2 :m2 task:a:a3"
+	if s := strings.Join(got, " "); s != want {
+		t.Fatalf("events = %q, want %q", s, want)
 	}
 }
 

@@ -409,6 +409,9 @@ func (m *model) stopRun() {
 }
 
 func (m *model) event(ev server.Event) {
+	if len(ev.Namespace) > 0 {
+		return
+	}
 	switch ev.Kind {
 	case server.EventDelta:
 		m.streaming.WriteString(ev.Text)
