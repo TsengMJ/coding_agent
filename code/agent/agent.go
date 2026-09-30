@@ -38,7 +38,8 @@ type Options struct {
 	// Empty skips user-level memory.
 	UserDir string
 	// Backend defaults to a LocalShellBackend rooted at Cwd in virtual mode.
-	Backend      backend.Backend
+	Backend backend.Backend
+	// ExtraTools are added after WebTools(Settings).
 	ExtraTools   []tool.Tool
 	Checkpointer rt.Checkpointer
 	Store        rt.Store
@@ -83,7 +84,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		deepagents.WithModel(opts.Model),
 		deepagents.WithBackend(b),
 		deepagents.WithSystemPrompt(prompt),
-		deepagents.WithTools(opts.ExtraTools...),
+		deepagents.WithTools(append(WebTools(opts.Settings), opts.ExtraTools...)...),
 		deepagents.WithMiddleware(summ, todolist.New("", ""), mem, trace.Middleware{}),
 		deepagents.WithCheckpointer(opts.Checkpointer),
 		deepagents.WithStore(opts.Store),
@@ -95,8 +96,8 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	return deepagents.CreateDeepAgent(dopts...)
 }
 
-// DefaultInterruptOn requires approval for tools that change files or run
-// commands. Per run, hitl.AutoApproveKey in RunConfig.Configurable skips it.
+// DefaultInterruptOn requires approval for tools that change files, run
+// commands or reach the network. Per run, hitl.AutoApproveKey in RunConfig.Configurable skips it.
 func DefaultInterruptOn() map[string]hitl.InterruptOnConfig {
 	return map[string]hitl.InterruptOnConfig{
 		"write_file": {},
@@ -105,7 +106,9 @@ func DefaultInterruptOn() map[string]hitl.InterruptOnConfig {
 			AllowedDecisions: []hitl.DecisionType{hitl.DecisionApprove, hitl.DecisionReject},
 			Description:      "Action: Delete file or directory",
 		},
-		"execute": {},
+		"execute":    {},
+		"web_search": {Describe: FormatWebSearchDescription},
+		"fetch_url":  {Describe: FormatFetchURLDescription},
 	}
 }
 
@@ -154,6 +157,7 @@ func SystemPrompt(opts Options) (string, error) {
 			"- After repeated failures, use a different permitted approach. If none is available, report the blocker and any completed work."),
 		"{model_identity_section}", modelIdentitySection(opts.Model),
 		"{working_dir_section}", workingDirSection(opts.Cwd),
+		"{web_search_section}", webSearchSection(opts),
 		"{project_context_section}", opts.ProjectContext,
 	)
 	return r.Replace(systemPromptTemplate), nil

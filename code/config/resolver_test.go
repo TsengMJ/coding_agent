@@ -32,7 +32,7 @@ func resolve(t *testing.T, p Paths) *Settings {
 }
 
 func clearEnv(t *testing.T) {
-	for _, k := range []string{ModelEnvVar, ServerEnvVar, ShellAllowListEnvVar} {
+	for _, k := range []string{ModelEnvVar, ServerEnvVar, ShellAllowListEnvVar, BraveAPIKeyEnvVar} {
 		t.Setenv(k, "")
 	}
 }
@@ -109,6 +109,15 @@ shell.allow_list = "ls"
 	}
 	if !s.ShellAllowAll || s.ShellAllowList != nil {
 		t.Errorf("allow all = %v, list = %v", s.ShellAllowAll, s.ShellAllowList)
+	}
+}
+
+func TestResolverReadsBraveAPIKey(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(BraveAPIKeyEnvVar, "brave-key")
+	s := resolve(t, Paths{ConfigFile: filepath.Join(t.TempDir(), "absent.toml")})
+	if s.WebSearchAPIKey != "brave-key" {
+		t.Errorf("WebSearchAPIKey = %q", s.WebSearchAPIKey)
 	}
 }
 

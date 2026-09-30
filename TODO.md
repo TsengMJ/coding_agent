@@ -437,6 +437,7 @@
   - [x] approve / reject（reject 產生 error tool message，可附理由）
   - [ ] edit / respond
   - [x] `Merge`（`_merge_fs_interrupt_on`）
+  - [x] `Describe`：每個 call 各自產生 description（Python callable `description`）
 - [x] TodoList `middleware/todolist`（langchain `TodoListMiddleware`）
   - [x] `write_todos` 工具與 system prompt；同一輪多次呼叫全部回錯誤；TUI 以 checklist 顯示
 - [~] PromptCaching `middleware/promptcaching`（py: `_prompt_caching.py`）
@@ -521,8 +522,8 @@
 
 ### 6.2 Agent `code/agent`（code: `agent.py`）
 
-- [~] `CreateCLIAgent` / `Options`（LocalShellBackend virtual mode 以 cwd 為根 + system prompt + TodoList + Memory（`~/.deepagents/<agent>/AGENTS.md`、`/.deepagents/AGENTS.md`、`/AGENTS.md`；headless 用 `_MEMORY_HEADLESS_SYSTEM_PROMPT`）+ HITL `DefaultInterruptOn`；MCP 未接）
-- [~] `SystemPrompt`（headless / interactive、model identity、cwd 與虛擬路徑說明、Project Context；skills、web search 段落未做）— go: `code/agent/system_prompt.md`
+- [~] `CreateCLIAgent` / `Options`（LocalShellBackend virtual mode 以 cwd 為根 + system prompt + TodoList + Memory（`~/.deepagents/<agent>/AGENTS.md`、`/.deepagents/AGENTS.md`、`/AGENTS.md`；headless 用 `_MEMORY_HEADLESS_SYSTEM_PROMPT`）+ HITL `DefaultInterruptOn`（含 web_search / fetch_url，description 照 Python 格式）+ `WebTools`（有 `BRAVE_API_KEY` 才掛 web_search，fetch_url 一律掛）；MCP 未接）
+- [~] `SystemPrompt`（headless / interactive、model identity、cwd 與虛擬路徑說明、Project Context、web search 段落（有 key 才加，另說明 freshness / result_filter / offset / summary）；skills 段落未做）— go: `code/agent/system_prompt.md`
 - [~] `ListAgents` / `ResetAgent`
 - [x] shell allow-list（`IsShellCommandAllowed`，移植 `contains_dangerous_patterns` / `is_shell_command_allowed`）— 以 hitl `When` 讓符合的 execute 免核准，`all` 取消 execute 核准；取代 `ShellAllowListMiddleware` stub
 - [ ] 任務錯誤格式化（`_format_task_error`）
@@ -535,7 +536,7 @@
 - [x] `Scope`、`Settings`、`Source`、`Paths`、`Resolver`、`NewResolver`（使用者層 + env）
 - [x] `DefaultPaths`（`~/.deepagents`、`cwd/.deepagents`；尚未處理 profile state dir）
 - [x] config.toml 解析（`github.com/BurntSushi/toml`）：`models.default`、`startup.mode`（manual / yolo，預設 yolo）、`shell.allow_list`（陣列、逗號字串、`recommended`、`all`）、`retries.max_retries`、`server.url`；其餘 key 放 `Raw`；錯誤帶行號
-- [~] 分層合併：flag > env（`DCODE_MODEL`、`DCODE_SERVER`、`DEEPAGENTS_CODE_SHELL_ALLOW_LIST`）> 使用者 config.toml > 預設；managed / project / session 層未做
+- [~] 分層合併：flag > env（`DCODE_MODEL`、`DCODE_SERVER`、`DEEPAGENTS_CODE_SHELL_ALLOW_LIST`、`BRAVE_API_KEY` → `WebSearchAPIKey`）> 使用者 config.toml > 預設；managed / project / session 層未做
 - [x] .env 載入（shell > 最近的專案 `.env` > `~/.deepagents/.env`）— go: `code/config/dotenv.go`
   - [ ] 拒絕危險 key（`_DOTENV_DENIED_ENV_KEYS`、專案 `.env` 不可設定的 LangSmith key）
   - [ ] 變數內插（`${VAR}`）、`/reload` 時移除先前注入的值
@@ -553,10 +554,16 @@
 
 ### 6.5 工具 `code/tools`（code: `tools.py`）
 
-- [~] `NewWebSearch`（Tavily）
-- [~] `NewFetchURL`
-- [ ] SSRF 防護（封鎖私有 IP、DNS pinning、redirect 檢查）
-- [ ] HTML → markdown
+- [x] `NewWebSearch`（Brave Search，與 Python 的 Tavily 不同）— go: `code/tools/brave.go`
+  - [x] 所有 web/search 參數都是 tool 參數（country / search_lang / ui_lang enum、count、offset、safesearch、spellcheck、freshness、text_decorations、result_filter、units、goggles、extra_snippets、summary、enable_rich_callback、include_fetch_metadata、operators）；`location` → `x-loc-*` header；`no_cache` → `Cache-Control`；沒給的參數不送
+  - [x] 送出前驗證（型別、範圍、enum、未知欄位、query 600 字元 / 75 字）
+  - [x] summary 自動打 summarizer、enable_rich_callback 自動打 /web/rich；後續呼叫失敗只附 note
+  - [x] 401 / 403 / 422 / 429（Retry-After）與缺 key 轉成 error tool message
+  - [x] 輸出：query、summary、rich、web、news、videos、discussions、faq、infobox、locations
+- [x] `NewFetchURL` — go: `code/tools/fetch.go`（輸出為文字而非 Python 的 dict）
+- [x] SSRF 防護（只允許 http / https、封鎖非公開 IP 含 IPv4-mapped / 6to4、連線釘在驗證過的 IP、不走 proxy、每個 redirect 重新驗證、上限 5 次）
+- [x] HTML → markdown（`html-to-markdown/v2`，相對連結轉絕對）；純文字 / JSON 原樣回傳；回應上限 5 MiB
+- [~] approval 的 URL 警告：只檢查隱藏字元與 punycode 解碼（Python `unicode_security` 其餘規則未移植）
 
 ### 6.6 Approval `code/approval`（code: `approval_mode.py`, `auto_mode.py`）
 

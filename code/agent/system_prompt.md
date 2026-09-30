@@ -95,4 +95,4 @@ When referencing code, use format: `file_path:line_number`
 
 ---
 
-{model_identity_section}{working_dir_section}{project_context_section}
+{model_identity_section}{working_dir_section}{web_search_section}{project_context_section}

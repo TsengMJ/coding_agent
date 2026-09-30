@@ -41,6 +41,8 @@ type Settings struct {
 	ServerURL       string
 	Theme           string
 	SandboxProvider string
+	// WebSearchAPIKey is the Brave Search API key ($BRAVE_API_KEY); empty
+	// leaves web_search out.
 	WebSearchAPIKey string
 	// Raw holds every key read from config.toml.
 	Raw map[string]any

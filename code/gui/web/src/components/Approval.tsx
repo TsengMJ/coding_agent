@@ -89,6 +89,11 @@ function Preview({ req }: { req: ActionRequest }) {
   return (
     <>
       {head}
+      {req.description && (
+        <div className="mono" style={{ whiteSpace: "pre-wrap", marginBottom: 6 }}>
+          {req.description}
+        </div>
+      )}
       <JsonTree value={req.args} />
     </>
   );

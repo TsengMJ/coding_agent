@@ -35,6 +35,9 @@ var defaultAllowed = []DecisionType{DecisionApprove, DecisionReject}
 type InterruptOnConfig struct {
 	AllowedDecisions []DecisionType
 	Description      string
+	// Describe renders a per-call description and wins over Description
+	// (Python's callable `description`).
+	Describe func(call llm.ToolCall) string
 	// When restricts the interrupt to matching calls; nil means always.
 	When func(call llm.ToolCall) bool
 }
@@ -154,6 +157,9 @@ func DecodeDecisions(v any) ([]Decision, error) {
 }
 
 func describe(cfg InterruptOnConfig, call llm.ToolCall) string {
+	if cfg.Describe != nil {
+		return cfg.Describe(call)
+	}
 	if cfg.Description != "" {
 		return cfg.Description
 	}

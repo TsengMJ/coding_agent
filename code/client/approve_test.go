@@ -81,6 +81,20 @@ func TestActionTitleAndPreviewForDelete(t *testing.T) {
 	}
 }
 
+func TestActionTitleAndPreviewForWebTools(t *testing.T) {
+	req := hitl.ActionRequest{Name: "web_search", Args: map[string]any{"query": "go news"}, Description: "Query: go news"}
+	if got := ActionTitle(req); got != "web_search go news" {
+		t.Fatalf("title = %q", got)
+	}
+	if got := ActionPreview(req); got != "Query: go news" {
+		t.Fatalf("preview = %q", got)
+	}
+	fetch := hitl.ActionRequest{Name: "fetch_url", Args: map[string]any{"url": "https://go.dev"}}
+	if got := ActionTitle(fetch); got != "fetch_url https://go.dev" {
+		t.Fatalf("title = %q", got)
+	}
+}
+
 // scriptedServer yields one scripted event list per Run call.
 type scriptedServer struct {
 	fakeServer

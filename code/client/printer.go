@@ -14,7 +14,7 @@ import (
 )
 
 // toolCallArgKeys lists, in priority order, the argument shown for a tool call.
-var toolCallArgKeys = []string{"file_path", "command", "path", "pattern"}
+var toolCallArgKeys = []string{"file_path", "command", "path", "pattern", "query", "url"}
 
 // printer renders run events as plain text: assistant text on out, tool
 // activity on errw.

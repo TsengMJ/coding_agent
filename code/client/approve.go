@@ -98,6 +98,8 @@ func ActionPreview(req hitl.ActionRequest) string {
 		return prefixLines(clip(str("old_string")), "- ") + "\n" + prefixLines(clip(str("new_string")), "+ ")
 	case "delete":
 		return "rm -r " + str("file_path") + "  (directories are removed with everything inside)"
+	case "web_search", "fetch_url":
+		return req.Description
 	default:
 		return ""
 	}

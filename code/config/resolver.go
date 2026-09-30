@@ -14,6 +14,8 @@ const (
 	ModelEnvVar          = "DCODE_MODEL"
 	ServerEnvVar         = "DCODE_SERVER"
 	ShellAllowListEnvVar = "DEEPAGENTS_CODE_SHELL_ALLOW_LIST"
+	// BraveAPIKeyEnvVar enables the web_search tool (shell env or .env).
+	BraveAPIKeyEnvVar = "BRAVE_API_KEY"
 )
 
 // fileConfig is the part of config.toml with dedicated Settings fields.
@@ -155,6 +157,7 @@ func applyEnv(s *Settings, getenv func(string) string) error {
 	if v := getenv(ServerEnvVar); v != "" {
 		s.ServerURL = v
 	}
+	s.WebSearchAPIKey = getenv(BraveAPIKeyEnvVar)
 	if v := getenv(ShellAllowListEnvVar); v != "" {
 		if err := applyAllowList(s, v); err != nil {
 			return fmt.Errorf("$%s: %w", ShellAllowListEnvVar, err)

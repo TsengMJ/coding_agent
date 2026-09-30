@@ -115,6 +115,20 @@ func TestInterruptsBeforeReviewedToolAndRunsItOnApprove(t *testing.T) {
 	}
 }
 
+func TestDescribeRendersPerCallDescription(t *testing.T) {
+	h := newHarnessWith(t, map[string]InterruptOnConfig{"write_file": {
+		Description: "static",
+		Describe:    func(call llm.ToolCall) string { return "Write " + call.Args["file_path"].(string) },
+	}}, writeCall("w1", "/a.txt"))
+	_, paused := h.start(t, runtime.RunConfig{ThreadID: "t"})
+	if paused == nil {
+		t.Fatal("expected an interrupt")
+	}
+	if got := paused.Interrupts[0].Value.([]ActionRequest)[0].Description; got != "Write /a.txt" {
+		t.Fatalf("description = %q", got)
+	}
+}
+
 func TestRejectSendsErrorToolMessageToModel(t *testing.T) {
 	h := newHarness(t, writeCall("w1", "/a.txt"), llm.NewAssistantMessage("ok, not writing"))
 	if _, paused := h.start(t, runtime.RunConfig{ThreadID: "t"}); paused == nil {
