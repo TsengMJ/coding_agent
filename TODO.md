@@ -578,7 +578,8 @@
 ### 6.7 Slash commands `code/commands`（code: `command_registry.py`）
 
 - [x] `Catalog`：46 個公開 + 2 個隱藏指令資料（有測試）
-- [~] `Registry.Register` / `Registry.Dispatch`
+- [x] `Registry.Register` / `Lookup` / `Dispatch` / `Help` / `Suggest`（alias、未知指令附編輯距離建議、隱藏指令不列出）
+- [x] `commands.DCode`：dcode 實作的指令；TUI / REPL 經 `client.NewCommandRegistry(Session)` 共用 handler，GUI 由 `GET /commands` 取清單做自動完成與 `/help`
 - [ ] 各指令實作
   - [ ] `/agents`
   - [ ] `/auth`（`/connect`）
@@ -586,7 +587,7 @@
   - [ ] `/auto-update`
   - [ ] `/btw`
   - [ ] `/changelog`
-  - [ ] `/clear`
+  - [x] `/clear`（dcode 的 `/new` alias）
   - [ ] `/context`
   - [ ] `/context-doctor`
   - [ ] `/copy`
@@ -598,7 +599,7 @@
   - [ ] `/feedback`
   - [ ] `/force-clear`
   - [ ] `/goal`
-  - [ ] `/help`
+  - [x] `/help`
   - [ ] `/install`
   - [ ] `/line-numbers`
   - [ ] `/manual`

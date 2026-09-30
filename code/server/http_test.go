@@ -8,11 +8,13 @@ import (
 	"iter"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/tsengmingchun/deepagents_golang/code/commands"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
 )
@@ -173,5 +175,28 @@ func TestServeStopsRunWhenClientStopsReading(t *testing.T) {
 	case <-stopped:
 	case <-time.After(20 * time.Second):
 		t.Fatal("run kept going for a client that never reads")
+	}
+}
+
+func TestCommandsRouteListsVisibleDCodeCommands(t *testing.T) {
+	rec := httptest.NewRecorder()
+	NewHandler(funcServer{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/commands", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var got []commands.Command
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(commands.Visible(commands.DCode)) {
+		t.Fatalf("got %d commands", len(got))
+	}
+	for _, c := range got {
+		if c.Hidden {
+			t.Fatalf("hidden command listed: %+v", c)
+		}
+	}
+	if _, ok := commands.Find(got, "/compact"); !ok {
+		t.Fatalf("missing /compact: %+v", got)
 	}
 }

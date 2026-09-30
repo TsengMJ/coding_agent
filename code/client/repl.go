@@ -9,20 +9,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/tsengmingchun/deepagents_golang/code/commands"
 	"github.com/tsengmingchun/deepagents_golang/code/server"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 )
-
-// SlashHelp lists the slash commands shared by the line REPL and the TUI.
-const SlashHelp = `commands:
-  /new           start a new thread
-  /thread        show the current thread id
-  /threads       list threads in this directory
-  /resume <id>   switch to another thread
-  /compact       summarize older messages to free context
-  /yolo          toggle auto-approval of tool calls
-  /quit          exit`
 
 // InteractiveOptions configures the line REPL.
 type InteractiveOptions struct {
@@ -44,6 +35,8 @@ type repl struct {
 	in     *bufio.Reader
 	thread string
 	auto   bool
+	cmds   *commands.Registry
+	quit   bool
 }
 
 // RunInteractive runs a line-oriented REPL: one prompt per line, run output
@@ -53,6 +46,7 @@ func RunInteractive(ctx context.Context, srv server.Server, opts InteractiveOpti
 		return errors.New("client.RunInteractive: Cwd is required")
 	}
 	r := &repl{srv: srv, opts: opts, in: bufio.NewReader(opts.In), thread: opts.ThreadID, auto: opts.AutoApprove}
+	r.cmds = NewCommandRegistry(r, "")
 	fmt.Fprintf(opts.Out, "dcode in %s — /help for commands, Ctrl-C cancels a run\n", opts.Cwd)
 	if r.thread == "" {
 		r.thread = sessions.NewThreadID()
@@ -108,49 +102,53 @@ func (r *repl) turn(ctx context.Context, req server.RunRequest) {
 
 // command handles a slash command and reports whether the REPL should exit.
 func (r *repl) command(ctx context.Context, line string) bool {
-	name, arg, _ := strings.Cut(line, " ")
-	arg = strings.TrimSpace(arg)
-	out := r.opts.Out
-	switch name {
-	case "/quit", "/exit":
-		return true
-	case "/help":
-		fmt.Fprintln(out, SlashHelp)
-	case "/new":
-		r.thread = sessions.NewThreadID()
-		fmt.Fprintf(out, "thread %s (new)\n", r.thread)
-	case "/thread":
-		fmt.Fprintln(out, "thread", r.thread)
-	case "/threads":
-		list, err := r.srv.ListThreads(ctx, sessions.Filter{Cwd: r.opts.Cwd, Limit: 20})
-		if err != nil {
-			fmt.Fprintln(r.opts.Err, "error:", err)
-			break
-		}
-		PrintThreads(out, list, false)
-	case "/compact", "/offload":
-		res, err := r.srv.Compact(ctx, r.thread)
-		if err != nil {
-			fmt.Fprintln(r.opts.Err, "error:", err)
-			break
-		}
-		fmt.Fprintln(out, CompactSummary(res))
-	case "/resume":
-		if arg == "" {
-			fmt.Fprintln(r.opts.Err, "usage: /resume <thread id>")
-			break
-		}
-		if err := r.switchTo(ctx, arg); err != nil {
-			fmt.Fprintln(r.opts.Err, "error:", err)
-		}
-	case "/yolo":
-		r.auto = !r.auto
-		fmt.Fprintf(out, "auto-approve %s\n", onOff(r.auto))
-	default:
-		fmt.Fprintf(r.opts.Err, "unknown command %s (try /help)\n", name)
+	if err := r.cmds.Dispatch(ctx, line); err != nil {
+		fmt.Fprintln(r.opts.Err, err)
 	}
-	return false
+	return r.quit
 }
+
+func (r *repl) Thread() string { return r.thread }
+
+func (r *repl) NewThread() {
+	r.thread = sessions.NewThreadID()
+	fmt.Fprintf(r.opts.Out, "thread %s (new)\n", r.thread)
+}
+
+func (r *repl) ListThreads(ctx context.Context) {
+	list, err := r.srv.ListThreads(ctx, sessions.Filter{Cwd: r.opts.Cwd, Limit: 20})
+	if err != nil {
+		fmt.Fprintln(r.opts.Err, "error:", err)
+		return
+	}
+	PrintThreads(r.opts.Out, list, false)
+}
+
+func (r *repl) Resume(ctx context.Context, id string) {
+	if err := r.switchTo(ctx, id); err != nil {
+		fmt.Fprintln(r.opts.Err, "error:", err)
+	}
+}
+
+func (r *repl) Compact(ctx context.Context) {
+	res, err := r.srv.Compact(ctx, r.thread)
+	if err != nil {
+		fmt.Fprintln(r.opts.Err, "error:", err)
+		return
+	}
+	fmt.Fprintln(r.opts.Out, CompactSummary(res))
+}
+
+func (r *repl) AutoApprove() bool { return r.auto }
+
+func (r *repl) SetAutoApprove(on bool) {
+	r.auto = on
+	fmt.Fprintf(r.opts.Out, "auto-approve %s\n", onOff(r.auto))
+}
+
+func (r *repl) Quit() { r.quit = true }
+
+func (r *repl) Info(text string) { fmt.Fprintln(r.opts.Out, text) }
 
 // switchTo makes id the current thread and answers any pending approval.
 func (r *repl) switchTo(ctx context.Context, id string) error {

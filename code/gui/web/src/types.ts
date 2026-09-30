@@ -135,6 +135,14 @@ export interface ThreadInfo {
   message_count?: number;
 }
 
+// SlashCommand mirrors commands.Command from GET /api/commands.
+export interface SlashCommand {
+  name: string;
+  aliases?: string[];
+  description?: string;
+  args?: string;
+}
+
 export interface Info {
   cwd: string;
   thread_id: string;

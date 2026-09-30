@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { Api, ApiError } from "./api";
-import type { Decision, Info, Message, ThreadInfo } from "./types";
+import type { Decision, Info, Message, SlashCommand, ThreadInfo } from "./types";
+import { helpText, resolveCommand } from "./model/commands";
 import { applyEvent, emptyView, endRun, fromHistory, startRun, type ThreadView } from "./model/state";
 import { buildTimeline, type LLMStep, type Turn } from "./model/timeline";
 import { matchTurn, type Filter } from "./model/filter";
@@ -59,6 +60,7 @@ export function App({ api }: { api: Api }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
+  const [commands, setCommands] = useState<SlashCommand[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const listRef = useRef<VirtuosoHandle | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -115,6 +117,13 @@ export function App({ api }: { api: Api }) {
     if (info) void refreshThreads(info.cwd);
   }, [info, refreshThreads]);
 
+  useEffect(() => {
+    api
+      .commands()
+      .then(setCommands)
+      .catch(() => setCommands([]));
+  }, [api]);
+
   const timeline = useMemo(
     () => buildTimeline(view),
     // streamText and pendingUser change on every token; the timeline does not depend on them
@@ -161,20 +170,52 @@ export function App({ api }: { api: Api }) {
 
   const send = useCallback(
     async (text: string) => {
-      if (text === "/new") return newThread();
-      if (text === "/compact") {
-        try {
-          const r = await api.compact(threadId);
-          setNotice(`Compacted: older history summarized${r.file_path ? ` (full history saved to ${r.file_path})` : ""}.`);
-          await loadThread(threadId);
-        } catch (e) {
-          setNotice(`Compact failed: ${(e as Error).message}`);
-        }
+      const cmd = resolveCommand(text, commands);
+      if (cmd.kind === "text") {
+        void run({ messages: [userMessage(text)] }, text);
         return;
       }
-      void run({ messages: [userMessage(text)] }, text);
+      if (cmd.kind === "unknown") {
+        setNotice(`Unknown command ${cmd.name}${cmd.suggestion ? ` — did you mean ${cmd.suggestion}?` : ""} (try /help)`);
+        return;
+      }
+      switch (cmd.name) {
+        case "/new":
+          return newThread();
+        case "/thread":
+          setNotice(`Thread ${threadId}`);
+          return;
+        case "/threads":
+          setNotice("Threads are listed in the sidebar.");
+          return;
+        case "/resume":
+          if (!cmd.args) setNotice("Usage: /resume <thread id>");
+          else void loadThread(cmd.args);
+          return;
+        case "/yolo":
+          setAutoApprove(!autoApprove);
+          setNotice(autoApprove ? "Auto-approve off." : "Auto-approve on: tool calls run without asking.");
+          return;
+        case "/help":
+          setNotice(helpText(commands));
+          return;
+        case "/quit":
+          setNotice("Close this tab to leave; the dcode process keeps running until you stop it in the terminal.");
+          return;
+        case "/compact":
+          try {
+            const r = await api.compact(threadId);
+            setNotice(`Compacted: older history summarized${r.file_path ? ` (full history saved to ${r.file_path})` : ""}.`);
+            await loadThread(threadId);
+          } catch (e) {
+            setNotice(`Compact failed: ${(e as Error).message}`);
+          }
+          return;
+        default:
+          setNotice(`${cmd.name} is not available in the GUI.`);
+      }
     },
-    [api, threadId, run, newThread, loadThread],
+    [api, threadId, run, newThread, loadThread, commands, autoApprove],
   );
 
   const ui: UI = useMemo(
@@ -343,7 +384,7 @@ export function App({ api }: { api: Api }) {
             </button>
           </div>
           {notice && (
-            <div className="note" style={{ margin: "6px 16px" }} onClick={() => setNotice("")}>
+            <div className="note" style={{ margin: "6px 16px", whiteSpace: "pre-line" }} onClick={() => setNotice("")}>
               {notice} <span className="muted">(click to dismiss)</span>
             </div>
           )}
@@ -359,6 +400,7 @@ export function App({ api }: { api: Api }) {
             ref={composerRef}
             running={view.running}
             blocked={blocked}
+            commands={commands}
             onSend={(t) => void send(t)}
             onStop={() => abortRef.current?.abort()}
           />

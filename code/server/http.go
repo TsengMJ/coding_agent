@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/tsengmingchun/deepagents_golang/code/commands"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
 )
@@ -38,10 +39,14 @@ var (
 //	GET  /threads/{id}/trace -> trace.Trace (model call summaries, diffs, subagent messages)
 //	GET  /threads/{id}/trace/llm/{seq} -> trace.LLMCallDetail (404 when unknown)
 //	POST /threads/{id}/compact -> CompactResult (404 unknown, 409 busy/pending/too short)
+//	GET  /commands        -> []commands.Command (dcode slash commands, hidden ones omitted)
 func NewHandler(srv Server) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("GET /commands", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, commands.Visible(commands.DCode))
 	})
 	mux.HandleFunc("POST /runs", func(w http.ResponseWriter, r *http.Request) {
 		handleRun(w, r, srv)

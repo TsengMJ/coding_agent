@@ -4,6 +4,7 @@ import type {
   LLMCallDetail,
   Message,
   RunEvent,
+  SlashCommand,
   ThreadInfo,
   ThreadState,
   Trace,
@@ -64,6 +65,10 @@ export class Api {
 
   info(): Promise<Info> {
     return this.json("/info");
+  }
+
+  commands(): Promise<SlashCommand[]> {
+    return this.json("/commands");
   }
 
   threads(cwd: string, limit = 50): Promise<ThreadInfo[]> {

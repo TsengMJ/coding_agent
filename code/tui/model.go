@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tsengmingchun/deepagents_golang/code/client"
+	"github.com/tsengmingchun/deepagents_golang/code/commands"
 	"github.com/tsengmingchun/deepagents_golang/code/server"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/llm"
@@ -172,6 +173,10 @@ type model struct {
 
 	previewIdx  int
 	previewText string
+
+	cmds *commands.Registry
+	// queued collects the background work slash command handlers start.
+	queued []tea.Cmd
 }
 
 func newModel(ctx context.Context, opts Options) *model {
@@ -201,6 +206,7 @@ func newModel(ctx context.Context, opts Options) *model {
 	if m.mdStyle == "" {
 		m.mdStyle = "dark"
 	}
+	m.cmds = client.NewCommandRegistry(tuiSession{m}, "keys: Enter send · Ctrl-C cancel run / quit · PgUp/PgDn scroll")
 	if m.thread == "" {
 		m.thread = sessions.NewThreadID()
 		m.info("new thread " + m.thread)
@@ -332,50 +338,62 @@ func (m *model) submit(text string) tea.Cmd {
 }
 
 func (m *model) command(line string) tea.Cmd {
-	name, arg, _ := strings.Cut(line, " ")
-	arg = strings.TrimSpace(arg)
-	switch name {
-	case "/quit", "/exit":
-		return tea.Quit
-	case "/help":
-		m.info(client.SlashHelp + "\nkeys: Enter send · Ctrl-C cancel run / quit · PgUp/PgDn scroll")
-	case "/new":
-		m.thread = sessions.NewThreadID()
-		m.resetEntries()
-		m.info("new thread " + m.thread)
-	case "/thread":
-		m.info("thread " + m.thread)
-	case "/threads":
-		srv, cwd, ctx := m.srv, m.opts.Cwd, m.ctx
-		return func() tea.Msg {
-			list, err := srv.ListThreads(ctx, sessions.Filter{Cwd: cwd, Limit: 20})
-			return threadsMsg{list: list, err: err}
-		}
-	case "/compact", "/offload":
-		srv, thread, ctx := m.srv, m.thread, m.ctx
-		m.info("compacting older messages…")
-		return func() tea.Msg {
-			res, err := srv.Compact(ctx, thread)
-			return compactMsg{res: res, err: err}
-		}
-	case "/resume":
-		if arg == "" {
-			m.errorf("usage: /resume <thread id>")
-			return nil
-		}
-		return m.loadThread(arg)
-	case "/yolo":
-		m.auto = !m.auto
-		if m.auto {
-			m.info("auto-approve on: tool calls run without asking")
-		} else {
-			m.info("auto-approve off")
-		}
-	default:
-		m.errorf("unknown command %s (try /help)", name)
+	m.queued = nil
+	if err := m.cmds.Dispatch(m.ctx, line); err != nil {
+		m.errorf("%v", err)
 	}
-	return nil
+	cmds := m.queued
+	m.queued = nil
+	return tea.Batch(cmds...)
 }
+
+// tuiSession runs slash commands against the TUI model; slow work is
+// queued as tea.Cmds and reported back through Update.
+type tuiSession struct{ m *model }
+
+func (s tuiSession) Thread() string { return s.m.thread }
+
+func (s tuiSession) NewThread() {
+	s.m.thread = sessions.NewThreadID()
+	s.m.resetEntries()
+	s.m.info("new thread " + s.m.thread)
+}
+
+func (s tuiSession) ListThreads(context.Context) {
+	srv, cwd, ctx := s.m.srv, s.m.opts.Cwd, s.m.ctx
+	s.m.queued = append(s.m.queued, func() tea.Msg {
+		list, err := srv.ListThreads(ctx, sessions.Filter{Cwd: cwd, Limit: 20})
+		return threadsMsg{list: list, err: err}
+	})
+}
+
+func (s tuiSession) Resume(_ context.Context, id string) {
+	s.m.queued = append(s.m.queued, s.m.loadThread(id))
+}
+
+func (s tuiSession) Compact(context.Context) {
+	srv, thread, ctx := s.m.srv, s.m.thread, s.m.ctx
+	s.m.info("compacting older messages…")
+	s.m.queued = append(s.m.queued, func() tea.Msg {
+		res, err := srv.Compact(ctx, thread)
+		return compactMsg{res: res, err: err}
+	})
+}
+
+func (s tuiSession) AutoApprove() bool { return s.m.auto }
+
+func (s tuiSession) SetAutoApprove(on bool) {
+	s.m.auto = on
+	if on {
+		s.m.info("auto-approve on: tool calls run without asking")
+	} else {
+		s.m.info("auto-approve off")
+	}
+}
+
+func (s tuiSession) Quit() { s.m.queued = append(s.m.queued, tea.Quit) }
+
+func (s tuiSession) Info(text string) { s.m.info(text) }
 
 // startRun streams req in a goroutine; events come back through waitEvent.
 func (m *model) startRun(req server.RunRequest) tea.Cmd {

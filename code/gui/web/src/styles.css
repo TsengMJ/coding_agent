@@ -945,6 +945,28 @@ mark {
   background: var(--bg-2);
 }
 
+.command-menu {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 4px 0;
+  max-width: 1200px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.command-menu li {
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.command-menu li.picked,
+.command-menu li:hover {
+  background: var(--bg-hover);
+}
+
 .composer-box {
   display: flex;
   gap: 8px;

@@ -1,19 +1,17 @@
 // Package commands is the slash-command registry (Python `command_registry.py`).
 package commands
 
-import (
-	"context"
-
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-)
+import "context"
 
 // Command is one slash command.
 type Command struct {
-	Name        string
-	Aliases     []string
-	Description string
+	Name        string   `json:"name"`
+	Aliases     []string `json:"aliases,omitempty"`
+	Description string   `json:"description,omitempty"`
+	// Args describes the argument syntax shown in help, e.g. "<thread id>".
+	Args string `json:"args,omitempty"`
 	// Hidden commands are omitted from autocomplete and help.
-	Hidden bool
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // Handler executes a command with its raw argument string.
@@ -69,22 +67,4 @@ var Catalog = []Command{
 	{Name: "/yolo", Description: "Switch to YOLO approval mode (no review)"},
 	{Name: "/debug", Hidden: true},
 	{Name: "/debug-error", Hidden: true},
-}
-
-// Registry maps command names and aliases to handlers.
-type Registry struct {
-	handlers map[string]Handler
-}
-
-// NewRegistry returns an empty registry.
-func NewRegistry() *Registry { return &Registry{handlers: map[string]Handler{}} }
-
-// Register binds a handler to a command and its aliases.
-func (r *Registry) Register(cmd Command, h Handler) error {
-	return notimpl.Err("commands.Registry.Register")
-}
-
-// Dispatch parses "/name args" and runs the matching handler.
-func (r *Registry) Dispatch(ctx context.Context, input string) error {
-	return notimpl.Err("commands.Registry.Dispatch")
 }
