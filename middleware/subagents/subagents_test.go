@@ -128,6 +128,40 @@ func TestTaskRunsIsolatedSubagentAndReturnsItsReport(t *testing.T) {
 	}
 }
 
+func TestStreamingTaskForwardsSubagentEventsUnderItsNamespace(t *testing.T) {
+	sub := llm.NewFakeModel(llm.NewAssistantMessage("the report\n"))
+	mw, err := New(Options{SubAgents: []Spec{SubAgent{Name: "researcher", Description: "Researches", Model: sub}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := llm.NewFakeModel(callsMessage(taskCall("c1", "researcher", "find the bug")), llm.NewAssistantMessage("done"))
+	a, err := agent.CreateAgent(agent.Config{Model: model, Middleware: []agent.Middleware{mw}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nested, final *runtime.State
+	for ev, err := range a.Stream(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, runtime.RunConfig{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, _ := ev.Data.(*runtime.State)
+		switch {
+		case len(ev.Namespace) == 0:
+			final = st
+		case len(ev.Namespace) == 1 && ev.Namespace[0] == "task:c1":
+			nested = st
+		default:
+			t.Fatalf("unexpected namespace %q", ev.Namespace)
+		}
+	}
+	if nested == nil || nested.Messages[0].Text() != "find the bug" || nested.Messages[len(nested.Messages)-1].Text() != "the report\n" {
+		t.Fatalf("last forwarded subagent state = %+v", nested)
+	}
+	if got := toolText(final, "c1"); got != "the report" {
+		t.Fatalf("tool result = %q", got)
+	}
+}
+
 func TestTaskPassesSharedStateOnlyAndCopiesItBack(t *testing.T) {
 	var got map[string]any
 	mw, err := New(Options{SubAgents: []Spec{CompiledSubAgent{Name: "worker", Description: "Works", Runnable: funcAgent{

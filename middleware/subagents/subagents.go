@@ -331,7 +331,7 @@ func (m *Middleware) task(ctx context.Context, rt *tool.Runtime, args map[string
 		cfg.Configurable = map[string]any{}
 	}
 	cfg.Configurable["ls_agent_type"] = "subagent"
-	st, err := a.Invoke(ctx, in, cfg)
+	st, err := run(ctx, a, in, cfg, rt)
 	if err != nil {
 		var paused *runtime.InterruptError
 		if errors.As(err, &paused) {
@@ -340,6 +340,32 @@ func (m *Middleware) task(ctx context.Context, rt *tool.Runtime, args map[string
 		return nil, fmt.Errorf("subagent %s failed: %w", subagentType, err)
 	}
 	return m.result(st, rt.ToolCallID)
+}
+
+// NamespacePrefix starts the namespace of events forwarded from a subagent;
+// the task tool call ID follows it.
+const NamespacePrefix = "task:"
+
+// run invokes the subagent. When the parent is streaming, the subagent's
+// state snapshots are forwarded under "task:<tool call id>" so a UI can show
+// its progress, and the last snapshot is the final state.
+func run(ctx context.Context, a agent.Agent, in agent.Input, cfg runtime.RunConfig, rt *tool.Runtime) (*runtime.State, error) {
+	if rt.Emit == nil {
+		return a.Invoke(ctx, in, cfg)
+	}
+	ns := NamespacePrefix + rt.ToolCallID
+	var final *runtime.State
+	for ev, err := range a.Stream(ctx, in, cfg, runtime.StreamValues) {
+		if err != nil {
+			return nil, err
+		}
+		if st, ok := ev.Data.(*runtime.State); ok && ev.Mode == runtime.StreamValues && len(ev.Namespace) == 0 {
+			final = st
+		}
+		ev.Namespace = append([]string{ns}, ev.Namespace...)
+		rt.Emit(ev)
+	}
+	return final, nil
 }
 
 // filterValues drops excluded and private keys.
