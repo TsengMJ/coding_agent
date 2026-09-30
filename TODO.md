@@ -432,11 +432,11 @@
 - [~] UnsupportedContent `middleware/unsupportedcontent`（py: `unsupported_content.py`）
   - [ ] 依 ModelProfile 判斷 block 是否支援（含 tool message 內）
   - [ ] OpenAI Responses 例外、read_file placeholder
-- [~] HumanInTheLoop `middleware/hitl`（langchain `HumanInTheLoopMiddleware`）
+- [x] HumanInTheLoop `middleware/hitl`（langchain `HumanInTheLoopMiddleware`）
   - [x] `InterruptOnConfig` / `DecisionType` / `ActionRequest` / `Decision`（`AllowedDecisions` 預設 approve / reject）
   - [x] AfterModel：對符合的 tool calls 發出 interrupt；`hitl_auto_approve` 設定時略過
   - [x] approve / reject（reject 產生 error tool message，可附理由）
-  - [ ] edit / respond
+  - [x] edit（以 `EditedArgs` 取代最後一則 AI 訊息中的 tool call args，同一 message ID 經 reducer 原地取代後照常執行；model 回覆沒有 ID 時由 agent loop 補上）/ respond（不執行工具，回傳 reviewer 訊息作為成功的 tool message）；dcode TUI / headless 尚無 edit UI
   - [x] `Merge`（`_merge_fs_interrupt_on`）
   - [x] `Describe`：每個 call 各自產生 description（Python callable `description`）
 - [x] TodoList `middleware/todolist`（langchain `TodoListMiddleware`）

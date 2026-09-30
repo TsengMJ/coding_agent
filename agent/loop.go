@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"iter"
@@ -560,7 +562,18 @@ func (a *loopAgent) callModel(ctx context.Context, req *ModelRequest) (*ModelRes
 		return nil, fmt.Errorf("model call: %w", err)
 	}
 	timed := llm.WithTiming(*reply, llm.Timing{Start: start, Duration: time.Since(start)})
+	if timed.ID == "" {
+		timed.ID = newMessageID()
+	}
 	return &ModelResponse{Messages: []llm.Message{timed}}, nil
+}
+
+// newMessageID names a model reply the provider left unnamed, so later
+// updates (e.g. HITL edits) can replace it by ID.
+func newMessageID() string {
+	var buf [16]byte
+	_, _ = rand.Read(buf[:])
+	return "run-" + hex.EncodeToString(buf[:])
 }
 
 // chunkEmitKey carries the Stream emitter when StreamMessages was requested.

@@ -71,7 +71,9 @@ func New(interruptOn map[string]InterruptOnConfig) *Middleware {
 func (m *Middleware) Name() string { return "HumanInTheLoopMiddleware" }
 
 // AfterModel pauses on calls that need review, then applies the decisions:
-// approved calls run, rejected calls get an error tool message instead.
+// approved calls run, edited calls run with the reviewer's args (replacing
+// them in the stored assistant message), rejected calls get an error tool
+// message and responded calls get the reviewer's message as their result.
 func (m *Middleware) AfterModel(ctx context.Context, state *runtime.State, rt *agent.Runtime) (*runtime.Update, error) {
 	if len(m.interruptOn) == 0 || len(state.Messages) == 0 {
 		return nil, nil
@@ -114,6 +116,7 @@ func (m *Middleware) AfterModel(ctx context.Context, state *runtime.State, rt *a
 		return nil, fmt.Errorf("hitl: got %d decisions for %d pending tool calls", len(decisions), len(reqs))
 	}
 	var msgs []llm.Message
+	edited := map[string]map[string]any{}
 	for i, d := range decisions {
 		req := reqs[i]
 		if !slices.Contains(req.AllowedDecisions, d.Type) {
@@ -121,6 +124,11 @@ func (m *Middleware) AfterModel(ctx context.Context, state *runtime.State, rt *a
 		}
 		switch d.Type {
 		case DecisionApprove:
+		case DecisionEdit:
+			if d.EditedArgs == nil {
+				return nil, fmt.Errorf("hitl: edit decision for %s (%s) has no edited_args", req.Name, req.ToolCallID)
+			}
+			edited[req.ToolCallID] = d.EditedArgs
 		case DecisionReject:
 			text := d.Message
 			if text == "" {
@@ -129,14 +137,38 @@ func (m *Middleware) AfterModel(ctx context.Context, state *runtime.State, rt *a
 			msg := llm.NewToolMessage(req.ToolCallID, req.Name, text)
 			msg.Status = llm.ToolStatusError
 			msgs = append(msgs, msg)
+		case DecisionRespond:
+			msgs = append(msgs, llm.NewToolMessage(req.ToolCallID, req.Name, d.Message))
 		default:
-			return nil, fmt.Errorf("hitl: %q decisions are not supported yet", d.Type)
+			return nil, fmt.Errorf("hitl: unknown decision type %q for %s", d.Type, req.Name)
 		}
+	}
+	if len(edited) > 0 {
+		revised, err := withEditedArgs(last, edited)
+		if err != nil {
+			return nil, err
+		}
+		msgs = append([]llm.Message{revised}, msgs...)
 	}
 	if len(msgs) == 0 {
 		return nil, nil
 	}
 	return &runtime.Update{Messages: msgs}, nil
+}
+
+// withEditedArgs copies ai with the reviewer's args swapped in; the copy
+// keeps ai's ID so the messages reducer replaces the original in place.
+func withEditedArgs(ai llm.Message, edited map[string]map[string]any) (llm.Message, error) {
+	if ai.ID == "" {
+		return llm.Message{}, fmt.Errorf("hitl: cannot apply edits to an assistant message without an ID")
+	}
+	ai.ToolCalls = slices.Clone(ai.ToolCalls)
+	for i, call := range ai.ToolCalls {
+		if args, ok := edited[call.ID]; ok {
+			ai.ToolCalls[i].Args = args
+		}
+	}
+	return ai, nil
 }
 
 // DecodeDecisions accepts []Decision or its generic JSON form (after a

@@ -3,8 +3,13 @@ package hitl
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/llm"
@@ -13,9 +18,17 @@ import (
 )
 
 type harness struct {
-	agent agent.Agent
-	model *llm.FakeModel
-	calls []string
+	agent  agent.Agent
+	model  *llm.FakeModel
+	mu     sync.Mutex
+	calls  []string
+	thread string
+}
+
+func (h *harness) record(call string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.calls = append(h.calls, call)
 }
 
 func newHarness(t *testing.T, replies ...llm.Message) *harness {
@@ -25,13 +38,18 @@ func newHarness(t *testing.T, replies ...llm.Message) *harness {
 
 func newHarnessWith(t *testing.T, interruptOn map[string]InterruptOnConfig, replies ...llm.Message) *harness {
 	t.Helper()
-	h := &harness{model: llm.NewFakeModel(replies...)}
+	return newHarnessOn(t, runtime.NewMemoryCheckpointer(), "t", interruptOn, replies...)
+}
+
+func newHarnessOn(t *testing.T, cp runtime.Checkpointer, thread string, interruptOn map[string]InterruptOnConfig, replies ...llm.Message) *harness {
+	t.Helper()
+	h := &harness{model: llm.NewFakeModel(replies...), thread: thread}
 	write := &tool.Func{
 		ToolName:   "write_file",
 		ToolSchema: tool.Schema{"type": "object"},
 		Fn: func(_ context.Context, _ *tool.Runtime, args map[string]any) (*tool.Result, error) {
 			p, _ := args["file_path"].(string)
-			h.calls = append(h.calls, p)
+			h.record(p)
 			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("wrote " + p)}}, nil
 		},
 	}
@@ -39,7 +57,7 @@ func newHarnessWith(t *testing.T, interruptOn map[string]InterruptOnConfig, repl
 		ToolName:   "read_file",
 		ToolSchema: tool.Schema{"type": "object"},
 		Fn: func(context.Context, *tool.Runtime, map[string]any) (*tool.Result, error) {
-			h.calls = append(h.calls, "read")
+			h.record("read")
 			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("contents")}}, nil
 		},
 	}
@@ -47,7 +65,7 @@ func newHarnessWith(t *testing.T, interruptOn map[string]InterruptOnConfig, repl
 		Model:        h.model,
 		Tools:        []tool.Tool{write, read},
 		Middleware:   []agent.Middleware{New(interruptOn)},
-		Checkpointer: runtime.NewMemoryCheckpointer(),
+		Checkpointer: cp,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +94,7 @@ func (h *harness) start(t *testing.T, cfg runtime.RunConfig) (*runtime.State, *r
 func (h *harness) resume(t *testing.T, decisions ...Decision) (*runtime.State, *runtime.InterruptError) {
 	t.Helper()
 	st, err := h.agent.Invoke(context.Background(), agent.Input{Resume: &runtime.Command{Resume: map[string]any{"after_model": decisions}}},
-		runtime.RunConfig{ThreadID: "t"})
+		runtime.RunConfig{ThreadID: h.thread})
 	var paused *runtime.InterruptError
 	if errors.As(err, &paused) {
 		return nil, paused
@@ -226,10 +244,131 @@ func TestDisallowedAndMiscountedDecisionsFail(t *testing.T) {
 	}
 }
 
+var allDecisions = map[string]InterruptOnConfig{"write_file": {
+	AllowedDecisions: []DecisionType{DecisionApprove, DecisionEdit, DecisionReject, DecisionRespond},
+}}
+
+func toolMessage(st *runtime.State, id string) *llm.Message {
+	for i := range st.Messages {
+		if st.Messages[i].Role == llm.RoleTool && st.Messages[i].ToolCallID == id {
+			return &st.Messages[i]
+		}
+	}
+	return nil
+}
+
+func TestEditRunsToolWithEditedArgsAndReplacesAIMessage(t *testing.T) {
+	h := newHarnessWith(t, allDecisions, writeCall("w1", "/a.txt"), llm.NewAssistantMessage("done"))
+	if _, paused := h.start(t, runtime.RunConfig{ThreadID: "t"}); paused == nil {
+		t.Fatal("expected an interrupt")
+	}
+	st, _ := h.resume(t, Decision{Type: DecisionEdit, EditedArgs: map[string]any{"file_path": "/b.txt"}})
+	if strings.Join(h.calls, ",") != "/b.txt" {
+		t.Fatalf("tool calls = %v", h.calls)
+	}
+	var ais []llm.Message
+	for _, m := range st.Messages {
+		if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
+			ais = append(ais, m)
+		}
+	}
+	if len(ais) != 1 || ais[0].ToolCalls[0].Args["file_path"] != "/b.txt" {
+		t.Fatalf("assistant tool-call messages = %+v", ais)
+	}
+}
+
+func TestEditWithoutArgsFails(t *testing.T) {
+	h := newHarnessWith(t, allDecisions, writeCall("w1", "/a.txt"))
+	if _, paused := h.start(t, runtime.RunConfig{ThreadID: "t"}); paused == nil {
+		t.Fatal("expected an interrupt")
+	}
+	_, err := h.agent.Invoke(context.Background(), agent.Input{Resume: &runtime.Command{Resume: map[string]any{
+		"after_model": []Decision{{Type: DecisionEdit}},
+	}}}, runtime.RunConfig{ThreadID: "t"})
+	if err == nil || !strings.Contains(err.Error(), "edited_args") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRespondSkipsToolAndReturnsMessageToModel(t *testing.T) {
+	h := newHarnessWith(t, allDecisions, writeCall("w1", "/a.txt"), llm.NewAssistantMessage("thanks"))
+	if _, paused := h.start(t, runtime.RunConfig{ThreadID: "t"}); paused == nil {
+		t.Fatal("expected an interrupt")
+	}
+	st, _ := h.resume(t, Decision{Type: DecisionRespond, Message: "already written"})
+	if len(h.calls) != 0 {
+		t.Fatalf("responded tool ran: %v", h.calls)
+	}
+	msg := toolMessage(st, "w1")
+	if msg == nil || msg.Status != llm.ToolStatusSuccess || msg.Text() != "already written" {
+		t.Fatalf("respond message = %+v", msg)
+	}
+	if n := len(h.model.Requests()); n != 2 {
+		t.Fatalf("model calls = %d, want 2", n)
+	}
+}
+
+func TestMixedDecisionsInOneTurn(t *testing.T) {
+	turn := llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+		{ID: "a", Name: "write_file", Args: map[string]any{"file_path": "/a"}},
+		{ID: "e", Name: "write_file", Args: map[string]any{"file_path": "/e"}},
+		{ID: "r", Name: "write_file", Args: map[string]any{"file_path": "/r"}},
+	}}
+	h := newHarnessWith(t, allDecisions, turn, llm.NewAssistantMessage("done"))
+	if _, paused := h.start(t, runtime.RunConfig{ThreadID: "t"}); paused == nil {
+		t.Fatal("expected an interrupt")
+	}
+	st, _ := h.resume(t,
+		Decision{Type: DecisionApprove},
+		Decision{Type: DecisionEdit, EditedArgs: map[string]any{"file_path": "/edited"}},
+		Decision{Type: DecisionReject},
+	)
+	slices.Sort(h.calls)
+	if strings.Join(h.calls, ",") != "/a,/edited" {
+		t.Fatalf("tool calls = %v", h.calls)
+	}
+	if msg := toolMessage(st, "r"); msg == nil || msg.Status != llm.ToolStatusError {
+		t.Fatalf("rejected call message = %+v", msg)
+	}
+	if msg := toolMessage(st, "e"); msg == nil || msg.Text() != "wrote /edited" {
+		t.Fatalf("edited call message = %+v", msg)
+	}
+}
+
+func TestEditSurvivesPostgresResume(t *testing.T) {
+	conn := os.Getenv("POSTGRES_CONN_STRING")
+	if conn == "" {
+		t.Skip("POSTGRES_CONN_STRING is not set")
+	}
+	cp, err := runtime.NewPostgresCheckpointer(context.Background(), conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cp.Close)
+	thread := fmt.Sprintf("pg-hitl-edit-%d", time.Now().UnixNano())
+	t.Cleanup(func() { _ = cp.DeleteThread(context.Background(), thread) })
+
+	h := newHarnessOn(t, cp, thread, allDecisions, writeCall("w1", "/a.txt"), llm.NewAssistantMessage("done"))
+	if _, paused := h.start(t, runtime.RunConfig{ThreadID: thread}); paused == nil {
+		t.Fatal("expected an interrupt")
+	}
+	st, _ := h.resume(t, Decision{Type: DecisionEdit, EditedArgs: map[string]any{"file_path": "/b.txt"}})
+	if strings.Join(h.calls, ",") != "/b.txt" {
+		t.Fatalf("tool calls = %v", h.calls)
+	}
+	if msg := toolMessage(st, "w1"); msg == nil || msg.Text() != "wrote /b.txt" {
+		t.Fatalf("edited call message = %+v", msg)
+	}
+}
+
 func TestDecodeDecisionsAcceptsGenericJSON(t *testing.T) {
 	d, err := DecodeDecisions([]any{map[string]any{"type": "reject", "message": "no"}})
 	if err != nil || len(d) != 1 || d[0].Type != DecisionReject || d[0].Message != "no" {
 		t.Fatalf("decoded = %+v, %v", d, err)
+	}
+	d, err = DecodeDecisions([]any{map[string]any{"type": "edit", "edited_args": map[string]any{"file_path": "/b"}}})
+	if err != nil || len(d) != 1 || d[0].Type != DecisionEdit || d[0].EditedArgs["file_path"] != "/b" {
+		t.Fatalf("decoded edit = %+v, %v", d, err)
 	}
 }
 
