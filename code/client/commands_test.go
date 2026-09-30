@@ -56,7 +56,7 @@ func TestModelCommandShowsAndSwitches(t *testing.T) {
 	s := &fakeSession{model: "openai:a"}
 	reg := NewCommandRegistry(s, CommandOptions{})
 	ctx := context.Background()
-	if err := reg.Dispatch(ctx, "/model"); err != nil || s.info[0] != "model openai:a" {
+	if err := reg.Dispatch(ctx, "/model"); err != nil || !strings.HasPrefix(s.info[0], "model openai:a (providers: ") || !strings.Contains(s.info[0], "openai") {
 		t.Fatalf("show: %v %q", err, s.info)
 	}
 	if err := reg.Dispatch(ctx, "/model openrouter:x/y"); err != nil || s.model != "openrouter:x/y" {

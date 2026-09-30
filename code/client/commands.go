@@ -121,7 +121,7 @@ func modelCommand(s Session, save func(string) error, args string) error {
 		if name == "" {
 			name = "(server default)"
 		}
-		s.Info("model " + name)
+		s.Info("model " + name + " (providers: " + strings.Join(llm.Providers(), ", ") + ")")
 		return nil
 	}
 	if spec != "" {
