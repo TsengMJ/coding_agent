@@ -9,6 +9,7 @@ var DCode = []Command{
 	{Name: "/threads", Description: "list threads in this directory"},
 	{Name: "/resume", Args: "<id>", Description: "switch to another thread"},
 	{Name: "/compact", Aliases: []string{"/offload"}, Description: "summarize older messages to free context"},
+	{Name: "/model", Args: "[provider:model] [--default]", Description: "show or switch the model; --default also saves it to config.toml"},
 	{Name: "/yolo", Description: "toggle auto-approval of tool calls"},
 	{Name: "/help", Description: "show this help"},
 	{Name: "/quit", Aliases: []string{"/exit", "/q"}, Description: "exit"},

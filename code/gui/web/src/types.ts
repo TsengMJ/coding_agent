@@ -125,6 +125,7 @@ export interface ThreadState {
   thread_id: string;
   messages: Message[];
   interrupts?: Interrupt[];
+  model?: string;
 }
 
 export interface ThreadInfo {
@@ -147,6 +148,7 @@ export interface Info {
   cwd: string;
   thread_id: string;
   model: string;
+  model_override?: string;
   auto_approve: boolean;
   version: string;
 }

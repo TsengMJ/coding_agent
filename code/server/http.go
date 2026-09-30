@@ -32,7 +32,7 @@ var (
 
 // NewHandler exposes srv over HTTP:
 //
-//	GET  /healthz
+//	GET  /healthz         -> {"status":"ok","model":default spec when known}
 //	POST /runs            RunRequest -> NDJSON stream of Event, ending in done or error
 //	GET  /threads         ?cwd=&limit= -> []sessions.Info
 //	GET  /threads/{id}    -> ThreadState (404 when unknown)
@@ -43,7 +43,11 @@ var (
 func NewHandler(srv Server) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		body := map[string]string{"status": "ok"}
+		if d, ok := srv.(interface{ DefaultModel() string }); ok {
+			body["model"] = d.DefaultModel()
+		}
+		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("GET /commands", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, commands.Visible(commands.DCode))

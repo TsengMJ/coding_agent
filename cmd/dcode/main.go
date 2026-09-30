@@ -110,11 +110,8 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 }
 
 // connect returns the remote server at serverURL, or an in-process service.
-func connect(ctx context.Context, e env, serverURL, model string, stderr io.Writer) (server.Server, error) {
+func connect(ctx context.Context, e env, serverURL, model string) (server.Server, error) {
 	if serverURL != "" {
-		if model != "" {
-			fmt.Fprintln(stderr, "dcode: -model is ignored when connecting to a server; pass it to `dcode serve`")
-		}
 		r, err := client.NewRemote(serverURL)
 		if err != nil {
 			return nil, err
@@ -188,12 +185,14 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 		return 1, err
 	}
 	serverURL := e.serverURL(fs, *serverFlag)
-	srv, err := connect(ctx, e, serverURL, *model, stderr)
+	srv, err := connect(ctx, e, serverURL, *model)
 	if err != nil {
 		return 1, err
 	}
 	defer srv.Close()
 	yolo := *autoApprove || e.settings.ApprovalMode == config.ApprovalYolo
+	saveModel := func(spec string) error { return config.SetDefaultModel(e.paths.ConfigFile, spec) }
+	defaultModel := modelName(ctx, srv)
 
 	thread := *threadID
 	if *resume {
@@ -217,7 +216,7 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 			approver = client.PromptApprover{In: bufio.NewReader(os.Stdin), Out: stderr, Cwd: e.cwd}
 		}
 		return client.RunNonInteractive(ctx, srv, client.NonInteractiveOptions{
-			Prompt: prompt, ThreadID: thread, Cwd: e.cwd, AutoApprove: yolo,
+			Prompt: prompt, ThreadID: thread, Cwd: e.cwd, AutoApprove: yolo, Model: *model,
 			Approver: approver, Quiet: *quiet, NoStream: *noStream, Timeout: *timeout,
 			Stdout: stdout, Stderr: stderr,
 		})
@@ -225,21 +224,23 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 	switch interactiveUI(*plain, *useTUI, isTerminal(os.Stdin), isTerminal(os.Stdout)) {
 	case uiTUI:
 		return 0, tui.Run(ctx, tui.Options{
-			Server: srv, Cwd: e.cwd, ThreadID: thread, AutoApprove: yolo, ModelName: modelName(srv, serverURL),
+			Server: srv, Cwd: e.cwd, ThreadID: thread, AutoApprove: yolo,
+			ModelName: defaultModel, Model: *model, SaveDefaultModel: saveModel,
 		})
 	case uiGUI:
 		if thread == "" {
 			thread = sessions.NewThreadID()
 		}
 		return 0, runGUI(ctx, srv, serverURL, gui.Info{
-			Cwd: e.cwd, ThreadID: thread, Model: modelName(srv, serverURL), AutoApprove: yolo, Version: deepagents.Version,
-		}, *noOpen, stderr)
+			Cwd: e.cwd, ThreadID: thread, Model: defaultModel, ModelOverride: *model, AutoApprove: yolo, Version: deepagents.Version,
+		}, saveModel, *noOpen, stderr)
 	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
 	defer signal.Stop(sig)
 	return 0, client.RunInteractive(ctx, srv, client.InteractiveOptions{
 		ThreadID: thread, Cwd: e.cwd, AutoApprove: yolo,
+		Model: *model, ModelName: defaultModel, SaveDefaultModel: saveModel,
 		In: os.Stdin, Out: stdout, Err: stderr, Interrupt: sig,
 	})
 }
@@ -270,7 +271,7 @@ func interactiveUI(plain, useTUI, stdinTTY, stdoutTTY bool) ui {
 
 // runGUI serves the web UI on a free loopback port until Ctrl-C. The token
 // travels in the URL fragment, which browsers never send to servers.
-func runGUI(ctx context.Context, srv server.Server, serverURL string, info gui.Info, noOpen bool, stderr io.Writer) error {
+func runGUI(ctx context.Context, srv server.Server, serverURL string, info gui.Info, saveModel func(string) error, noOpen bool, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	context.AfterFunc(ctx, stop)
@@ -284,7 +285,7 @@ func runGUI(ctx context.Context, srv server.Server, serverURL string, info gui.I
 			return err
 		}
 	}
-	h, err := gui.Handler(gui.Options{API: api, Token: token, Info: info})
+	h, err := gui.Handler(gui.Options{API: api, Token: token, Info: info, SaveDefaultModel: saveModel})
 	if err != nil {
 		return err
 	}
@@ -304,12 +305,16 @@ func guiURL(a net.Addr, token string) string {
 	return "http://" + a.String() + "/#token=" + token
 }
 
-func modelName(srv server.Server, serverURL string) string {
-	if svc, ok := srv.(*server.Service); ok {
-		info := svc.ModelInfo()
-		return info.Provider + ":" + info.Model
+// modelName is the server's default model spec, or "" if it cannot say.
+func modelName(ctx context.Context, srv server.Server) string {
+	switch s := srv.(type) {
+	case *server.Service:
+		return s.DefaultModel()
+	case *client.Remote:
+		name, _ := s.DefaultModel(ctx)
+		return name
 	}
-	return serverURL
+	return ""
 }
 
 func runServe(ctx context.Context, args []string, stderr io.Writer) error {
@@ -329,12 +334,11 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 		return fmt.Errorf("start agent: %w", err)
 	}
 	defer svc.Close()
-	info := svc.ModelInfo()
 	context.AfterFunc(ctx, func() {
 		fmt.Fprintln(stderr, "dcode serve: stopping; running turns get up to 30s to finish (Ctrl-C again to force quit)")
 	})
 	return server.Serve(ctx, *addr, svc, func(a net.Addr) {
-		fmt.Fprintf(stderr, "dcode serve listening on http://%s (model %s:%s, storage %s)\n", a, info.Provider, info.Model, svc.Storage())
+		fmt.Fprintf(stderr, "dcode serve listening on http://%s (model %s, storage %s)\n", a, svc.DefaultModel(), svc.Storage())
 		fmt.Fprintf(stderr, "  clients: export %s=http://%s\n", client.ServerEnvVar, a)
 		if svc.Storage() == "memory" {
 			fmt.Fprintf(stderr, "  note: threads are kept in memory and lost on restart; set %s to keep them\n", postgresEnvVar)
@@ -355,7 +359,7 @@ func runThreads(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	srv, err := connect(ctx, e, e.serverURL(fs, *serverFlag), "", io.Discard)
+	srv, err := connect(ctx, e, e.serverURL(fs, *serverFlag), "")
 	if err != nil {
 		return err
 	}

@@ -20,6 +20,8 @@ import (
 	"path"
 	"runtime"
 	"strings"
+
+	"github.com/tsengmingchun/deepagents_golang/llm"
 )
 
 //go:embed all:dist
@@ -30,11 +32,14 @@ const TokenHeader = "X-Dcode-Token"
 
 // Info is what the page needs to start: GET /api/info.
 type Info struct {
-	Cwd         string `json:"cwd"`
-	ThreadID    string `json:"thread_id"`
-	Model       string `json:"model"`
-	AutoApprove bool   `json:"auto_approve"`
-	Version     string `json:"version"`
+	Cwd      string `json:"cwd"`
+	ThreadID string `json:"thread_id"`
+	// Model names the server default model, for display.
+	Model string `json:"model"`
+	// ModelOverride is sent with every run until /model changes it (dcode -model).
+	ModelOverride string `json:"model_override,omitempty"`
+	AutoApprove   bool   `json:"auto_approve"`
+	Version       string `json:"version"`
 }
 
 // Options configures Handler.
@@ -44,6 +49,9 @@ type Options struct {
 	API   http.Handler
 	Token string
 	Info  Info
+	// SaveDefaultModel backs PUT /api/default-model (`/model --default`);
+	// nil answers 501.
+	SaveDefaultModel func(spec string) error
 }
 
 // NewToken returns a random session token.
@@ -74,12 +82,38 @@ func Handler(opts Options) (http.Handler, error) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(opts.Info)
 	})
+	api.HandleFunc("PUT /default-model", func(w http.ResponseWriter, r *http.Request) {
+		saveDefaultModel(w, r, opts.SaveDefaultModel)
+	})
 	api.Handle("/", opts.API)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", http.StripPrefix("/api", requireToken(opts.Token, api)))
 	mux.Handle("/", spa(static))
 	return requireLoopbackHost(mux), nil
+}
+
+func saveDefaultModel(w http.ResponseWriter, r *http.Request, save func(string) error) {
+	if save == nil {
+		http.Error(w, "saving the default model is not available", http.StatusNotImplemented)
+		return
+	}
+	var body struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		http.Error(w, "want {\"model\": \"provider:model\"}", http.StatusBadRequest)
+		return
+	}
+	if err := llm.ValidateModelSpec(body.Model); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := save(body.Model); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func requireLoopbackHost(next http.Handler) http.Handler {

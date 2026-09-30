@@ -125,3 +125,40 @@ func TestHandlerNeedsAPIAndToken(t *testing.T) {
 		t.Fatal("missing token accepted")
 	}
 }
+
+func TestSaveDefaultModel(t *testing.T) {
+	var saved string
+	h, err := Handler(Options{API: http.NotFoundHandler(), Token: token, SaveDefaultModel: func(spec string) error {
+		saved = spec
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("PUT", "/api/default-model", strings.NewReader(body))
+		r.Host = "127.0.0.1:5000"
+		r.Header.Set(TokenHeader, token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := put(`{"model":"openai:gpt-x"}`); w.Code != http.StatusNoContent || saved != "openai:gpt-x" {
+		t.Fatalf("save: %d %q saved=%q", w.Code, w.Body.String(), saved)
+	}
+	if w := put(`{"model":"nope:x"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad provider: %d", w.Code)
+	}
+}
+
+func TestSaveDefaultModelUnavailable(t *testing.T) {
+	h := newHandler(t, nil)
+	r := httptest.NewRequest("PUT", "/api/default-model", strings.NewReader(`{"model":"openai:x"}`))
+	r.Host = "127.0.0.1:5000"
+	r.Header.Set(TokenHeader, token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("got %d", w.Code)
+	}
+}

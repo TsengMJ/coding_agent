@@ -27,6 +27,13 @@ type InteractiveOptions struct {
 	Err         io.Writer
 	// Interrupt delivers Ctrl-C; each signal cancels the run in progress.
 	Interrupt <-chan os.Signal
+	// Model runs every message on this "provider:model" until /model
+	// changes it; empty lets the server choose.
+	Model string
+	// ModelName names the server default model, for display.
+	ModelName string
+	// SaveDefaultModel backs `/model --default`.
+	SaveDefaultModel func(spec string) error
 }
 
 type repl struct {
@@ -37,6 +44,7 @@ type repl struct {
 	auto   bool
 	cmds   *commands.Registry
 	quit   bool
+	model  ModelChoice
 }
 
 // RunInteractive runs a line-oriented REPL: one prompt per line, run output
@@ -45,8 +53,9 @@ func RunInteractive(ctx context.Context, srv server.Server, opts InteractiveOpti
 	if opts.Cwd == "" {
 		return errors.New("client.RunInteractive: Cwd is required")
 	}
-	r := &repl{srv: srv, opts: opts, in: bufio.NewReader(opts.In), thread: opts.ThreadID, auto: opts.AutoApprove}
-	r.cmds = NewCommandRegistry(r, "")
+	r := &repl{srv: srv, opts: opts, in: bufio.NewReader(opts.In), thread: opts.ThreadID, auto: opts.AutoApprove,
+		model: ModelChoice{Override: opts.Model, Default: opts.ModelName}}
+	r.cmds = NewCommandRegistry(r, CommandOptions{SaveDefaultModel: opts.SaveDefaultModel})
 	fmt.Fprintf(opts.Out, "dcode in %s — /help for commands, Ctrl-C cancels a run\n", opts.Cwd)
 	if r.thread == "" {
 		r.thread = sessions.NewThreadID()
@@ -77,6 +86,7 @@ func RunInteractive(ctx context.Context, srv server.Server, opts InteractiveOpti
 // turn runs one request (fresh messages or a resume) until it stops pausing.
 func (r *repl) turn(ctx context.Context, req server.RunRequest) {
 	req.ThreadID, req.Cwd, req.AutoApprove, req.Interactive = r.thread, r.opts.Cwd, r.auto, true
+	req.Model = r.model.Override
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -112,6 +122,7 @@ func (r *repl) Thread() string { return r.thread }
 
 func (r *repl) NewThread() {
 	r.thread = sessions.NewThreadID()
+	r.model.Thread = ""
 	fmt.Fprintf(r.opts.Out, "thread %s (new)\n", r.thread)
 }
 
@@ -124,7 +135,9 @@ func (r *repl) ListThreads(ctx context.Context) {
 	PrintThreads(r.opts.Out, list, false)
 }
 
+// Resume adopts the thread's remembered model, dropping any /model choice.
 func (r *repl) Resume(ctx context.Context, id string) {
+	r.model.Override = ""
 	if err := r.switchTo(ctx, id); err != nil {
 		fmt.Fprintln(r.opts.Err, "error:", err)
 	}
@@ -146,6 +159,10 @@ func (r *repl) SetAutoApprove(on bool) {
 	fmt.Fprintf(r.opts.Out, "auto-approve %s\n", onOff(r.auto))
 }
 
+func (r *repl) Model() string { return r.model.Current() }
+
+func (r *repl) SetModel(spec string) { r.model.Override = spec }
+
 func (r *repl) Quit() { r.quit = true }
 
 func (r *repl) Info(text string) { fmt.Fprintln(r.opts.Out, text) }
@@ -160,7 +177,8 @@ func (r *repl) switchTo(ctx context.Context, id string) error {
 		return fmt.Errorf("thread %s not found", id)
 	}
 	r.thread = id
-	fmt.Fprintf(r.opts.Out, "thread %s (%d messages)\n", id, len(ts.Messages))
+	r.model.Thread = ts.Model
+	fmt.Fprintf(r.opts.Out, "thread %s (%d messages, model %s)\n", id, len(ts.Messages), r.model.Current())
 	if len(ts.Interrupts) == 0 {
 		return nil
 	}

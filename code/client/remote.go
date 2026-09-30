@@ -56,6 +56,26 @@ func (r *Remote) Ping(ctx context.Context) error {
 	return checkStatus(resp)
 }
 
+// DefaultModel asks the server which model runs use by default; empty when
+// the server does not say.
+func (r *Remote) DefaultModel(ctx context.Context) (string, error) {
+	resp, err := r.do(ctx, http.MethodGet, "/healthz", nil, nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp); err != nil {
+		return "", err
+	}
+	var body struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("decode healthz: %w", err)
+	}
+	return body.Model, nil
+}
+
 func (r *Remote) Run(ctx context.Context, req server.RunRequest) iter.Seq2[server.Event, error] {
 	return func(yield func(server.Event, error) bool) {
 		body, err := json.Marshal(req)

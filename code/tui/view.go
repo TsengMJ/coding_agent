@@ -71,8 +71,8 @@ type contentKey struct {
 
 func (m *model) statusLine() string {
 	parts := []string{"dcode", filepath.Base(m.opts.Cwd), "thread " + m.thread}
-	if m.opts.ModelName != "" {
-		parts = append(parts, m.opts.ModelName)
+	if name := m.model.Current(); name != "" {
+		parts = append(parts, name)
 	}
 	if m.tokens > 0 {
 		parts = append(parts, formatTokens(m.tokens)+" tokens")

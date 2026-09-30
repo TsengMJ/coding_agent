@@ -61,6 +61,26 @@ func InitChatModel(spec string, opts map[string]any) (ChatModel, error) {
 	return factory(parsed.Model, opts)
 }
 
+// Providers lists the registered provider names, sorted.
+func Providers() []string { return registeredProviders() }
+
+// ValidateModelSpec checks that spec parses and names a registered provider,
+// without constructing the model.
+func ValidateModelSpec(spec string) error {
+	parsed, err := ParseModelSpec(spec)
+	if err != nil {
+		return err
+	}
+	providersMu.RLock()
+	_, ok := providers[parsed.Provider]
+	providersMu.RUnlock()
+	if !ok {
+		return fmt.Errorf("unknown model provider %q (registered: %s)",
+			parsed.Provider, strings.Join(registeredProviders(), ", "))
+	}
+	return nil
+}
+
 func registeredProviders() []string {
 	providersMu.RLock()
 	defer providersMu.RUnlock()

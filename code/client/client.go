@@ -35,6 +35,8 @@ type NonInteractiveOptions struct {
 	AutoApprove bool
 	// Approver decides reviewed tool calls; nil rejects them with NoReviewerReason.
 	Approver Approver
+	// Model runs the prompt on this "provider:model"; empty lets the server choose.
+	Model string
 	// Quiet keeps Stderr free of the thread ID and tool activity, so only the
 	// reply (on Stdout) and errors remain.
 	Quiet bool
@@ -90,6 +92,7 @@ func RunNonInteractive(ctx context.Context, srv server.Server, opts NonInteracti
 		Cwd:         opts.Cwd,
 		Messages:    []llm.Message{llm.NewUserMessage(opts.Prompt)},
 		AutoApprove: opts.AutoApprove,
+		Model:       opts.Model,
 	}
 	err := runTurn(ctx, srv, req, p, approver)
 	if p.streaming {
@@ -137,6 +140,7 @@ func runTurn(ctx context.Context, srv server.Server, req server.RunRequest, p *p
 			Resume:      &server.Resume{Decisions: decisions},
 			AutoApprove: req.AutoApprove,
 			Interactive: req.Interactive,
+			Model:       req.Model,
 		}
 	}
 }

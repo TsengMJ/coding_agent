@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SlashCommand } from "../types";
-import { helpText, matchCommands, resolveCommand } from "./commands";
+import { helpText, matchCommands, parseModelArgs, resolveCommand } from "./commands";
 
 const cmds: SlashCommand[] = [
   { name: "/compact", aliases: ["/offload"], description: "summarize" },
@@ -42,5 +42,22 @@ describe("helpText", () => {
   it("shows usage, description and aliases", () => {
     expect(helpText(cmds)).toContain("/resume <id> — switch thread");
     expect(helpText(cmds)).toContain("/compact — summarize (/offload)");
+  });
+});
+
+describe("parseModelArgs", () => {
+  it("shows with no arguments", () => {
+    expect(parseModelArgs("")).toEqual({ spec: "", saveDefault: false });
+  });
+
+  it("reads a spec and --default in any order", () => {
+    expect(parseModelArgs("openai:gpt-x")).toEqual({ spec: "openai:gpt-x", saveDefault: false });
+    expect(parseModelArgs("--default openai:gpt-x")).toEqual({ spec: "openai:gpt-x", saveDefault: true });
+    expect(parseModelArgs("--default")).toEqual({ spec: "", saveDefault: true });
+  });
+
+  it("rejects extra words and unknown flags", () => {
+    expect(parseModelArgs("a:b c:d")).toHaveProperty("error");
+    expect(parseModelArgs("--bogus")).toHaveProperty("error");
   });
 });

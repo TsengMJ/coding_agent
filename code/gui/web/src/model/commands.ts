@@ -64,3 +64,18 @@ export function helpText(cmds: SlashCommand[]): string {
     .map((c) => `${usage(c)} — ${c.description ?? ""}${c.aliases?.length ? ` (${c.aliases.join(", ")})` : ""}`)
     .join("\n");
 }
+
+export type ModelArgs = { spec: string; saveDefault: boolean } | { error: string };
+
+// parseModelArgs reads "/model [provider:model] [--default]" arguments,
+// like the TUI's /model.
+export function parseModelArgs(args: string): ModelArgs {
+  let spec = "";
+  let saveDefault = false;
+  for (const f of args.split(/\s+/).filter(Boolean)) {
+    if (f === "--default") saveDefault = true;
+    else if (f.startsWith("-") || spec) return { error: "Usage: /model [provider:model] [--default]" };
+    else spec = f;
+  }
+  return { spec, saveDefault };
+}

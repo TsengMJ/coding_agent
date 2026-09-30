@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { Api, ApiError } from "./api";
 import type { Decision, Info, Message, SlashCommand, ThreadInfo } from "./types";
-import { helpText, resolveCommand } from "./model/commands";
+import { helpText, parseModelArgs, resolveCommand } from "./model/commands";
 import { applyEvent, emptyView, endRun, fromHistory, startRun, type ThreadView } from "./model/state";
 import { buildTimeline, type LLMStep, type Turn } from "./model/timeline";
 import { matchTurn, type Filter } from "./model/filter";
@@ -61,6 +61,10 @@ export function App({ api }: { api: Api }) {
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [commands, setCommands] = useState<SlashCommand[]>([]);
+  // modelOverride is sent with every run (dcode -model or /model); threadModel
+  // is the model the current thread last ran with.
+  const [modelOverride, setModelOverride] = useState("");
+  const [threadModel, setThreadModel] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const listRef = useRef<VirtuosoHandle | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -85,8 +89,10 @@ export function App({ api }: { api: Api }) {
       setSelected("");
       setInspect(null);
       setView(emptyView());
+      setThreadModel("");
       try {
         const [ts, trace] = await Promise.all([api.thread(id), api.trace(id)]);
+        setThreadModel(ts?.model ?? "");
         setView(fromHistory(ts, trace));
       } catch (e) {
         setView({ ...emptyView(), error: `Could not load thread ${id}: ${(e as Error).message}` });
@@ -102,6 +108,7 @@ export function App({ api }: { api: Api }) {
         setInfo(i);
         setRunCwd(i.cwd);
         setAutoApprove(i.auto_approve);
+        setModelOverride(i.model_override ?? "");
         void loadThread(i.thread_id);
       })
       .catch((e: Error) => {
@@ -145,7 +152,8 @@ export function App({ api }: { api: Api }) {
       setView((v) => startRun(v, userText));
       let error = "";
       try {
-        for await (const ev of api.run({ thread_id: threadId, cwd: runCwd, auto_approve: autoApprove, ...req }, ctrl.signal)) {
+        const model = modelOverride || undefined;
+        for await (const ev of api.run({ thread_id: threadId, cwd: runCwd, auto_approve: autoApprove, model, ...req }, ctrl.signal)) {
           if (ev.event === "done") break;
           if (ev.event === "error") error = ev.error ?? "run failed";
           setView((v) => applyEvent(v, ev));
@@ -157,9 +165,10 @@ export function App({ api }: { api: Api }) {
         setView((v) => endRun(v, error));
         abortRef.current = null;
         void refreshThreads(info?.cwd ?? "");
+        if (modelOverride) setThreadModel(modelOverride);
       }
     },
-    [api, threadId, runCwd, autoApprove, refreshThreads, info],
+    [api, threadId, runCwd, autoApprove, modelOverride, refreshThreads, info],
   );
 
   const newThread = useCallback(() => {
@@ -167,6 +176,17 @@ export function App({ api }: { api: Api }) {
     setRunCwd(info.cwd);
     void loadThread(newThreadID());
   }, [info, loadThread]);
+
+  // resumeThread switches to an existing thread and adopts its remembered model.
+  const resumeThread = useCallback(
+    (id: string) => {
+      setModelOverride("");
+      void loadThread(id);
+    },
+    [loadThread],
+  );
+
+  const currentModel = modelOverride || threadModel || info?.model || "";
 
   const send = useCallback(
     async (text: string) => {
@@ -190,8 +210,32 @@ export function App({ api }: { api: Api }) {
           return;
         case "/resume":
           if (!cmd.args) setNotice("Usage: /resume <thread id>");
-          else void loadThread(cmd.args);
+          else resumeThread(cmd.args);
           return;
+        case "/model": {
+          const m = parseModelArgs(cmd.args);
+          if ("error" in m) {
+            setNotice(m.error);
+            return;
+          }
+          if (!m.spec && !m.saveDefault) {
+            setNotice(`Model ${currentModel || "(server default)"}`);
+            return;
+          }
+          const spec = m.spec || currentModel;
+          if (m.spec) setModelOverride(m.spec);
+          if (!m.saveDefault) {
+            setNotice(`Model ${spec} (from the next message)`);
+            return;
+          }
+          try {
+            await api.saveDefaultModel(spec);
+            setNotice(`Model ${spec}; saved as the default model.`);
+          } catch (e) {
+            setNotice(`Could not save the default model: ${(e as Error).message}`);
+          }
+          return;
+        }
         case "/yolo":
           setAutoApprove(!autoApprove);
           setNotice(autoApprove ? "Auto-approve off." : "Auto-approve on: tool calls run without asking.");
@@ -215,7 +259,7 @@ export function App({ api }: { api: Api }) {
           setNotice(`${cmd.name} is not available in the GUI.`);
       }
     },
-    [api, threadId, run, newThread, loadThread, commands, autoApprove],
+    [api, threadId, run, newThread, loadThread, resumeThread, commands, autoApprove, currentModel],
   );
 
   const ui: UI = useMemo(
@@ -325,7 +369,7 @@ export function App({ api }: { api: Api }) {
           onAllDirs={setAllDirs}
           onPick={(t) => {
             setRunCwd(t.cwd || info.cwd);
-            void loadThread(t.thread_id);
+            resumeThread(t.thread_id);
           }}
           onNew={newThread}
           version={info.version}
@@ -333,7 +377,7 @@ export function App({ api }: { api: Api }) {
         <main className="main">
           <header className="header">
             <span className="pill" title="model">
-              {info.model}
+              {currentModel}
             </span>
             <span className="cwd" title={runCwd}>
               {runCwd}

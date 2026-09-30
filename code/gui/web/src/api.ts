@@ -98,6 +98,10 @@ export class Api {
     return this.json(`/threads/${encodeURIComponent(id)}/compact`, { method: "POST" });
   }
 
+  async saveDefaultModel(spec: string): Promise<void> {
+    await this.request("/default-model", { method: "PUT", body: JSON.stringify({ model: spec }) });
+  }
+
   // run streams the events of one run; aborting signal cancels it on the
   // server too.
   async *run(
@@ -107,6 +111,7 @@ export class Api {
       messages?: Message[];
       resume?: { decisions: Decision[] };
       auto_approve: boolean;
+      model?: string;
     },
     signal: AbortSignal,
   ): AsyncGenerator<RunEvent> {

@@ -59,6 +59,9 @@ type RunRequest struct {
 	AutoApprove bool `json:"auto_approve,omitempty"`
 	// Interactive selects the system prompt for a human-attended session.
 	Interactive bool `json:"interactive,omitempty"`
+	// Model ("provider:model") runs this request on another model; empty
+	// uses the model the thread last ran with, else the server default.
+	Model string `json:"model,omitempty"`
 }
 
 // Resume answers the pending review of a thread, one decision per action request.
@@ -108,6 +111,8 @@ type ThreadState struct {
 	ThreadID   string        `json:"thread_id"`
 	Messages   []llm.Message `json:"messages"`
 	Interrupts []Interrupt   `json:"interrupts,omitempty"`
+	// Model is the spec the thread runs with (its last model, else the default).
+	Model string `json:"model,omitempty"`
 }
 
 // Server is what clients talk to, in-process (Service) or over HTTP.

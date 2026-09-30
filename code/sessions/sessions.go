@@ -23,6 +23,8 @@ type Info struct {
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	MessageCount int       `json:"message_count"`
+	// Model is the "provider:model" spec the thread last ran with.
+	Model string `json:"model,omitempty"`
 }
 
 // Filter narrows List. An empty Cwd lists every thread; Limit <= 0 means no limit.
@@ -34,7 +36,7 @@ type Filter struct {
 // Store is the thread catalog.
 type Store interface {
 	// Touch inserts or updates a thread. An existing thread keeps its Cwd,
-	// CreatedAt and non-empty Title.
+	// CreatedAt, non-empty Title, and Model when info.Model is empty.
 	Touch(ctx context.Context, info Info) error
 	// Get returns nil when the thread is unknown.
 	Get(ctx context.Context, threadID string) (*Info, error)
@@ -93,6 +95,9 @@ func (s *MemoryStore) Touch(_ context.Context, info Info) error {
 		info.CreatedAt = prev.CreatedAt
 		if prev.Title != "" {
 			info.Title = prev.Title
+		}
+		if info.Model == "" {
+			info.Model = prev.Model
 		}
 	} else if info.CreatedAt.IsZero() {
 		info.CreatedAt = info.UpdatedAt

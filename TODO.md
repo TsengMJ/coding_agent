@@ -490,6 +490,7 @@
 - [x] `cmd/dcode/main.go`（flag：`-n` 或位置參數 prompt、`-model`、`-thread`、`-r`、`-y`、`-plain`、`-server`、`-version`、`-q`、`-no-stream`、`-timeout`；子命令 `serve`、`threads [-json]`）
 - [ ] 完整 CLI 參數（`main.py`：agent 選擇、sandbox、list / reset agents ...）
 - [~] Server `code/server`（`Server` / `Service` / `Config` / `RunRequest` / `Event` / `New`）
+  - [x] 每個 run 可換 model：`RunRequest.Model` → thread 記住的 model（`sessions.Info.Model`、Postgres `dcode_threads.model`）→ 預設；agent 不重建（`switchModel` 從 ctx 取 run 的 model，subagent 跟著切換），回覆 `Metadata["model_name"]` 標記實際 model；`ThreadState.Model`、`/healthz` 回報預設 model；遠端 `-model` 不再被忽略
   - [x] `Service`：依 cwd（與 interactive）快取 agent、共用 model 與 checkpointer；thread 鎖（`ErrThreadBusy`）、thread 綁定 cwd（`ErrThreadCwdMismatch`）、待核准時拒收新訊息（`ErrPendingApproval`）
   - [x] 事件協定：`delta` / `message`（只送本次新增）/ `interrupt` / `done` / `error`
   - [x] thread 儲存：`PostgresConn` → Postgres checkpointer + `dcode_threads`；否則 in-memory
@@ -538,6 +539,7 @@
 
 - [x] `Scope`、`Settings`、`Source`、`Paths`、`Resolver`、`NewResolver`（使用者層 + env）
 - [x] `DefaultPaths`（`~/.deepagents`、`cwd/.deepagents`；尚未處理 profile state dir）
+- [x] `config.SetDefaultModel`：只改 `models.default` 一行（保留註解與其他 key），前後都要能解析才寫入
 - [x] config.toml 解析（`github.com/BurntSushi/toml`）：`models.default`、`startup.mode`（manual / yolo，預設 yolo）、`shell.allow_list`（陣列、逗號字串、`recommended`、`all`）、`retries.max_retries`、`server.url`；其餘 key 放 `Raw`；錯誤帶行號
 - [~] 分層合併：flag > env（`DCODE_MODEL`、`DCODE_SERVER`、`DEEPAGENTS_CODE_SHELL_ALLOW_LIST`、`BRAVE_API_KEY` → `WebSearchAPIKey`）> 使用者 config.toml > 預設；managed / project / session 層未做
 - [x] .env 載入（shell > 最近的專案 `.env` > `~/.deepagents/.env`）— go: `code/config/dotenv.go`
@@ -604,12 +606,12 @@
   - [ ] `/line-numbers`
   - [ ] `/manual`
   - [ ] `/mcp`
-  - [ ] `/model`
+  - [x] `/model [provider:model] [--default]`（TUI / REPL / GUI；之後的 run 帶 `RunRequest.Model`；`--default` 只改 config.toml 的 `models.default` 一行；切回既有 thread 時沿用它記住的 model）
   - [ ] `/notifications`
   - [x] `/offload`（`/compact`）— `Server.Compact` / `POST /threads/{id}/compact`
   - [ ] `/plugins`
   - [ ] `/prompts`
-  - [ ] `/quit`（`/q`）
+  - [x] `/quit`（`/q`、`/exit`）
   - [ ] `/reload`
   - [ ] `/remember`
   - [ ] `/restart`
@@ -618,7 +620,7 @@
   - [ ] `/skill-creator`
   - [ ] `/summarization-model`
   - [ ] `/theme`
-  - [ ] `/threads`
+  - [x] `/threads`
   - [ ] `/timestamps`
   - [ ] `/tokens`
   - [ ] `/tools`
@@ -626,7 +628,7 @@
   - [ ] `/uninstall`
   - [ ] `/update`
   - [ ] `/version`（`/about`）
-  - [ ] `/yolo`
+  - [x] `/yolo`（切換 auto-approve）
   - [ ] `/debug`（隱藏）
   - [ ] `/debug-error`（隱藏）
 

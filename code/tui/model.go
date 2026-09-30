@@ -32,8 +32,14 @@ type Options struct {
 	// ThreadID continues a thread; empty starts a new one.
 	ThreadID    string
 	AutoApprove bool
-	// ModelName is shown in the status bar.
+	// ModelName names the server default model, shown in the status bar
+	// until a thread or /model says otherwise.
 	ModelName string
+	// Model runs every message on this "provider:model" until /model
+	// changes it; empty lets the server choose.
+	Model string
+	// SaveDefaultModel backs `/model --default`.
+	SaveDefaultModel func(spec string) error
 	// MarkdownStyle is a glamour standard style; Run picks "dark" or
 	// "light" from the terminal background when empty.
 	MarkdownStyle string
@@ -126,6 +132,7 @@ type model struct {
 	opts   Options
 	thread string
 	auto   bool
+	model  client.ModelChoice
 
 	entries   []entry
 	streaming strings.Builder
@@ -193,6 +200,7 @@ func newModel(ctx context.Context, opts Options) *model {
 		opts:       opts,
 		thread:     opts.ThreadID,
 		auto:       opts.AutoApprove,
+		model:      client.ModelChoice{Override: opts.Model, Default: opts.ModelName},
 		vp:         viewport.New(80, 20),
 		input:      in,
 		spin:       spinner.New(spinner.WithSpinner(spinner.Dot)),
@@ -206,7 +214,10 @@ func newModel(ctx context.Context, opts Options) *model {
 	if m.mdStyle == "" {
 		m.mdStyle = "dark"
 	}
-	m.cmds = client.NewCommandRegistry(tuiSession{m}, "keys: Enter send · Ctrl-C cancel run / quit · PgUp/PgDn scroll")
+	m.cmds = client.NewCommandRegistry(tuiSession{m}, client.CommandOptions{
+		HelpFooter:       "keys: Enter send · Ctrl-C cancel run / quit · PgUp/PgDn scroll",
+		SaveDefaultModel: opts.SaveDefaultModel,
+	})
 	if m.thread == "" {
 		m.thread = sessions.NewThreadID()
 		m.info("new thread " + m.thread)
@@ -355,6 +366,7 @@ func (s tuiSession) Thread() string { return s.m.thread }
 
 func (s tuiSession) NewThread() {
 	s.m.thread = sessions.NewThreadID()
+	s.m.model.Thread = ""
 	s.m.resetEntries()
 	s.m.info("new thread " + s.m.thread)
 }
@@ -367,7 +379,9 @@ func (s tuiSession) ListThreads(context.Context) {
 	})
 }
 
+// Resume adopts the thread's remembered model, dropping any /model choice.
 func (s tuiSession) Resume(_ context.Context, id string) {
+	s.m.model.Override = ""
 	s.m.queued = append(s.m.queued, s.m.loadThread(id))
 }
 
@@ -391,6 +405,10 @@ func (s tuiSession) SetAutoApprove(on bool) {
 	}
 }
 
+func (s tuiSession) Model() string { return s.m.model.Current() }
+
+func (s tuiSession) SetModel(spec string) { s.m.model.Override = spec }
+
 func (s tuiSession) Quit() { s.m.queued = append(s.m.queued, tea.Quit) }
 
 func (s tuiSession) Info(text string) { s.m.info(text) }
@@ -398,6 +416,7 @@ func (s tuiSession) Info(text string) { s.m.info(text) }
 // startRun streams req in a goroutine; events come back through waitEvent.
 func (m *model) startRun(req server.RunRequest) tea.Cmd {
 	req.ThreadID, req.Cwd, req.AutoApprove, req.Interactive = m.thread, m.opts.Cwd, m.auto, true
+	req.Model = m.model.Override
 	ctx, cancel := context.WithCancel(m.ctx)
 	ch := make(chan tea.Msg, 64)
 	srv := m.srv
@@ -608,6 +627,7 @@ func (m *model) pickerKey(k tea.KeyMsg) tea.Cmd {
 	case "enter":
 		id := m.threads[m.cursor].ThreadID
 		m.mode = modeIdle
+		m.model.Override = ""
 		return m.loadThread(id)
 	case "q":
 		m.mode = modeIdle
@@ -633,6 +653,7 @@ func (m *model) threadLoaded(msg threadLoadedMsg) {
 		return
 	}
 	m.thread = msg.id
+	m.model.Thread = msg.ts.Model
 	m.resetEntries()
 	for _, msg := range msg.ts.Messages {
 		if msg.Role == llm.RoleUser {

@@ -12,6 +12,7 @@ type fakeSession struct {
 	calls []string
 	auto  bool
 	info  []string
+	model string
 }
 
 func (s *fakeSession) Thread() string                      { return "t1" }
@@ -23,10 +24,12 @@ func (s *fakeSession) AutoApprove() bool                   { return s.auto }
 func (s *fakeSession) SetAutoApprove(on bool)              { s.auto = on }
 func (s *fakeSession) Quit()                               { s.calls = append(s.calls, "quit") }
 func (s *fakeSession) Info(text string)                    { s.info = append(s.info, text) }
+func (s *fakeSession) Model() string                       { return s.model }
+func (s *fakeSession) SetModel(spec string)                { s.model = spec }
 
 func TestCommandRegistryCoversEveryDCodeCommand(t *testing.T) {
 	s := &fakeSession{}
-	reg := NewCommandRegistry(s, "keys: x")
+	reg := NewCommandRegistry(s, CommandOptions{HelpFooter: "keys: x"})
 	for _, c := range commands.DCode {
 		if _, _, ok := reg.Lookup(c.Name); !ok {
 			t.Errorf("%s not registered", c.Name)
@@ -46,5 +49,63 @@ func TestCommandRegistryCoversEveryDCodeCommand(t *testing.T) {
 	}
 	if err := reg.Dispatch(ctx, "/help"); err != nil || !strings.Contains(s.info[len(s.info)-1], "keys: x") {
 		t.Fatalf("help = %v %q", err, s.info)
+	}
+}
+
+func TestModelCommandShowsAndSwitches(t *testing.T) {
+	s := &fakeSession{model: "openai:a"}
+	reg := NewCommandRegistry(s, CommandOptions{})
+	ctx := context.Background()
+	if err := reg.Dispatch(ctx, "/model"); err != nil || s.info[0] != "model openai:a" {
+		t.Fatalf("show: %v %q", err, s.info)
+	}
+	if err := reg.Dispatch(ctx, "/model openrouter:x/y"); err != nil || s.model != "openrouter:x/y" {
+		t.Fatalf("switch: %v model=%q", err, s.model)
+	}
+}
+
+func TestModelCommandRejectsBadInput(t *testing.T) {
+	s := &fakeSession{model: "openai:a"}
+	reg := NewCommandRegistry(s, CommandOptions{})
+	for _, line := range []string{"/model nope:x", "/model a b", "/model --bogus", "/model openai:b --default"} {
+		if err := reg.Dispatch(context.Background(), line); err == nil {
+			t.Errorf("%s: want error", line)
+		}
+	}
+}
+
+func TestModelCommandSavesDefault(t *testing.T) {
+	s := &fakeSession{model: "openai:a"}
+	var saved []string
+	reg := NewCommandRegistry(s, CommandOptions{SaveDefaultModel: func(spec string) error {
+		saved = append(saved, spec)
+		return nil
+	}})
+	ctx := context.Background()
+	if err := reg.Dispatch(ctx, "/model openai:b --default"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Dispatch(ctx, "/model --default"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(saved, ","); got != "openai:b,openai:b" || s.model != "openai:b" {
+		t.Fatalf("saved = %q model = %q", got, s.model)
+	}
+}
+
+func TestModelChoiceCurrent(t *testing.T) {
+	cases := []struct {
+		c    ModelChoice
+		want string
+	}{
+		{ModelChoice{Override: "o", Thread: "t", Default: "d"}, "o"},
+		{ModelChoice{Thread: "t", Default: "d"}, "t"},
+		{ModelChoice{Default: "d"}, "d"},
+		{ModelChoice{}, ""},
+	}
+	for _, tc := range cases {
+		if got := tc.c.Current(); got != tc.want {
+			t.Errorf("%+v: got %q want %q", tc.c, got, tc.want)
+		}
 	}
 }

@@ -45,9 +45,14 @@ type Config struct {
 
 // Service runs the coding agent for many threads and working directories.
 type Service struct {
-	settings     *config.Settings
-	paths        config.Paths
+	settings *config.Settings
+	paths    config.Paths
+	// model runs each call on the run's model (see switchModel).
 	model        llm.ChatModel
+	defaultModel runModel
+	newModel     func(spec string) (llm.ChatModel, error)
+	// models caches traced models by spec, guarded by mu.
+	models       map[string]llm.ChatModel
 	checkpointer runtime.Checkpointer
 	sessions     sessions.Store
 	storage      string
@@ -73,22 +78,29 @@ type agentEntry struct {
 
 // New builds the model and thread storage.
 func New(ctx context.Context, cfg Config) (*Service, error) {
-	model := cfg.Model
+	newModel := func(spec string) (llm.ChatModel, error) { return llm.InitChatModel(spec, modelOptions(cfg)) }
+	model, spec := cfg.Model, ""
 	if model == nil {
-		spec := resolveModelSpec(cfg)
-		m, err := llm.InitChatModel(spec, modelOptions(cfg))
+		spec = resolveModelSpec(cfg)
+		m, err := newModel(spec)
 		if err != nil {
 			return nil, fmt.Errorf("init model %q: %w", spec, err)
 		}
 		model = m
+	} else {
+		spec = specOf(model)
 	}
+	def := runModel{spec: spec, model: trace.WrapModel(model)}
 	s := &Service{
-		settings: cfg.Settings,
-		paths:    cfg.Paths,
-		model:    trace.WrapModel(model),
-		agents:   map[agentKey]*agentEntry{},
-		busy:     map[string]bool{},
-		closeFn:  func() {},
+		settings:     cfg.Settings,
+		paths:        cfg.Paths,
+		model:        &switchModel{def: def},
+		defaultModel: def,
+		newModel:     newModel,
+		models:       map[string]llm.ChatModel{},
+		agents:       map[agentKey]*agentEntry{},
+		busy:         map[string]bool{},
+		closeFn:      func() {},
 	}
 	traceDir := cfg.TraceDir
 	if traceDir == "" && cfg.Paths.UserDir != "" {
@@ -119,8 +131,12 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 // Storage reports where threads are kept: "postgres" or "memory".
 func (s *Service) Storage() string { return s.storage }
 
-// ModelInfo identifies the model the service runs.
-func (s *Service) ModelInfo() llm.ModelInfo { return s.model.Info() }
+// ModelInfo identifies the service's default model.
+func (s *Service) ModelInfo() llm.ModelInfo { return s.defaultModel.model.Info() }
+
+// DefaultModel is the "provider:model" spec runs use unless the request or
+// the thread names another.
+func (s *Service) DefaultModel() string { return s.defaultModel.spec }
 
 func (s *Service) Close() error {
 	s.closeFn()
@@ -153,7 +169,10 @@ func (s *Service) GetThread(ctx context.Context, threadID string) (*ThreadState,
 	if err != nil || cp == nil {
 		return nil, err
 	}
-	ts := &ThreadState{ThreadID: threadID, Messages: cp.State.Messages}
+	ts := &ThreadState{ThreadID: threadID, Messages: cp.State.Messages, Model: s.defaultModel.spec}
+	if info, err := s.sessions.Get(ctx, threadID); err == nil && info != nil && info.Model != "" {
+		ts.Model = info.Model
+	}
 	for _, in := range cp.PendingInterrupts {
 		ts.Interrupts = append(ts.Interrupts, toInterrupt(in))
 	}
@@ -185,6 +204,9 @@ func (s *Service) Compact(ctx context.Context, threadID string) (*CompactResult,
 	}
 	if len(cp.PendingInterrupts) > 0 {
 		return nil, ErrPendingApproval
+	}
+	if rm, err := s.modelFor(info.Model); err == nil {
+		ctx = withRunModel(ctx, rm)
 	}
 	summ, err := codeagent.NewSummarization(s.model, codeagent.NewBackend(info.Cwd))
 	if err != nil {
@@ -244,11 +266,16 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	if err != nil {
 		return err
 	}
+	rm, err := s.runModelFor(req, info)
+	if err != nil {
+		return err
+	}
+	ctx = withRunModel(ctx, rm)
 	a, err := s.agentFor(ctx, req)
 	if err != nil {
 		return err
 	}
-	if err := s.touch(ctx, req, prev); err != nil {
+	if err := s.touch(ctx, req, prev, rm.spec); err != nil {
 		return err
 	}
 
@@ -290,7 +317,7 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 				return nil
 			}
 		}
-		_ = s.touch(context.WithoutCancel(ctx), req, latest)
+		_ = s.touch(context.WithoutCancel(ctx), req, latest, rm.spec)
 	}
 
 	var paused *runtime.InterruptError
@@ -422,8 +449,23 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest) (agent.Agent, er
 	return e.agent, nil
 }
 
-func (s *Service) touch(ctx context.Context, req RunRequest, cp *runtime.Checkpoint) error {
-	info := sessions.Info{ThreadID: req.ThreadID, Cwd: req.Cwd, UpdatedAt: time.Now()}
+// runModelFor picks the run's model: the request's, else the one the thread
+// last used (falling back to the default if it can no longer be built),
+// else the default.
+func (s *Service) runModelFor(req RunRequest, info *sessions.Info) (runModel, error) {
+	if req.Model != "" {
+		return s.modelFor(req.Model)
+	}
+	if info != nil && info.Model != "" {
+		if rm, err := s.modelFor(info.Model); err == nil {
+			return rm, nil
+		}
+	}
+	return s.defaultModel, nil
+}
+
+func (s *Service) touch(ctx context.Context, req RunRequest, cp *runtime.Checkpoint, model string) error {
+	info := sessions.Info{ThreadID: req.ThreadID, Cwd: req.Cwd, UpdatedAt: time.Now(), Model: model}
 	var msgs []llm.Message
 	if cp != nil {
 		msgs = cp.State.Messages

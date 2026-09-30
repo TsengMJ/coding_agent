@@ -192,3 +192,19 @@ func TestRemoteCompact(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 }
+
+func TestRemoteDefaultModel(t *testing.T) {
+	r := remoteFor(t, newService(t))
+	got, err := r.DefaultModel(context.Background())
+	if err != nil || got != "fake:fake" {
+		t.Fatalf("DefaultModel = %q, %v", got, err)
+	}
+}
+
+func TestRemoteRunSendsModel(t *testing.T) {
+	r := remoteFor(t, newService(t))
+	req := server.RunRequest{ThreadID: "t1", Cwd: t.TempDir(), Messages: []llm.Message{llm.NewUserMessage("x")}, Model: "nope:x"}
+	if _, err := drain(r, req); err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("err = %v, want unknown-model error from the server", err)
+	}
+}

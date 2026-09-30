@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS dcode_threads (
 	updated_at    TIMESTAMPTZ NOT NULL,
 	message_count INTEGER NOT NULL DEFAULT 0
 );
+ALTER TABLE dcode_threads ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS dcode_threads_cwd_updated ON dcode_threads (cwd, updated_at DESC);
 `
 
@@ -46,13 +47,14 @@ func (s *PostgresStore) Touch(ctx context.Context, info Info) error {
 		info.CreatedAt = info.UpdatedAt
 	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO dcode_threads (thread_id, cwd, title, created_at, updated_at, message_count)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO dcode_threads (thread_id, cwd, title, created_at, updated_at, message_count, model)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (thread_id) DO UPDATE SET
 	title = CASE WHEN dcode_threads.title = '' THEN EXCLUDED.title ELSE dcode_threads.title END,
 	updated_at = EXCLUDED.updated_at,
-	message_count = EXCLUDED.message_count`,
-		info.ThreadID, info.Cwd, info.Title, info.CreatedAt, info.UpdatedAt, info.MessageCount)
+	message_count = EXCLUDED.message_count,
+	model = CASE WHEN EXCLUDED.model = '' THEN dcode_threads.model ELSE EXCLUDED.model END`,
+		info.ThreadID, info.Cwd, info.Title, info.CreatedAt, info.UpdatedAt, info.MessageCount, info.Model)
 	if err != nil {
 		return fmt.Errorf("sessions: touch %s: %w", info.ThreadID, err)
 	}
@@ -61,7 +63,7 @@ ON CONFLICT (thread_id) DO UPDATE SET
 
 func (s *PostgresStore) Get(ctx context.Context, threadID string) (*Info, error) {
 	row := s.pool.QueryRow(ctx, `
-SELECT thread_id, cwd, title, created_at, updated_at, message_count
+SELECT thread_id, cwd, title, created_at, updated_at, message_count, model
 FROM dcode_threads WHERE thread_id = $1`, threadID)
 	info, err := scanInfo(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -79,7 +81,7 @@ func (s *PostgresStore) List(ctx context.Context, f Filter) ([]Info, error) {
 		limit = -1
 	}
 	rows, err := s.pool.Query(ctx, `
-SELECT thread_id, cwd, title, created_at, updated_at, message_count
+SELECT thread_id, cwd, title, created_at, updated_at, message_count, model
 FROM dcode_threads
 WHERE $1 = '' OR cwd = $1
 ORDER BY updated_at DESC
@@ -108,6 +110,6 @@ func (s *PostgresStore) Delete(ctx context.Context, threadID string) error {
 
 func scanInfo(row pgx.Row) (Info, error) {
 	var info Info
-	err := row.Scan(&info.ThreadID, &info.Cwd, &info.Title, &info.CreatedAt, &info.UpdatedAt, &info.MessageCount)
+	err := row.Scan(&info.ThreadID, &info.Cwd, &info.Title, &info.CreatedAt, &info.UpdatedAt, &info.MessageCount, &info.Model)
 	return info, err
 }
