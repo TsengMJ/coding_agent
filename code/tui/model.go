@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -92,6 +93,11 @@ type entry struct {
 	callID string
 	last   bool
 	failed bool
+	// running marks a tool row still waiting for its result since started.
+	running bool
+	started time.Time
+	// sub is the subagent run of a task row.
+	sub *subRun
 }
 
 // Messages delivered to Update.
@@ -146,9 +152,18 @@ type model struct {
 	llmCalls int
 	tokens   int
 	batch    *toolBatch
-	cache    transcriptCache
-	shown    contentKey
-	renders  int
+	// replied is set when the main agent answered without tool calls, so no
+	// model call is in flight until the next run or tool results.
+	replied       bool
+	thinkingSince time.Time
+	// live holds the indices of entries with running rows, re-rendered on
+	// every spinner tick.
+	live    map[int]bool
+	subs    map[string]*subRun
+	subSeq  int
+	cache   transcriptCache
+	shown   contentKey
+	renders int
 
 	// mdStyle is a glamour standard style ("dark", "light", "notty").
 	mdStyle string
@@ -180,6 +195,8 @@ func newModel(ctx context.Context, opts Options) *model {
 		height:     24,
 		mdStyle:    opts.MarkdownStyle,
 		previewIdx: -1,
+		live:       map[int]bool{},
+		subs:       map[string]*subRun{},
 	}
 	if m.mdStyle == "" {
 		m.mdStyle = "dark"
@@ -248,6 +265,11 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
+		for i := range m.live {
+			m.invalidate(i)
+		}
+		// Also redraws the thinking row, which is not cached.
+		m.version++
 		return cmd
 	}
 	var cmd tea.Cmd
@@ -384,6 +406,7 @@ func (m *model) startRun(req server.RunRequest) tea.Cmd {
 	}()
 	m.cancel, m.events, m.mode, m.cancelled = cancel, ch, modeRunning, false
 	m.pending, m.decisions = nil, nil
+	m.replied, m.thinkingSince = false, time.Now()
 	return tea.Batch(m.waitEvent(), m.spin.Tick)
 }
 
@@ -410,6 +433,11 @@ func (m *model) stopRun() {
 
 func (m *model) event(ev server.Event) {
 	if len(ev.Namespace) > 0 {
+		// Subagent text is not shown; its model and tool calls nest under
+		// the task row.
+		if ev.Kind == server.EventMessage {
+			m.subMessage(ev.Namespace, *ev.Message)
+		}
 		return
 	}
 	switch ev.Kind {
@@ -457,6 +485,14 @@ func (m *model) runEnded(err error) tea.Cmd {
 	if len(m.pending) > 0 && !cancelled && err == nil {
 		m.mode, m.decisions, m.previewIdx = modeApprove, nil, -1
 		return nil
+	}
+	switch {
+	case cancelled:
+		m.settleLive("cancelled")
+	case err != nil:
+		m.settleLive("✗")
+	default:
+		m.settleLive("")
 	}
 	m.pending = nil
 	m.mode = modeIdle
@@ -590,13 +626,17 @@ func (m *model) threadLoaded(msg threadLoadedMsg) {
 	m.info(fmt.Sprintf("resumed thread %s (%d messages)", msg.id, len(msg.ts.Messages)))
 	if len(msg.ts.Interrupts) > 0 {
 		m.pending, m.decisions, m.mode, m.previewIdx = msg.ts.Interrupts[0].ActionRequests, nil, modeApprove, -1
+		return
 	}
+	// Calls without results belong to a run that ended early.
+	m.settleLive("")
 }
 
 func (m *model) resetEntries() {
 	m.entries = nil
 	m.gen++
-	m.llmCalls, m.tokens, m.batch = 0, 0, nil
+	m.llmCalls, m.tokens, m.batch, m.replied = 0, 0, nil, false
+	m.live, m.subs, m.subSeq = map[int]bool{}, map[string]*subRun{}, 0
 }
 
 // invalidate marks entry i as changed so the transcript re-renders it.

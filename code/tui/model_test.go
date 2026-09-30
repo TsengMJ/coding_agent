@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"os"
 	"path/filepath"
@@ -412,7 +413,7 @@ func TestTranscriptShowsModelCallsWithToolsNested(t *testing.T) {
 	drain(t, m, m.submit("run two sleeps"))
 
 	view := ansi.Strip(m.transcript())
-	for _, want := range []string{"◆ LLM #1", "1.2k in / 34 out", "├─ execute sleep 0.3", "└─ execute sleep 0.3", "◆ LLM #2", "⇉ 2 tools", "parallel"} {
+	for _, want := range []string{"◆ main · LLM #1", "1.2k in / 34 out", "├─ execute sleep 0.3", "└─ execute sleep 0.3", "◆ main · LLM #2", "⇉ 2 tools", "parallel"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("transcript missing %q:\n%s", want, view)
 		}
@@ -439,6 +440,174 @@ func TestToolResultUpdatesItsRowInPlace(t *testing.T) {
 	after := ansi.Strip(m.transcript())
 	if !strings.Contains(after, "└─ ls / — permission denied") || !strings.Contains(after, "1.5s") || strings.Contains(after, "…") {
 		t.Fatalf("after result:\n%s", after)
+	}
+}
+
+func taskCall(id, desc string) llm.ToolCall {
+	return llm.ToolCall{ID: id, Name: "task", Args: map[string]any{"subagent_type": "general-purpose", "description": desc}}
+}
+
+func subEvent(id string, msg llm.Message) eventMsg {
+	return eventMsg{ev: server.Event{Kind: server.EventMessage, Message: &msg, Namespace: []string{"task:" + id}}}
+}
+
+// lineWith returns the transcript line containing substr.
+func lineWith(t *testing.T, transcript, substr string) string {
+	t.Helper()
+	for _, l := range strings.Split(transcript, "\n") {
+		if strings.Contains(l, substr) {
+			return l
+		}
+	}
+	t.Fatalf("no line with %q in:\n%s", substr, transcript)
+	return ""
+}
+
+func TestParallelSubagentsNestUnderTheirTaskRows(t *testing.T) {
+	m := newTestModel(t, newService(t), t.TempDir())
+	m.message(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{taskCall("t1", "find handlers"), taskCall("t2", "check coverage")}})
+	m.Update(subEvent("t2", llm.NewUserMessage("check coverage")))
+	m.Update(subEvent("t2", llm.Message{Role: llm.RoleAssistant, Usage: &llm.Usage{TotalTokens: 100},
+		ToolCalls: []llm.ToolCall{{ID: "x", Name: "execute", Args: map[string]any{"command": "go test ./..."}}}}))
+	m.Update(subEvent("t1", llm.Message{Role: llm.RoleAssistant,
+		ToolCalls: []llm.ToolCall{{ID: "g", Name: "grep", Args: map[string]any{"pattern": "HandleFunc"}}}}))
+
+	out := ansi.Strip(m.transcript())
+	for _, want := range []string{"├─ ◇ task #1 general-purpose · find handlers", "└─ ◇ task #2 general-purpose · check coverage"} {
+		lineWith(t, out, want)
+	}
+	lines := strings.Split(out, "\n")
+	idx := func(s string) int {
+		for i, l := range lines {
+			if strings.Contains(l, s) {
+				return i
+			}
+		}
+		t.Fatalf("missing %q in:\n%s", s, out)
+		return -1
+	}
+	if !(idx("task #1") < idx("grep HandleFunc") && idx("grep HandleFunc") < idx("task #2") && idx("task #2") < idx("execute go test")) {
+		t.Fatalf("subagent rows not under their task rows:\n%s", out)
+	}
+	if !strings.HasPrefix(lineWith(t, out, "grep HandleFunc"), "  │      └─ ") || !strings.Contains(out, "◆ #1 · LLM 1") || !strings.Contains(out, "◆ #2 · LLM 1") {
+		t.Fatalf("nested layout:\n%s", out)
+	}
+	if strings.Count(out, "check coverage") != 1 {
+		t.Fatalf("subagent user message shown:\n%s", out)
+	}
+	m.mode = modeRunning
+	if m.tokens != 100 || !strings.Contains(m.statusLine(), "2 subagents running") {
+		t.Fatalf("tokens=%d status=%q", m.tokens, m.statusLine())
+	}
+}
+
+func TestSubagentRunShowsEndToEnd(t *testing.T) {
+	delegate := llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{taskCall("t1", "look around")}}
+	svc := newService(t, delegate, llm.NewAssistantMessage("sub report"), llm.NewAssistantMessage("all done"))
+	m := newModel(context.Background(), Options{Server: svc, Cwd: t.TempDir(), MarkdownStyle: "notty", AutoApprove: true})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	drain(t, m, m.submit("delegate"))
+
+	out := ansi.Strip(m.transcript())
+	for _, want := range []string{"└─ ◇ task #1 general-purpose · look around", "◆ #1 · LLM 1", "↳ sub report", "◆ main · LLM #2", "all done"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("transcript missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "sub report") != 1 || strings.Contains(out, "thinking") || !strings.Contains(lineWith(t, out, "task #1"), "✓") {
+		t.Errorf("transcript:\n%s", out)
+	}
+}
+
+func TestTaskResultMarksSubagentDoneWithReport(t *testing.T) {
+	m := newTestModel(t, newService(t), t.TempDir())
+	m.message(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{taskCall("t1", "find handlers")}})
+	m.Update(subEvent("t1", llm.NewAssistantMessage("Found 5 handlers")))
+	res := llm.WithTiming(llm.NewToolMessage("t1", "task", "Found 5 handlers\nin http.go"), llm.Timing{Start: time.Now(), Duration: 3400 * time.Millisecond})
+	m.message(res)
+
+	out := ansi.Strip(m.transcript())
+	if row := lineWith(t, out, "task #1"); !strings.HasSuffix(strings.TrimRight(row, " "), "3.4s ✓") {
+		t.Fatalf("task row = %q", row)
+	}
+	if !strings.Contains(out, "↳ Found 5 handlers ...") || strings.Contains(out, "thinking") {
+		t.Fatalf("transcript:\n%s", out)
+	}
+	if m.runningSubs() != 0 || len(m.live) != 0 {
+		t.Fatalf("running subs=%d live=%v", m.runningSubs(), m.live)
+	}
+}
+
+func TestSubmitShowsThinkingRowUntilTheModelReplies(t *testing.T) {
+	m := newTestModel(t, blockingServer{}, t.TempDir())
+	cmd := m.submit("go")
+	out := ansi.Strip(m.transcript())
+	last := lineWith(t, out, "thinking")
+	if !strings.Contains(last, "◆ main · LLM #1") || !strings.Contains(last, "s") {
+		t.Fatalf("thinking row = %q", last)
+	}
+	m.message(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "ls", Args: map[string]any{"path": "/"}}}})
+	out = ansi.Strip(m.transcript())
+	if strings.Contains(out, "thinking") {
+		t.Fatalf("thinking row shown while a tool runs:\n%s", out)
+	}
+	if row := lineWith(t, out, "└─ ls /"); strings.Contains(row, "…") || !strings.HasSuffix(strings.TrimRight(row, " "), "s") {
+		t.Fatalf("running tool row = %q", row)
+	}
+	m.message(llm.NewToolMessage("c1", "ls", "a.txt"))
+	if !strings.Contains(ansi.Strip(m.transcript()), "◆ main · LLM #2  thinking") {
+		t.Fatalf("no thinking row after tool results:\n%s", ansi.Strip(m.transcript()))
+	}
+	m.stopRun()
+	batch := runCmd(t, cmd).(tea.BatchMsg)
+	drain(t, m, batch[0])
+}
+
+func TestTickRerendersOnlyLiveEntries(t *testing.T) {
+	m := newTestModel(t, blockingServer{}, t.TempDir())
+	for i := range 20 {
+		m.info(fmt.Sprintf("line %d", i))
+	}
+	cmd := m.submit("go")
+	m.message(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "ls", Args: map[string]any{"path": "/"}}}})
+	m.Update(nil)
+	base := m.renders
+	m.Update(m.spin.Tick())
+	if got := m.renders - base; got != 1 {
+		t.Fatalf("tick re-rendered %d entries, want 1", got)
+	}
+	m.stopRun()
+	batch := runCmd(t, cmd).(tea.BatchMsg)
+	drain(t, m, batch[0])
+}
+
+func TestCancelLeavesNoSpinner(t *testing.T) {
+	m := newTestModel(t, blockingServer{}, t.TempDir())
+	cmd := m.submit("go")
+	batch := runCmd(t, cmd).(tea.BatchMsg)
+	_, next := m.Update(runCmd(t, batch[0]))
+	m.message(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{taskCall("t1", "dig")}})
+	m.Update(subEvent("t1", llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "g", Name: "grep", Args: map[string]any{"pattern": "x"}}}}))
+	m.Update(key("ctrl+c"))
+	drain(t, m, next)
+
+	out := ansi.Strip(m.transcript())
+	if m.mode != modeIdle || len(m.live) != 0 || m.runningSubs() != 0 {
+		t.Fatalf("mode=%v live=%v running=%d", m.mode, m.live, m.runningSubs())
+	}
+	if strings.Contains(out, "thinking") || !strings.Contains(lineWith(t, out, "task #1"), "cancelled") || !strings.Contains(lineWith(t, out, "grep x"), "cancelled") {
+		t.Fatalf("transcript after cancel:\n%s", out)
+	}
+}
+
+func TestResumedThreadSettlesCallsWithoutResults(t *testing.T) {
+	m := newTestModel(t, newService(t), t.TempDir())
+	m.threadLoaded(threadLoadedMsg{id: "t1", ts: &server.ThreadState{Messages: []llm.Message{
+		llm.NewUserMessage("go"),
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{taskCall("t1", "dig")}},
+	}}})
+	if len(m.live) != 0 || m.runningSubs() != 0 || strings.Contains(ansi.Strip(m.transcript()), "…") {
+		t.Fatalf("live=%v running=%d:\n%s", m.live, m.runningSubs(), ansi.Strip(m.transcript()))
 	}
 }
 

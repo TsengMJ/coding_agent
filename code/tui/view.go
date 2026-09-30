@@ -81,6 +81,12 @@ func (m *model) statusLine() string {
 		parts = append(parts, "AUTO-APPROVE")
 	}
 	if m.mode == modeRunning {
+		switch n := m.runningSubs(); {
+		case n == 1:
+			parts = append(parts, "1 subagent running")
+		case n > 1:
+			parts = append(parts, fmt.Sprintf("%d subagents running", n))
+		}
 		parts = append(parts, m.spin.View()+" working")
 	}
 	return styleStatus.Width(m.width).Render(strings.Join(parts, " · "))
@@ -132,6 +138,9 @@ func (m *model) transcript() string {
 		c.prefix.WriteString(c.rendered[c.joined])
 	}
 	out := c.prefix.String()
+	if row := m.thinkingRow(width); row != "" {
+		out += row + "\n"
+	}
 	if s := m.streaming.String(); s != "" {
 		out += wrap.Render(s) + "\n"
 	}
@@ -156,7 +165,7 @@ func (m *model) renderEntry(e entry, wrap lipgloss.Style, width int) string {
 	case entryLLM:
 		return renderLLM(e, width)
 	case entryTool:
-		return renderTool(e, width)
+		return m.renderTool(e, "", width)
 	case entryBatch:
 		return styleMeta.Render("     " + e.text)
 	case entryToolError:
