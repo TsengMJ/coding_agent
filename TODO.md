@@ -16,7 +16,7 @@
 
 ## 進度總覽
 
-- 最後更新：2026-09-30（Stage 9：dcode GUI）
+- 最後更新：2026-09-30（Stage 10 進行中：context 管理與 dcode 日常體驗）
 - 核心 SDK：圖、in-memory / Postgres checkpoint（每 thread 保留最新 10 筆）、interrupt、OpenAI Generate / Stream 走套件（含重試與串流閒置逾時）；FilesystemBackend / LocalShellBackend / FilesystemMiddleware / HITL（approve / reject、`When`）/ PatchToolCalls 可用；StateBackend（CreateDeepAgent 預設）可用；其餘 middleware、Store 仍為 stub
 - CLI：`dcode serve`（HTTP + NDJSON、兩階段關閉）、預設瀏覽器 GUI（可展開每一步、GitHub 樣式 diff、LLM 檢視器；trace 存在 `~/.deepagents/traces`）、`-tui` Bubble Tea TUI（markdown、diff 預覽）與 line REPL、`-n` / `-thread` / `-r` / `-y` / `-q` / `-no-stream` / `-timeout`、`dcode threads [-json]`；使用者層 `config.toml` 與 shell allow-list
 
@@ -230,7 +230,8 @@
 - [~] `Deleter` 可選能力 + `SupportsDelete`（`_supports_delete`）
 - [~] `ExecuteResponse` / `ExecuteArtifact` / `ExecuteOffloadResult`
 - [~] `SandboxBackend` 介面（id / execute）+ `SupportsExecution`
-  - [ ] `SupportsExecution` 對 CompositeBackend 依 default backend 判斷
+  - [x] `SupportsExecution` 對 CompositeBackend 依 default backend 判斷（`NewCompositeBackend` 依 default 的能力組出 wrapper）
+- [x] `ArtifactsRooter` / `ArtifactsRoot`（沒有指定時為 `/`；trace wrapper 會轉發）
 - [-] sync / async 雙版本（`als` / `aread` ...）— Go 以 `context.Context` 單一版本取代
 - [-] `execute_accepts_timeout` / `_method_accepts_max_count` 反射檢查 — Go 介面簽名固定
 
@@ -260,14 +261,15 @@
   - [x] upload_files / download_files
 - [x] `LocalShellBackend` — py: `backends/local_shell.py`
   - [x] execute（timeout、max_output_bytes、env / inherit_env、cwd=root；stderr 行加 `[stderr]`、逾時 exit code 124；unix 上逾時或結束後殺整個程序群組、輸出邊讀邊截斷在 rune 邊界）
-- [~] `CompositeBackend` — py: `backends/composite.py`
-  - [ ] 最長前綴路由
-  - [ ] ls 合併（根目錄列出 route）
-  - [ ] grep / glob 跨 route 合併、路徑重寫、max_count 預算、截斷原因合併
-  - [ ] read / write / edit / delete 路由
-  - [ ] execute 委派 default
-  - [ ] upload / download 分組路由
-  - [ ] artifacts_root
+- [x] `CompositeBackend` — py: `backends/composite.py`；go: `backend/composite.go`
+  - [x] 最長前綴路由（去掉前綴、結果路徑改寫回來）
+  - [x] ls 合併（根目錄列出 route）
+  - [x] grep / glob 跨 route 合併、路徑重寫、max_count 預算、截斷原因合併（route 依前綴長度排序，不是 Python 的插入順序）
+  - [x] read / write / edit / delete 路由（route backend 不能刪時回錯誤；default 不能刪時整個 composite 不提供 delete）
+  - [x] execute 委派 default
+  - [x] upload / download 分組路由
+  - [x] artifacts_root
+  - [x] dcode：使用者 skills 目錄是唯讀 route（取代 `hostRoutes`），`artifactsRoot = /.deepagents`
 - [~] `BaseSandbox` + `SandboxTransport` — py: `backends/sandbox.py`
   - [ ] ls / read / write / edit（inline 與 tmpfile 兩種）/ delete / grep / glob（以 python3 指令實作）
   - [ ] glob 指令模板（brace expansion、`**`、時間預算、MAX_MATCHES）

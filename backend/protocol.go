@@ -211,3 +211,17 @@ func SupportsDelete(b Backend) bool {
 	_, ok := b.(Deleter)
 	return ok
 }
+
+// ArtifactsRooter is implemented by backends that choose where middleware
+// offloads large tool results and messages (CompositeBackend and wrappers).
+type ArtifactsRooter interface {
+	ArtifactsRoot() string
+}
+
+// ArtifactsRoot returns b's artifacts root, or "/" when b does not choose one.
+func ArtifactsRoot(b Backend) string {
+	if r, ok := b.(ArtifactsRooter); ok && r.ArtifactsRoot() != "" {
+		return r.ArtifactsRoot()
+	}
+	return "/"
+}

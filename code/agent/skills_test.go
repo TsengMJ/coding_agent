@@ -9,6 +9,7 @@ import (
 
 	core "github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/backend"
+	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	rt "github.com/tsengmingchun/deepagents_golang/runtime"
 )
@@ -74,6 +75,19 @@ func TestHostRoutesAreReadOnly(t *testing.T) {
 	}
 	if r := b.Write(ctx, "/project.txt", "ok"); r.Error != "" {
 		t.Fatalf("project write = %+v", r)
+	}
+}
+
+func TestHostRoutesSetArtifactsRootAndSkipMissingDirs(t *testing.T) {
+	b := trace.WrapBackend(withHostRoutes(NewBackend(t.TempDir()), []string{filepath.Join(t.TempDir(), "missing")}))
+	if got := backend.ArtifactsRoot(b); got != ArtifactsRoot {
+		t.Fatalf("artifacts root = %q", got)
+	}
+	ls := b.Ls(context.Background(), "/")
+	for _, e := range ls.Entries {
+		if strings.Contains(e.Path, "missing") {
+			t.Fatalf("missing skill dir was mounted: %v", ls.Entries)
+		}
 	}
 }
 

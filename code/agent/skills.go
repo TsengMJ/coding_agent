@@ -3,10 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
-	"slices"
 	"strings"
-	"time"
 
 	"github.com/tsengmingchun/deepagents_golang/backend"
 	"github.com/tsengmingchun/deepagents_golang/middleware/skills"
@@ -57,124 +56,53 @@ func userSkillRoots(userDir, agentName string) []string {
 	return out
 }
 
-// withHostRoutes lets project file tools read (never write) the given host
-// directories: Ls / Read / Glob / Grep / DownloadFiles under a root go to the
-// host filesystem, and Write / Edit / Delete there are refused. Every other
-// path, and Execute, stay on b.
+// ArtifactsRoot is where dcode offloads large tool results and messages,
+// next to /.deepagents/conversation_history.
+const ArtifactsRoot = "/.deepagents"
+
+// withHostRoutes mounts each existing host directory in roots as a read-only
+// CompositeBackend route at its own host path, so project file tools can
+// read (never write) user-level skills. Every other path, and Execute, stay
+// on b. Large-result eviction writes under ArtifactsRoot.
 func withHostRoutes(b backend.Backend, roots []string) backend.Backend {
-	if len(roots) == 0 {
-		return b
-	}
-	r := &hostRoutes{Backend: b, host: backend.NewFilesystemBackend(backend.FilesystemOptions{}), roots: roots}
-	sb, isSandbox := b.(backend.SandboxBackend)
-	d, isDeleter := b.(backend.Deleter)
-	switch {
-	case isSandbox && isDeleter:
-		return &struct {
-			hostSandbox
-			hostDeleter
-		}{hostSandbox{r, sb}, hostDeleter{r, d}}
-	case isSandbox:
-		return &hostSandbox{r, sb}
-	case isDeleter:
-		return &struct {
-			*hostRoutes
-			hostDeleter
-		}{r, hostDeleter{r, d}}
-	default:
-		return r
-	}
-}
-
-type hostRoutes struct {
-	backend.Backend
-	host  backend.Backend
-	roots []string
-}
-
-func (r *hostRoutes) onHost(p string) bool {
-	return slices.ContainsFunc(r.roots, func(root string) bool {
-		return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
-	})
-}
-
-func readOnlyError(p string) string {
-	return fmt.Sprintf("Error: '%s' is a read-only skill directory", p)
-}
-
-func (r *hostRoutes) Ls(ctx context.Context, p string) backend.LsResult {
-	if r.onHost(p) {
-		return r.host.Ls(ctx, p)
-	}
-	return r.Backend.Ls(ctx, p)
-}
-
-func (r *hostRoutes) Read(ctx context.Context, p string, offset, limit int) backend.ReadResult {
-	if r.onHost(p) {
-		return r.host.Read(ctx, p, offset, limit)
-	}
-	return r.Backend.Read(ctx, p, offset, limit)
-}
-
-func (r *hostRoutes) Glob(ctx context.Context, pattern, p string) backend.GlobResult {
-	if r.onHost(p) {
-		return r.host.Glob(ctx, pattern, p)
-	}
-	return r.Backend.Glob(ctx, pattern, p)
-}
-
-func (r *hostRoutes) Grep(ctx context.Context, pattern string, opts backend.GrepOptions) backend.GrepResult {
-	if r.onHost(opts.Path) {
-		return r.host.Grep(ctx, pattern, opts)
-	}
-	return r.Backend.Grep(ctx, pattern, opts)
-}
-
-func (r *hostRoutes) Write(ctx context.Context, p, content string) backend.WriteResult {
-	if r.onHost(p) {
-		return backend.WriteResult{Error: readOnlyError(p)}
-	}
-	return r.Backend.Write(ctx, p, content)
-}
-
-func (r *hostRoutes) Edit(ctx context.Context, p, oldString, newString string, replaceAll bool) backend.EditResult {
-	if r.onHost(p) {
-		return backend.EditResult{Error: readOnlyError(p)}
-	}
-	return r.Backend.Edit(ctx, p, oldString, newString, replaceAll)
-}
-
-func (r *hostRoutes) DownloadFiles(ctx context.Context, paths []string) []backend.FileDownloadResponse {
-	out := make([]backend.FileDownloadResponse, len(paths))
-	for i, p := range paths {
-		src := r.Backend
-		if r.onHost(p) {
-			src = r.host
+	routes := map[string]backend.Backend{}
+	for _, root := range roots {
+		if st, err := os.Stat(root); err != nil || !st.IsDir() {
+			continue
 		}
-		out[i] = src.DownloadFiles(ctx, []string{p})[0]
+		prefix := filepath.ToSlash(root) + "/"
+		fs := backend.NewFilesystemBackend(backend.FilesystemOptions{RootDir: root, VirtualMode: true})
+		routes[prefix] = readOnlyRoute{Backend: fs, prefix: strings.TrimSuffix(prefix, "/")}
+	}
+	return backend.NewCompositeBackend(b, routes, ArtifactsRoot)
+}
+
+// readOnlyRoute refuses mutations; prefix restores the caller's path in errors.
+type readOnlyRoute struct {
+	backend.Backend
+	prefix string
+}
+
+func (r readOnlyRoute) readOnlyError(p string) string {
+	return fmt.Sprintf("Error: '%s' is a read-only skill directory", r.prefix+p)
+}
+
+func (r readOnlyRoute) Write(ctx context.Context, p, content string) backend.WriteResult {
+	return backend.WriteResult{Error: r.readOnlyError(p)}
+}
+
+func (r readOnlyRoute) Edit(ctx context.Context, p, oldString, newString string, replaceAll bool) backend.EditResult {
+	return backend.EditResult{Error: r.readOnlyError(p)}
+}
+
+func (r readOnlyRoute) Delete(ctx context.Context, p string) backend.DeleteResult {
+	return backend.DeleteResult{Error: r.readOnlyError(p)}
+}
+
+func (r readOnlyRoute) UploadFiles(ctx context.Context, files []backend.FileUpload) []backend.FileUploadResponse {
+	out := make([]backend.FileUploadResponse, len(files))
+	for i, f := range files {
+		out[i] = backend.FileUploadResponse{Path: f.Path, Error: r.readOnlyError(f.Path)}
 	}
 	return out
-}
-
-type hostSandbox struct {
-	*hostRoutes
-	sb backend.SandboxBackend
-}
-
-func (s *hostSandbox) ID() string { return s.sb.ID() }
-
-func (s *hostSandbox) Execute(ctx context.Context, command string, timeout *time.Duration) backend.ExecuteResponse {
-	return s.sb.Execute(ctx, command, timeout)
-}
-
-type hostDeleter struct {
-	r *hostRoutes
-	d backend.Deleter
-}
-
-func (h hostDeleter) Delete(ctx context.Context, p string) backend.DeleteResult {
-	if h.r.onHost(p) {
-		return backend.DeleteResult{Error: readOnlyError(p)}
-	}
-	return h.d.Delete(ctx, p)
 }

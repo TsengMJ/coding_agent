@@ -162,3 +162,21 @@
 - SKILL.md frontmatter 解析與驗證、多來源覆蓋
 - HITL edit 決策（取代 AI 訊息中的 tool call 參數）、respond
 **Status**: Complete（真模型 smoke：web_search 需使用者提供 `BRAVE_API_KEY` 後再跑）
+
+## Stage 10: 長任務 context 管理與 dcode 日常體驗
+
+**Goal**: 巨大的 tool 結果與使用者訊息不再塞爆 context（CompositeBackend + eviction）；dcode 有統一的 slash command registry、執行中切換模型、context 用量與成本。`BaseSandbox.ExecuteWithOffload`、ask_user、hooks、MCP、Anthropic 不在這一步。
+**Success Criteria**: 每個子階段 `make check` 通過（前端改動加跑 `make web-test`）；真模型 smoke：大輸出指令只回路徑加預覽且可用 `read_file` 分頁讀回；TUI `/model` 切換後續聊；`/cost` 顯示金額。
+**子階段**:
+- 10a `CompositeBackend`（最長前綴路由、ls / grep / glob 合併、upload / download 分組、能力依 default）；dcode 以它取代 `withHostRoutes`，`artifactsRoot = /.deepagents`
+- 10b eviction：tool 結果寫到 `{artifactsRoot}/large_tool_results/{id}`、使用者訊息寫到 `{artifactsRoot}/conversation_history/{uuid}.md`，回傳路徑加頭尾預覽；寫入失敗退回截斷
+- 10c `commands.Registry`（alias、未知指令建議、help）、TUI / REPL 共用 handler、`GET /commands` 與 GUI 自動完成
+- 10d `RunRequest.Model` + 動態 model wrapper（subagent 跟著換、回覆標 `model_name`）、thread 記住模型、`/model [spec] [--default]`
+- 10e 模型 context window 表、價格表（內嵌 + `~/.deepagents/prices.json`）、`GET /threads/{id}/usage`、`/tokens` `/context` `/cost`、狀態列 context 百分比
+**Tests**:
+- composite：路由與路徑改寫、根目錄 ls 含 route、grep 全域預算、glob pattern 改寫與合併、upload / download 順序、非 sandbox default 無 execute、dcode skills 唯讀
+- eviction：門檻以下不動、超過時寫檔與預覽、10 行內全顯示、長行裁切、排除工具、寫入失敗退回截斷、artifacts root、使用者訊息只 evict 一次且 state 不變
+- registry：alias、建議、隱藏指令、TUI / REPL 既有指令、`/commands` 路由、GUI 自動完成
+- model：不同 request 不同 model（含 subagent）、未知 spec 400、thread 記住模型、`--default` 寫回 config.toml、回覆帶 `model_name`
+- usage：profile 前綴比對、價格計算（含 cache read）、未定價、覆寫檔、多模型加總、指令輸出、summarization 改用比例觸發
+**Status**: In Progress

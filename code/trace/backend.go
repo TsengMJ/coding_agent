@@ -37,6 +37,8 @@ type diffBackend struct {
 	backend.Backend
 }
 
+func (b *diffBackend) ArtifactsRoot() string { return backend.ArtifactsRoot(b.Backend) }
+
 func (b *diffBackend) Write(ctx context.Context, path, content string) backend.WriteResult {
 	sc := scopeFrom(ctx)
 	if sc.rec == nil {
