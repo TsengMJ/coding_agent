@@ -131,7 +131,9 @@ var braveQueryParams = []braveParam{
 	{name: "units", kind: kindString, enum: []string{"metric", "imperial"},
 		description: "Measurement units in results. Brave default: derived from country."},
 	{name: "goggles", kind: kindStringList, max: braveMaxGoggles,
-		description: "Up to 3 Goggles (URLs or inline definitions) that re-rank results."},
+		description: "Rarely needed; do not use it to restrict results to a site (put site:example.com in query for that). " +
+			"Up to 3 Goggles that re-rank results; each is the URL of a hosted .goggle file or an inline definition " +
+			"with one rule per line, pattern$options, e.g. \"$boost=3,site=go.dev\" or \"/docs/$downrank\"."},
 	{name: "extra_snippets", kind: kindBool,
 		description: "Return up to 5 extra excerpts per web result. Brave default: false."},
 	{name: "summary", kind: kindBool,
@@ -269,8 +271,8 @@ func parseBraveArgs(args map[string]any) (*braveRequest, error) {
 	}
 	req.query.Set("q", q)
 	for _, p := range braveQueryParams {
-		v, ok := args[p.name]
-		if !ok || v == nil {
+		v := args[p.name]
+		if isUnset(v) {
 			continue
 		}
 		if err := p.apply(req.query, v); err != nil {
@@ -280,8 +282,8 @@ func parseBraveArgs(args map[string]any) (*braveRequest, error) {
 	req.summary = req.query.Get("summary") == "true"
 	req.rich = req.query.Get("enable_rich_callback") == "true"
 	for name := range braveExtraArgs {
-		v, ok := args[name]
-		if !ok || v == nil {
+		v := args[name]
+		if isUnset(v) {
 			continue
 		}
 		b, ok := v.(bool)
@@ -299,12 +301,71 @@ func parseBraveArgs(args map[string]any) (*braveRequest, error) {
 			req.inlineRefs = &b
 		}
 	}
-	if loc, ok := args["location"]; ok && loc != nil {
+	if loc := args["location"]; !isUnset(loc) {
 		if err := applyLocation(req.header, loc); err != nil {
 			return nil, err
 		}
 	}
 	return req, nil
+}
+
+// isUnset reports whether an optional argument was left empty; models often
+// fill every schema field with "" or [] rather than omitting it.
+func isUnset(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(x) == ""
+	case []any:
+		return len(x) == 0
+	case map[string]any:
+		return len(x) == 0
+	}
+	return false
+}
+
+// validGoggle accepts the URL of a .goggle file or an inline definition
+// whose every rule line is pattern$option[,option...].
+func validGoggle(s string) bool {
+	if u, err := url.Parse(s); err == nil && (u.Scheme == "https" || u.Scheme == "http") {
+		return strings.HasSuffix(u.Path, ".goggle")
+	}
+	rules := 0
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "!") {
+			continue
+		}
+		i := strings.LastIndex(line, "$")
+		if i < 0 {
+			return false
+		}
+		for _, opt := range strings.Split(line[i+1:], ",") {
+			if !validGoggleOption(opt) {
+				return false
+			}
+		}
+		rules++
+	}
+	return rules > 0
+}
+
+func validGoggleOption(opt string) bool {
+	key, val, hasVal := strings.Cut(strings.TrimSpace(opt), "=")
+	switch key {
+	case "boost", "downrank":
+		if !hasVal {
+			return true
+		}
+		_, err := strconv.Atoi(val)
+		return err == nil
+	case "site":
+		return hasVal && val != ""
+	case "discard", "inurl", "intitle", "indescription", "incontent":
+		return !hasVal
+	}
+	return false
 }
 
 func (p braveParam) apply(q url.Values, v any) error {
@@ -350,6 +411,10 @@ func (p braveParam) apply(q url.Values, v any) error {
 			if p.enum != nil && !slices.Contains(p.enum, s) {
 				return fmt.Errorf("%s items must be one of %s, got %q", p.name, strings.Join(p.enum, ", "), s)
 			}
+			if p.name == "goggles" && !validGoggle(s) {
+				return fmt.Errorf("goggles item %q is not a .goggle URL or an inline definition (rules like \"$boost=3,site=go.dev\"); "+
+					"to limit results to a site, use site: in query instead", s)
+			}
 			list = append(list, s)
 		}
 		if p.name == "result_filter" {
@@ -391,6 +456,9 @@ func applyLocation(h http.Header, v any) error {
 		header, ok := fields[k]
 		if !ok {
 			return fmt.Errorf("unknown location field %q", k)
+		}
+		if isUnset(val) {
+			continue
 		}
 		switch k {
 		case "lat", "long":
@@ -438,12 +506,20 @@ func (b *brave) search(ctx context.Context, args map[string]any) *tool.Result {
 	var out strings.Builder
 	var notes []string
 	resp.writeQuery(&out)
-	if req.summary && resp.Summarizer != nil && resp.Summarizer.Key != "" {
+	switch {
+	case !req.summary:
+	case resp.Summarizer == nil || resp.Summarizer.Key == "":
+		notes = append(notes, "Note: Brave returned no summary for this query (the API plan may not include the Summarizer).")
+	default:
 		if err := b.writeSummary(ctx, &out, req, resp.Summarizer.Key); err != nil {
 			notes = append(notes, "Note: the summary could not be fetched: "+err.Error())
 		}
 	}
-	if req.rich && resp.Rich != nil && resp.Rich.Hint.CallbackKey != "" {
+	switch {
+	case !req.rich:
+	case resp.Rich == nil || resp.Rich.Hint.CallbackKey == "":
+		notes = append(notes, "Note: Brave offered no rich result for this query.")
+	default:
 		if err := b.writeRich(ctx, &out, resp.Rich.Hint.Vertical, resp.Rich.Hint.CallbackKey); err != nil {
 			notes = append(notes, "Note: the rich result could not be fetched: "+err.Error())
 		}

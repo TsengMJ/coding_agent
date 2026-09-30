@@ -135,6 +135,45 @@ func TestBraveSendsOnlyGivenArguments(t *testing.T) {
 	}
 }
 
+func TestValidGoggle(t *testing.T) {
+	for s, want := range map[string]bool{
+		"https://raw.githubusercontent.com/brave/goggles-quickstart/main/goggles/rust_programming.goggle": true,
+		"$boost=3,site=go.dev":                 true,
+		"! name: docs\n/docs/$boost\n$discard": true,
+		"$downrank=2,inurl":                    true,
+		"go.dev":                               false,
+		"https://go.dev":                       false,
+		"$boost=5,site:go.dev":                 false,
+		"$site=":                               false,
+		"$boost=high":                          false,
+	} {
+		if got := validGoggle(s); got != want {
+			t.Errorf("validGoggle(%q) = %v, want %v", s, got, want)
+		}
+	}
+}
+
+func TestBraveTreatsEmptyValuesAsUnset(t *testing.T) {
+	s, tl := newBraveServer(t, map[string]func(http.ResponseWriter, *http.Request){"/res/v1/web/search": jsonReply(simpleWeb)})
+	out, isErr := run(t, tl, map[string]any{
+		"query": "golang", "country": "", "freshness": "", "units": "",
+		"result_filter": []any{}, "goggles": []any{},
+		"location": map[string]any{"city": "", "state_name": "", "postal_code": "", "country": ""},
+	})
+	if isErr {
+		t.Fatal(out)
+	}
+	r := s.requests[0]
+	if got := r.URL.RawQuery; got != "q=golang" {
+		t.Errorf("query = %q", got)
+	}
+	for h := range r.Header {
+		if strings.HasPrefix(h, "X-Loc-") {
+			t.Errorf("empty location field sent as %s", h)
+		}
+	}
+}
+
 func TestBraveValidatesBeforeSending(t *testing.T) {
 	s, tl := newBraveServer(t, nil)
 	for name, tc := range map[string]struct {
@@ -155,6 +194,9 @@ func TestBraveValidatesBeforeSending(t *testing.T) {
 		"bad lat":         {map[string]any{"query": "x", "location": map[string]any{"lat": float64(91)}}, "location.lat"},
 		"location field":  {map[string]any{"query": "x", "location": map[string]any{"zip": "1"}}, `unknown location field "zip"`},
 		"bool type":       {map[string]any{"query": "x", "summary": "yes"}, "summary must be a boolean"},
+		"goggle site":     {map[string]any{"query": "x", "goggles": []any{"go.dev"}}, "use site:"},
+		"goggle page url": {map[string]any{"query": "x", "goggles": []any{"https://go.dev"}}, "use site:"},
+		"goggle syntax":   {map[string]any{"query": "x", "goggles": []any{"$boost=5,site:go.dev"}}, "use site:"},
 	} {
 		out, isErr := run(t, tl, tc.args)
 		if !isErr || !strings.Contains(out, tc.want) {
@@ -237,6 +279,19 @@ func TestBraveSummaryFailureOnlyAddsNote(t *testing.T) {
 	out, isErr := run(t, tl, map[string]any{"query": "q", "summary": true})
 	if isErr || !strings.Contains(out, "https://t") || !strings.Contains(out, "Note: the summary could not be fetched") {
 		t.Fatalf("error=%v out=%q", isErr, out)
+	}
+}
+
+func TestBraveNotesWhenRequestedExtrasAreMissing(t *testing.T) {
+	s, tl := newBraveServer(t, map[string]func(http.ResponseWriter, *http.Request){"/res/v1/web/search": jsonReply(simpleWeb)})
+	out, isErr := run(t, tl, map[string]any{"query": "q", "summary": true, "enable_rich_callback": true})
+	if isErr || len(s.requests) != 1 {
+		t.Fatalf("error=%v requests=%d out=%q", isErr, len(s.requests), out)
+	}
+	for _, want := range []string{"Note: Brave returned no summary", "Note: Brave offered no rich result"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
 	}
 }
 
