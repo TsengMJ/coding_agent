@@ -70,9 +70,20 @@ func TestDefaultToolsWithShellBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
+	want := []string{"ls", "read_file", "write_file", "edit_file", "delete", "glob", "grep", "execute"}
 	if got := toolNames(m.Tools()); !slices.Equal(got, want) {
 		t.Fatalf("tools = %v, want %v", got, want)
+	}
+}
+
+func TestDeleteDroppedForNonDeleterBackend(t *testing.T) {
+	fsb := backend.NewFilesystemBackend(backend.FilesystemOptions{RootDir: t.TempDir(), VirtualMode: true})
+	m, err := New(Options{Backend: struct{ backend.Backend }{fsb}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(toolNames(m.Tools()), "delete") {
+		t.Fatal("delete must not be offered when the backend cannot delete")
 	}
 }
 

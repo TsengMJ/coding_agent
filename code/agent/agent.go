@@ -101,7 +101,11 @@ func DefaultInterruptOn() map[string]hitl.InterruptOnConfig {
 	return map[string]hitl.InterruptOnConfig{
 		"write_file": {},
 		"edit_file":  {},
-		"execute":    {},
+		"delete": {
+			AllowedDecisions: []hitl.DecisionType{hitl.DecisionApprove, hitl.DecisionReject},
+			Description:      "Action: Delete file or directory",
+		},
+		"execute": {},
 	}
 }
 
@@ -183,7 +187,7 @@ func workingDirSection(cwd string) string {
 		"The project root is `%s` on %s.\n\n"+
 		"### File System and Paths\n\n"+
 		"**IMPORTANT - Path Handling:**\n"+
-		"- File tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`) use virtual absolute paths where `/` is the project root.\n"+
+		"- File tools (`ls`, `read_file`, `write_file`, `edit_file`, `delete`, `glob`, `grep`) use virtual absolute paths where `/` is the project root.\n"+
 		"- Example: to create `%s/cmd/app/main.go`, call `write_file(file_path=\"/cmd/app/main.go\", ...)`.\n"+
 		"- File tools cannot reach paths outside the project root.\n"+
 		"- `execute` runs shell commands with the project root as the working directory, so use paths relative to it there (e.g. `go test ./...`).\n\n",

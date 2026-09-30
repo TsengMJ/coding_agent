@@ -71,6 +71,16 @@ func TestActionPreview(t *testing.T) {
 	}
 }
 
+func TestActionTitleAndPreviewForDelete(t *testing.T) {
+	req := hitl.ActionRequest{Name: "delete", Args: map[string]any{"file_path": "/build"}}
+	if got := ActionTitle(req); got != "delete /build" {
+		t.Fatalf("title = %q", got)
+	}
+	if got := ActionPreviewIn(req, t.TempDir()); !strings.HasPrefix(got, "rm -r /build") {
+		t.Fatalf("preview = %q", got)
+	}
+}
+
 // scriptedServer yields one scripted event list per Run call.
 type scriptedServer struct {
 	fakeServer

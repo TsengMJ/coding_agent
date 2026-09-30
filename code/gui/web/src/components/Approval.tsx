@@ -69,6 +69,14 @@ function Preview({ req }: { req: ActionRequest }) {
       </>
     );
   }
+  if (req.name === "delete") {
+    return (
+      <>
+        {head}
+        <div className="mono">Deletes {str(req.args["file_path"])}; a directory is removed with everything inside it.</div>
+      </>
+    );
+  }
   const hunk = requestedChange({ call });
   if (hunk) {
     return (

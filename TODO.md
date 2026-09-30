@@ -303,7 +303,7 @@
 
 ### 4.1 Filesystem `middleware/filesystem`（py: `middleware/filesystem.py`）
 
-- [x] `ToolName`（`FsToolName`）與 `AllTools`、`DefaultTools`（預設不含 `delete`）
+- [x] `ToolName`（`FsToolName`）與 `AllTools`、`DefaultTools`（同 Python `tools=None`：全部工具；backend 不支援時略過 `delete` / `execute`）
 - [~] `Options`（backend / system_prompt / custom_tool_descriptions / max_execute_timeout / grep_max_count / tools 已生效；token eviction 門檻與 permissions 尚未使用，給 permissions 會回錯誤；Backend 必填）
 - [x] `Middleware`（Name / Tools / StateSchema / WrapModelCall 附加 system prompt / WrapToolCall 截斷過長文字結果）
 - [~] 工具實作 — go: `middleware/filesystem/tools.go`
@@ -313,7 +313,7 @@
   - [ ] `read_file` 影片：抽幀（py: `_video.py`，需 ffmpeg 或等效函式庫）
   - [x] `write_file`
   - [x] `edit_file`（replace_all）
-  - [~] `delete`（僅 Deleter backend、需在 `Tools` 明確列出；萬用字元 deny 重疊檢查未做）
+  - [~] `delete`（Deleter backend 預設提供；目錄遞迴刪除、symlink 只刪 link、拒絕刪根目錄；dcode 需核准（approve / reject）；萬用字元 deny 重疊檢查未做）
   - [x] `glob`（截斷 note）
   - [x] `grep`（output_mode、max_count、regex 提示、截斷 note）
   - [~] `execute`（timeout 上限、ExecuteArtifact；offload 大輸出未做）

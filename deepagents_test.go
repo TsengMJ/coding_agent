@@ -159,7 +159,7 @@ func TestCreateDeepAgentWithBackendExposesFilesystemTools(t *testing.T) {
 	for _, spec := range model.Requests()[0].Tools {
 		names = append(names, spec.Name)
 	}
-	if want := []string{"ls", "read_file", "write_file", "edit_file", "glob", "grep", "task"}; !slices.Equal(names, want) {
+	if want := []string{"ls", "read_file", "write_file", "edit_file", "delete", "glob", "grep", "task"}; !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
 }

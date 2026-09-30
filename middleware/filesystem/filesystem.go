@@ -34,9 +34,8 @@ const (
 // AllTools lists every built-in tool in display order.
 var AllTools = []ToolName{ToolLs, ToolReadFile, ToolWriteFile, ToolEditFile, ToolDelete, ToolGlob, ToolGrep, ToolExecute}
 
-// DefaultTools is exposed when Options.Tools is nil. `delete` must be
-// requested explicitly.
-var DefaultTools = []ToolName{ToolLs, ToolReadFile, ToolWriteFile, ToolEditFile, ToolGlob, ToolGrep, ToolExecute}
+// DefaultTools is exposed when Options.Tools is nil.
+var DefaultTools = AllTools
 
 // Defaults applied by New.
 const (

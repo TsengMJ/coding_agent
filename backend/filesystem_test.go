@@ -107,6 +107,65 @@ func TestFilesystemDelete(t *testing.T) {
 	}
 }
 
+func TestFilesystemDeleteFile(t *testing.T) {
+	b, dir := newVirtualFS(t)
+	ctx := context.Background()
+	b.Write(ctx, "/a.txt", "x")
+	if res := b.Delete(ctx, "/a.txt"); res.Error != "" || res.Path != "/a.txt" {
+		t.Fatalf("delete: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.txt")); !os.IsNotExist(err) {
+		t.Fatal("file still exists")
+	}
+}
+
+func TestFilesystemDeleteErrors(t *testing.T) {
+	b, _ := newVirtualFS(t)
+	ctx := context.Background()
+	for path, want := range map[string]string{
+		"/":        "refusing to delete the root directory",
+		"/missing": "not found",
+		"/../x":    "Path traversal not allowed",
+	} {
+		if res := b.Delete(ctx, path); !strings.Contains(res.Error, want) {
+			t.Errorf("Delete(%q) = %+v, want error containing %q", path, res, want)
+		}
+	}
+}
+
+func TestFilesystemDeleteSymlinkRemovesOnlyLink(t *testing.T) {
+	b, dir := newVirtualFS(t)
+	ctx := context.Background()
+	b.Write(ctx, "/target/keep.txt", "k")
+	if err := os.Symlink(filepath.Join(dir, "target"), filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if res := b.Delete(ctx, "/link"); res.Error != "" {
+		t.Fatalf("delete: %s", res.Error)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "link")); !os.IsNotExist(err) {
+		t.Fatal("link still exists")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "target", "keep.txt")); err != nil {
+		t.Fatalf("link target was deleted: %v", err)
+	}
+}
+
+func TestFilesystemDeleteEscapingSymlinkRemovesOnlyLink(t *testing.T) {
+	b, dir := newVirtualFS(t)
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("s"), 0o644)
+	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if res := b.Delete(context.Background(), "/link"); res.Error != "" {
+		t.Fatalf("delete: %s", res.Error)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "secret.txt")); err != nil {
+		t.Fatalf("file outside root was deleted: %v", err)
+	}
+}
+
 func TestFilesystemRejectsTraversal(t *testing.T) {
 	b, _ := newVirtualFS(t)
 	ctx := context.Background()

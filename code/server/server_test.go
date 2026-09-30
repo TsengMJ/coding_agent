@@ -185,6 +185,53 @@ func TestServicePausesForApprovalAndResumes(t *testing.T) {
 	}
 }
 
+func deleteReply(id, path string) llm.Message {
+	return llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: id, Name: "delete",
+		Args: map[string]any{"file_path": path}}}}
+}
+
+func TestServiceDeleteNeedsApproval(t *testing.T) {
+	cwd := t.TempDir()
+	os.WriteFile(filepath.Join(cwd, "old.txt"), []byte("x"), 0o644)
+	svc, _ := newService(t, deleteReply("d", "/old.txt"), llm.NewAssistantMessage("deleted"))
+	req := userReq("t1", cwd, "remove old.txt")
+	req.AutoApprove = false
+	events, err := collect(t, svc, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := events[len(events)-1]
+	if last.Kind != EventInterrupt {
+		t.Fatalf("last event = %+v", last)
+	}
+	ar := last.Interrupts[0].ActionRequests[0]
+	if ar.Name != "delete" || ar.Description != "Action: Delete file or directory" ||
+		len(ar.AllowedDecisions) != 2 || ar.AllowedDecisions[0] != hitl.DecisionApprove || ar.AllowedDecisions[1] != hitl.DecisionReject {
+		t.Fatalf("action request = %+v", ar)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "old.txt")); err != nil {
+		t.Fatalf("file deleted before approval: %v", err)
+	}
+	if _, err := collect(t, svc, resumeReq("t1", cwd, hitl.Decision{Type: hitl.DecisionApprove})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "old.txt")); !os.IsNotExist(err) {
+		t.Fatalf("file still exists after approval: %v", err)
+	}
+}
+
+func TestServiceDeleteAutoApproved(t *testing.T) {
+	cwd := t.TempDir()
+	os.WriteFile(filepath.Join(cwd, "old.txt"), []byte("x"), 0o644)
+	svc, _ := newService(t, deleteReply("d", "/old.txt"), llm.NewAssistantMessage("deleted"))
+	if _, err := collect(t, svc, userReq("t1", cwd, "remove old.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "old.txt")); !os.IsNotExist(err) {
+		t.Fatalf("file still exists: %v", err)
+	}
+}
+
 func TestServiceRejectKeepsFileUnwritten(t *testing.T) {
 	cwd := t.TempDir()
 	svc, _ := newService(t, writeReply("w", "/a.txt", "A"), llm.NewAssistantMessage("understood"))

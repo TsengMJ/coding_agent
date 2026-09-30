@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -95,6 +96,25 @@ func (b *FilesystemBackend) resolve(p string) (string, error) {
 		return "", fmt.Errorf("Path:%s outside root directory", p)
 	}
 	return full, nil
+}
+
+// resolveNoFollow is resolve without following a symlink in the last path
+// element, so operations on a link act on the link itself.
+func (b *FilesystemBackend) resolveNoFollow(p string) (string, error) {
+	vpath := ToPOSIXPath(p)
+	trimmed := strings.TrimRight(vpath, "/")
+	if trimmed == "" {
+		return b.resolve(vpath)
+	}
+	dir, name := pathpkg.Split(trimmed)
+	if name == "." || name == ".." {
+		return "", errors.New("Path traversal not allowed")
+	}
+	parent, err := b.resolve(dir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parent, name), nil
 }
 
 // evalExisting resolves symlinks in the longest existing prefix of p and
@@ -263,17 +283,22 @@ func (b *FilesystemBackend) Edit(ctx context.Context, path, oldString, newString
 
 // Delete removes a file, a symlink (not its target) or a directory tree.
 func (b *FilesystemBackend) Delete(ctx context.Context, path string) DeleteResult {
-	full, err := b.resolve(path)
+	full, err := b.resolveNoFollow(path)
 	if err != nil {
 		return DeleteResult{Error: fmt.Sprintf("Error deleting '%s': %v", path, err)}
 	}
 	if full == b.root {
 		return DeleteResult{Error: fmt.Sprintf("Error deleting '%s': refusing to delete the root directory", path)}
 	}
-	if _, err := os.Lstat(full); err != nil {
+	st, err := os.Lstat(full)
+	if err != nil {
 		return DeleteResult{Error: fmt.Sprintf("Error: '%s' not found", path)}
 	}
-	if err := os.RemoveAll(full); err != nil {
+	remove := os.RemoveAll
+	if st.Mode()&fs.ModeSymlink != 0 {
+		remove = os.Remove
+	}
+	if err := remove(full); err != nil {
 		return DeleteResult{Error: fmt.Sprintf("Error deleting '%s': %s", path, errText(err))}
 	}
 	return DeleteResult{Path: path}

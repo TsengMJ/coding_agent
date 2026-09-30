@@ -59,12 +59,7 @@
 
 ## Stage 5.5: StateBackend 與 permissions
 
-**Goal**: `StateBackend`（檔案存在 agent state 的 `files`）與 filesystem permissions 規則。
-**Success Criteria**: 沒給 backend 時 CreateDeepAgent 預設用 StateBackend；deny 規則讓工具回傳 permission denied。
-**Tests**:
-- StateBackend 讀寫經由 RunContext 產生 `files` update；files reducer 以 nil 代表刪除
-- 權限規則 deny 時工具回傳 permission denied，ls / glob / grep 結果被過濾
-**Status**: Not Started
+併入 Stage 8（8a / 8b）。
 
 ## Stage 6: dcode serve + TUI（邊寫邊測）
 
@@ -148,11 +143,22 @@
 - 前端（vitest）：事件 → timeline reducer、diff 解析、tool 輸出解析、過濾 / 搜尋
 **Status**: Complete
 
-## Stage 8: 進階 middleware
+## Stage 8: StateBackend、permissions、網路工具、Skills、HITL edit
 
-**Goal**: Skills 完成；HITL 補上 edit / respond 決策。
-**Success Criteria**: SKILL.md 被注入 prompt；核准時可修改 tool 參數後再執行。
+**Goal**: delete 工具預設開啟；`StateBackend` 成為沒給 backend 時的預設；filesystem permissions；dcode 的 `web_search`（Brave）與 `fetch_url`；Skills；HITL edit / respond 決策。
+**Success Criteria**: 每個子階段 `make check` 通過；沒給 backend 的 `CreateDeepAgent` 能在 state 內寫檔並跨 `Invoke` 讀回；deny 規則讓工具回 permission denied；`dcode -n` 能用 fetch_url 抓網頁；SKILL.md 出現在 prompt；核准時可修改 tool 參數後再執行。
+**子階段**:
+- 8.0 delete：`DefaultTools` 同 Python 全開、symlink 只刪 link、dcode 核准（approve / reject）與核准畫面
+- 8a `FilesReducer`、`StateBackend`、filesystem 工具以 `RunContext` 產生 `files` update、CreateDeepAgent 預設 StateBackend
+- 8b permissions：`Validate` / `Check` / `FilterPaths` / `BuildInterruptOn`、filesystem 工具檢查、`WithPermissions`、subagent 繼承
+- 8c `web_search`（Brave：所有 web/search 參數與 `x-loc-*` header 都是 tool 參數；summary / rich 自動打後續 API）、`fetch_url`（SSRF 防護、HTML 轉 markdown）
+- 8d Skills：SKILL.md frontmatter、`ListSkills`、SkillsMiddleware、`WithSkills`、dcode skill 來源
+- 8e HITL edit / respond
 **Tests**:
-- SKILL.md frontmatter 解析與驗證
-- HITL edit 決策（取代 AI 訊息中的 tool call 參數）
-**Status**: Not Started
+- delete：預設工具清單、非 Deleter backend、刪檔 / 目錄 / 根目錄 / symlink / 不存在、dcode 核准與自動核准
+- StateBackend 讀寫經由 RunContext 產生 `files` update；files reducer 以 nil 代表刪除；跨 Invoke 讀回；subagent files 回寫
+- 權限規則 deny 時工具回傳 permission denied，ls / glob / grep 結果被過濾；interrupt 規則觸發 HITL
+- Brave 參數對應、驗證、錯誤轉換、後續呼叫；fetch_url 封鎖私有 IP 與 redirect
+- SKILL.md frontmatter 解析與驗證、多來源覆蓋
+- HITL edit 決策（取代 AI 訊息中的 tool call 參數）、respond
+**Status**: In Progress（8.0 完成）
