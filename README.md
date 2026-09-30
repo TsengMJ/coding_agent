@@ -116,7 +116,7 @@ dcode serve                        # 或 make serve；-addr 127.0.0.1:8123、-mo
 # 終端 B：任何專案目錄
 export DCODE_SERVER=http://127.0.0.1:8123
 cd ~/work/demo
-dcode                              # 全螢幕 TUI；非終端機或加 -plain 時改用逐行 REPL
+dcode                              # 開啟瀏覽器 GUI；-tui 改用全螢幕 TUI，非終端機或加 -plain 時改用逐行 REPL
 dcode -r                           # 接續這個目錄最近的 thread
 dcode -thread <id>                 # 接續指定 thread
 dcode -n '加上 --upper 參數' -r    # 單次續跑
@@ -131,7 +131,21 @@ dcode threads                      # 列出這個目錄的 threads（-all 列出
 - 模型呼叫遇到 429、5xx 或連線錯誤會自動重試（預設 2 次，`retries.max_retries` 可調）；串流超過 5 分鐘沒有新資料視為卡住並報錯。
 - 每個 thread 只保留最新 10 筆 checkpoint，長對話不會讓 checkpoint 表無限成長。
 
-TUI 按鍵：
+### GUI
+
+`dcode` 預設在 `127.0.0.1` 的隨機 port 開一個網頁介面並自動開瀏覽器（`-no-open` 只印出網址）。網址裡的 `#token=` 是這次啟動才有效的存取碼，不會送進 server log；API 只接受 loopback Host 與同源請求。
+
+- 時間軸保留 TUI 的收合結構（`main · LLM #n`、tool call 樹、subagent 縮排），可以一路往上捲到 thread 開頭。
+- 點 tool call 展開詳細內容：grep 依檔案分組並標出命中、read_file 帶行號、execute 顯示終端輸出與 exit code、edit/write 以 GitHub 風格 diff（unified / split）呈現；另有 Arguments、Output、Raw JSON 分頁。
+- 點 LLM 那一行（或 `inspect`）打開側欄，看這次呼叫實際送出的 messages（標出和上一次相比新增的部分）、回覆、提供的 tools 與 token 用量。
+- 每個 turn 結尾有 Files changed 摘要；需要核准時直接在頁面上看 diff 預覽後核准或附理由拒絕。
+- 上方可篩選 Edits / Commands / Errors / LLM calls、搜尋內容；鍵盤 `j`/`k` 移動、Enter 展開、`e` 全部展開、`/` 搜尋、`i` 打開 LLM 側欄、`G` 跳到底、Esc 關閉。
+
+完整的 LLM 輸入、檔案 diff 與 subagent 訊息記在 `~/.deepagents/traces/<thread>.jsonl`（重複內容只存一次），GUI 從 `GET /threads/{id}/trace` 與 `GET /threads/{id}/trace/llm/{seq}` 讀取。
+
+前端原始碼在 `code/gui/web`（React + Vite），建置結果 `code/gui/dist` 有進版控，一般 `go build` 不需要 Node。改前端後執行 `make web`（需要 Node）重新產生，`make web-test` 跑前端測試；開發時先跑 `dcode -no-open`，再到 `code/gui/web` 執行 `DCODE_GUI_URL=http://127.0.0.1:<port> npm run dev`，用 Vite 的網址加上同一段 `#token=...` 開啟即可熱更新。
+
+TUI 按鍵（`dcode -tui`）：
 
 | 按鍵 / 指令 | 作用 |
 | --- | --- |
@@ -143,7 +157,7 @@ TUI 按鍵：
 | `/yolo` | 切換自動核准 |
 | `/help`、`/quit` | 說明、離開 |
 
-server 的 HTTP 介面：`GET /healthz`、`POST /runs`（回傳 NDJSON：`delta`、`message`、`interrupt`、`done`、`error`）、`GET /threads?cwd=&limit=`、`GET /threads/{id}`。
+server 的 HTTP 介面：`GET /healthz`、`POST /runs`（回傳 NDJSON：`delta`、`message`、`interrupt`、`trace`、`done`、`error`）、`GET /threads?cwd=&limit=`、`GET /threads/{id}`、`GET /threads/{id}/trace`、`GET /threads/{id}/trace/llm/{seq}`。
 
 不要在 `go run ./cmd/dcode` 後面加 `--`：Go 的 `flag` 套件會把 `--` 之後的東西都當成一般參數，`-n` 就會變成 prompt 的一部分。
 

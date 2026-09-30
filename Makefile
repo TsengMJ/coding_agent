@@ -1,4 +1,4 @@
-.PHONY: help test vet fmt build check run serve install
+.PHONY: help test vet fmt build check run serve install web web-test
 
 .DEFAULT_GOAL := help
 
@@ -49,3 +49,9 @@ serve: ## Run the agent server: make serve [ADDR=127.0.0.1:8123] [MODEL=...]
 
 install: ## Install dcode into $(go env GOPATH)/bin
 	go install ./cmd/dcode
+
+web: ## Rebuild the GUI bundle into code/gui/dist (needs Node)
+	cd code/gui/web && npm ci && npm run build
+
+web-test: ## Typecheck and test the GUI frontend (needs Node)
+	cd code/gui/web && npm ci && npm run typecheck && npm test

@@ -16,9 +16,9 @@
 
 ## 進度總覽
 
-- 最後更新：2026-09-29（Stage 6.5：穩定性與 CLI 體驗）
+- 最後更新：2026-09-30（Stage 9：dcode GUI）
 - 核心 SDK：圖、in-memory / Postgres checkpoint（每 thread 保留最新 10 筆）、interrupt、OpenAI Generate / Stream 走套件（含重試與串流閒置逾時）；FilesystemBackend / LocalShellBackend / FilesystemMiddleware / HITL（approve / reject、`When`）/ PatchToolCalls 可用；其餘 middleware、StateBackend、Store 仍為 stub
-- CLI：`dcode serve`（HTTP + NDJSON、兩階段關閉）、Bubble Tea TUI（markdown、diff 預覽）與 line REPL、`-n` / `-thread` / `-r` / `-y` / `-q` / `-no-stream` / `-timeout`、`dcode threads [-json]`；使用者層 `config.toml` 與 shell allow-list
+- CLI：`dcode serve`（HTTP + NDJSON、兩階段關閉）、預設瀏覽器 GUI（可展開每一步、GitHub 樣式 diff、LLM 檢視器；trace 存在 `~/.deepagents/traces`）、`-tui` Bubble Tea TUI（markdown、diff 預覽）與 line REPL、`-n` / `-thread` / `-r` / `-y` / `-q` / `-no-stream` / `-timeout`、`dcode threads [-json]`；使用者層 `config.toml` 與 shell allow-list
 
 ---
 
@@ -510,6 +510,11 @@
   - [x] 呼叫樹：main / subagent 標示；subagent（#1、#2… 各自顏色）的 LLM 與 tool 呼叫巢狀顯示在 task 列下並附報告摘要；進行中的列顯示 spinner 與經過時間、thinking 列；狀態列顯示執行中的 subagent 數
   - [ ] 自動完成、貼上收合、ask_user
   - [ ] model / agent / theme 選擇器、context 用量、通知中心
+- [x] GUI `code/gui` + `code/gui/web`（Stage 9；Python 沒有對應功能）
+  - [x] trace `code/trace`：完整 LLM request / 回覆、檔案 unified diff、subagent 訊息，每 thread 一個 JSONL、內容去重
+  - [x] 內嵌 React SPA、loopback + token + Origin 檢查、遠端 server 走 reverse proxy；`dcode` 預設開啟，`-tui` / `-plain` / `-no-open`
+  - [x] timeline（TUI 同款收合樹、完整歷史虛擬捲動、串流、核准卡片）、各 tool 詳情、unified / split diff、LLM 檢視器、Files changed
+  - [x] thread 側欄、過濾 / 搜尋、快捷鍵、`make web` / `make web-test`
 
 ### 6.2 Agent `code/agent`（code: `agent.py`）
 
