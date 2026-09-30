@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/trace"
 )
 
 // funcServer runs fn for every Run; the other methods are unused here.
@@ -32,6 +33,12 @@ func (funcServer) ListThreads(context.Context, sessions.Filter) ([]sessions.Info
 }
 
 func (funcServer) Compact(context.Context, string) (*CompactResult, error) { return nil, nil }
+
+func (funcServer) GetTrace(context.Context, string) (*trace.Trace, error) { return nil, nil }
+
+func (funcServer) GetLLMCall(context.Context, string, int) (*trace.LLMCallDetail, error) {
+	return nil, nil
+}
 
 func (funcServer) Close() error { return nil }
 

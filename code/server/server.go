@@ -10,6 +10,7 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/code/config"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
 )
@@ -74,6 +75,8 @@ const (
 	EventInterrupt EventKind = "interrupt"
 	EventDone      EventKind = "done"
 	EventError     EventKind = "error"
+	// EventTrace reports a model call or file change just recorded.
+	EventTrace EventKind = "trace"
 )
 
 // Event is one item of a run stream.
@@ -85,6 +88,8 @@ type Event struct {
 	Message *llm.Message `json:"message,omitempty"`
 	// Interrupts are tool calls awaiting review; the run has stopped (EventInterrupt).
 	Interrupts []Interrupt `json:"interrupts,omitempty"`
+	// Trace is the record behind an EventTrace.
+	Trace *trace.Update `json:"trace,omitempty"`
 	// Error is set on EventError (HTTP transport only).
 	Error string `json:"error,omitempty"`
 	// Namespace is set when the event comes from a nested subagent run, e.g.
@@ -116,6 +121,12 @@ type Server interface {
 	// Compact summarizes older messages of an idle thread so later runs
 	// send the model a shorter history.
 	Compact(ctx context.Context, threadID string) (*CompactResult, error)
+	// GetTrace returns the recorded model calls, file diffs and subagent
+	// messages of a thread; an unknown thread has an empty trace.
+	GetTrace(ctx context.Context, threadID string) (*trace.Trace, error)
+	// GetLLMCall returns one recorded model call with its full request;
+	// the error wraps trace.ErrNotFound when there is none.
+	GetLLMCall(ctx context.Context, threadID string, seq int) (*trace.LLMCallDetail, error)
 	Close() error
 }
 

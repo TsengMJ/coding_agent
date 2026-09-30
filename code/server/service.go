@@ -17,6 +17,7 @@ import (
 	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
 	"github.com/tsengmingchun/deepagents_golang/code/config"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
 	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
@@ -37,6 +38,9 @@ type Config struct {
 	Model llm.ChatModel
 	// PostgresConn stores threads in Postgres; empty keeps them in memory.
 	PostgresConn string
+	// TraceDir holds per-thread trace files; empty means Paths.UserDir/traces,
+	// and no trace is kept when both are empty.
+	TraceDir string
 }
 
 // Service runs the coding agent for many threads and working directories.
@@ -48,6 +52,8 @@ type Service struct {
 	sessions     sessions.Store
 	storage      string
 	closeFn      func()
+	// traces is nil when tracing is off.
+	traces *trace.Store
 
 	mu     sync.Mutex
 	agents map[agentKey]*agentEntry
@@ -79,10 +85,17 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	s := &Service{
 		settings: cfg.Settings,
 		paths:    cfg.Paths,
-		model:    model,
+		model:    trace.WrapModel(model),
 		agents:   map[agentKey]*agentEntry{},
 		busy:     map[string]bool{},
 		closeFn:  func() {},
+	}
+	traceDir := cfg.TraceDir
+	if traceDir == "" && cfg.Paths.UserDir != "" {
+		traceDir = filepath.Join(cfg.Paths.UserDir, "traces")
+	}
+	if traceDir != "" {
+		s.traces = trace.NewStore(traceDir)
 	}
 	if cfg.PostgresConn == "" {
 		s.checkpointer = runtime.NewMemoryCheckpointer()
@@ -111,7 +124,24 @@ func (s *Service) ModelInfo() llm.ModelInfo { return s.model.Info() }
 
 func (s *Service) Close() error {
 	s.closeFn()
+	if s.traces != nil {
+		return s.traces.Close()
+	}
 	return nil
+}
+
+func (s *Service) GetTrace(ctx context.Context, threadID string) (*trace.Trace, error) {
+	if s.traces == nil {
+		return &trace.Trace{ThreadID: threadID, LLMCalls: []trace.LLMCall{}, Diffs: []trace.Diff{}, Messages: []trace.Message{}}, nil
+	}
+	return s.traces.Load(threadID)
+}
+
+func (s *Service) GetLLMCall(ctx context.Context, threadID string, seq int) (*trace.LLMCallDetail, error) {
+	if s.traces == nil {
+		return nil, fmt.Errorf("%w: tracing is off", trace.ErrNotFound)
+	}
+	return s.traces.LLMCall(threadID, seq)
 }
 
 func (s *Service) ListThreads(ctx context.Context, f sessions.Filter) ([]sessions.Info, error) {
@@ -231,17 +261,26 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 		ThreadID:     req.ThreadID,
 		Configurable: map[string]any{AutoApproveKey: req.AutoApprove},
 	}
+	ctx, tr := s.startTrace(ctx, req.ThreadID)
+	defer tr.stop()
 	var runErr error
 	for ev, err := range a.Stream(ctx, in, cfg, runtime.StreamValues, runtime.StreamMessages) {
 		if err != nil {
 			runErr = err
 			break
 		}
+		if !tr.flush(yield) {
+			return nil
+		}
 		for _, e := range convert(ev, sent) {
+			tr.subagentMessage(e)
 			if !yield(e, nil) {
 				return nil
 			}
 		}
+	}
+	if !tr.flush(yield) {
+		return nil
 	}
 
 	latest, err := s.checkpointer.Latest(context.WithoutCancel(ctx), req.ThreadID)

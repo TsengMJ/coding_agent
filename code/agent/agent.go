@@ -15,6 +15,7 @@ import (
 	core "github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/backend"
 	"github.com/tsengmingchun/deepagents_golang/code/config"
+	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
@@ -62,6 +63,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if b == nil {
 		b = NewBackend(opts.Cwd)
 	}
+	b = trace.WrapBackend(b)
 	if opts.ProjectContext == "" {
 		opts.ProjectContext = LocalContext(ctx, opts.Cwd)
 	}
@@ -82,7 +84,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		deepagents.WithBackend(b),
 		deepagents.WithSystemPrompt(prompt),
 		deepagents.WithTools(opts.ExtraTools...),
-		deepagents.WithMiddleware(summ, todolist.New("", ""), mem),
+		deepagents.WithMiddleware(summ, todolist.New("", ""), mem, trace.Middleware{}),
 		deepagents.WithCheckpointer(opts.Checkpointer),
 		deepagents.WithStore(opts.Store),
 		deepagents.WithName(opts.AgentName),

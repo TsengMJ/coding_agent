@@ -659,7 +659,7 @@ func (a *loopAgent) callTool(ctx context.Context, req *ToolCallRequest) (res *to
 		return errorResult(fmt.Sprintf("Error: %s is not a valid tool, try one of [%s].",
 			req.ToolCall.Name, strings.Join(a.toolNames(), ", "))), nil
 	}
-	res, err = req.Tool.Invoke(ctx, &tool.Runtime{
+	res, err = req.Tool.Invoke(tool.WithCallID(ctx, req.ToolCall.ID), &tool.Runtime{
 		ToolCallID: req.ToolCall.ID,
 		State:      req.State,
 		Store:      req.Runtime.Store,

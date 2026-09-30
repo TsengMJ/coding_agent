@@ -17,6 +17,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/code/config"
 	"github.com/tsengmingchun/deepagents_golang/code/server"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/trace"
 )
 
 // ServerEnvVar names the `dcode serve` URL clients connect to.
@@ -159,6 +160,48 @@ func (r *Remote) Compact(ctx context.Context, threadID string) (*server.CompactR
 		return nil, fmt.Errorf("decode compact result: %w", err)
 	}
 	return &res, nil
+}
+
+func (r *Remote) GetTrace(ctx context.Context, threadID string) (*trace.Trace, error) {
+	var t trace.Trace
+	if err := r.getJSON(ctx, "/threads/"+url.PathEscape(threadID)+"/trace", &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *Remote) GetLLMCall(ctx context.Context, threadID string, seq int) (*trace.LLMCallDetail, error) {
+	var d trace.LLMCallDetail
+	err := r.getJSON(ctx, "/threads/"+url.PathEscape(threadID)+"/trace/llm/"+strconv.Itoa(seq), &d)
+	var nf notFound
+	if errors.As(err, &nf) {
+		return nil, fmt.Errorf("%w: %v", trace.ErrNotFound, err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// notFound marks an HTTP 404 from getJSON.
+type notFound struct{ error }
+
+func (r *Remote) getJSON(ctx context.Context, path string, v any) error {
+	resp, err := r.do(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp); err != nil {
+		if resp.StatusCode == http.StatusNotFound {
+			return notFound{err}
+		}
+		return err
+	}
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return fmt.Errorf("decode %s: %w", path, err)
+	}
+	return nil
 }
 
 func (r *Remote) Close() error { return nil }

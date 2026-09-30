@@ -131,6 +131,23 @@
 - TUI：平行 task 得到 #1 / #2 且列在各自 task 下、task 完成顯示 ✓ 與報告、端到端 subagent 執行、thinking 列、tick 只重繪進行中的 entry、取消與 resume 後無 spinner
 **Status**: Complete
 
+## Stage 9: dcode GUI（可展開細節的本機 Web UI）
+
+**Goal**: `dcode` 互動模式預設開啟本機 GUI（Go binary 內嵌 React SPA、開瀏覽器）；完整歷史可捲動；預設收合結構與 TUI 相同，每一步可展開看完整指令、輸出、LLM input / output；檔案改動以 GitHub 樣式 diff 呈現。
+**Success Criteria**: `make check` 通過；`make web` 產生 `code/gui/dist`；`dcode` 開啟 GUI、`-tui` 回到 TUI、`-plain` 仍是 line REPL；沒有 token 或 Origin 不符的 API 請求被拒；重新載入頁面後歷史（含 subagent、LLM input、diff）仍可展開。
+**子階段**:
+- 9a trace：`code/trace`（每 thread 一個 JSONL、blob 以 hash 去重）、`trace.Model` 記錄每次 model call 的完整 request 並在回覆標上 `trace_seq`、`trace.WrapBackend` 在寫入 / 編輯 / 刪除時記錄完整 unified diff、`trace.Middleware` 讓 subagent 記錄帶 `task:<id>` namespace；loop 把 tool call ID 放進 ctx（`tool.CallIDFrom`）；`GET /threads/{id}/trace`、`GET /threads/{id}/trace/llm/{seq}`、`EventTrace`
+- 9b `code/gui`：embed SPA、token + Origin 檢查、只綁 loopback、遠端模式 reverse proxy；CLI 預設 GUI、`-tui`、`-no-open`
+- 9c 前端 timeline：歷史載入、NDJSON 串流、輸入框、核准卡片、虛擬捲動
+- 9d 展開詳情：各 tool renderer、diff viewer、LLM 檢視器、Files changed
+- 9e thread 側欄、過濾 / 搜尋、快捷鍵、`make web`、README
+**Tests**:
+- trace：完整 request 還原、摘要不含 body、hash 去重、`new_from`、重開後 seq 延續、thread ID 不能逃出目錄、model 回覆帶 seq、backend diff（新增 / 編輯 / 刪除）且保留 execute / delete 能力
+- server：端到端 main + subagent 的 model call、diff、subagent 訊息都被記錄；`EventTrace`；HTTP trace 路由 200 / 404 / 400
+- gui：無 token 403、錯 Origin 403、靜態檔、proxy；CLI flag
+- 前端（vitest）：事件 → timeline reducer、diff 解析、tool 輸出解析
+**Status**: In Progress（9a 完成）
+
 ## Stage 8: 進階 middleware
 
 **Goal**: Skills 完成；HITL 補上 edit / respond 決策。

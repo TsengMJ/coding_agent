@@ -23,6 +23,20 @@ type Runtime struct {
 	Emit    runtime.Emitter
 }
 
+type callIDKey struct{}
+
+// WithCallID returns ctx annotated with the ID of the tool call being run,
+// so code below the tool (backends, wrappers) can tell which call it serves.
+func WithCallID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, callIDKey{}, id)
+}
+
+// CallIDFrom returns the tool call ID set by WithCallID, or "".
+func CallIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(callIDKey{}).(string)
+	return id
+}
+
 // Result is what a tool returns. A tool either returns content (turned into a
 // ToolMessage) or a Command that updates state (and must itself include the
 // ToolMessage in its update).

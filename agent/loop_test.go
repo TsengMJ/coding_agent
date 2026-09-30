@@ -486,6 +486,26 @@ func TestLoopStreamGivesToolsAnEmitter(t *testing.T) {
 	}
 }
 
+func TestLoopToolContextCarriesCallID(t *testing.T) {
+	var got string
+	probe := &tool.Func{ToolName: "probe", ToolSchema: tool.Schema{"type": "object"},
+		Fn: func(ctx context.Context, _ *tool.Runtime, _ map[string]any) (*tool.Result, error) {
+			got = tool.CallIDFrom(ctx)
+			return &tool.Result{}, nil
+		}}
+	model := llm.NewFakeModel(toolCallReply(llm.ToolCall{ID: "call-7", Name: "probe"}), llm.NewAssistantMessage("done"))
+	a, err := CreateAgent(Config{Model: model, Tools: []tool.Tool{probe}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, runtime.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if got != "call-7" {
+		t.Fatalf("CallIDFrom = %q, want call-7", got)
+	}
+}
+
 func TestLoopNestedInvokeDoesNotStreamIntoParent(t *testing.T) {
 	inner, err := CreateAgent(Config{Model: llm.NewFakeModel(llm.NewAssistantMessage("inner words"))})
 	if err != nil {

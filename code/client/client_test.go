@@ -11,6 +11,7 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/code/server"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 )
 
@@ -39,6 +40,10 @@ func (f *fakeServer) ListThreads(context.Context, sessions.Filter) ([]sessions.I
 	return nil, nil
 }
 func (f *fakeServer) Compact(context.Context, string) (*server.CompactResult, error) {
+	return nil, nil
+}
+func (f *fakeServer) GetTrace(context.Context, string) (*trace.Trace, error) { return nil, nil }
+func (f *fakeServer) GetLLMCall(context.Context, string, int) (*trace.LLMCallDetail, error) {
 	return nil, nil
 }
 func (f *fakeServer) Close() error { return nil }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/trace"
 )
 
 // DefaultAddr is where `dcode serve` listens by default.
@@ -34,6 +35,8 @@ var (
 //	POST /runs            RunRequest -> NDJSON stream of Event, ending in done or error
 //	GET  /threads         ?cwd=&limit= -> []sessions.Info
 //	GET  /threads/{id}    -> ThreadState (404 when unknown)
+//	GET  /threads/{id}/trace -> trace.Trace (model call summaries, diffs, subagent messages)
+//	GET  /threads/{id}/trace/llm/{seq} -> trace.LLMCallDetail (404 when unknown)
 //	POST /threads/{id}/compact -> CompactResult (404 unknown, 409 busy/pending/too short)
 func NewHandler(srv Server) http.Handler {
 	mux := http.NewServeMux()
@@ -74,6 +77,27 @@ func NewHandler(srv Server) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, ts)
+	})
+	mux.HandleFunc("GET /threads/{id}/trace", func(w http.ResponseWriter, r *http.Request) {
+		t, err := srv.GetTrace(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, t)
+	})
+	mux.HandleFunc("GET /threads/{id}/trace/llm/{seq}", func(w http.ResponseWriter, r *http.Request) {
+		seq, err := strconv.Atoi(r.PathValue("seq"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("seq: %w", err))
+			return
+		}
+		d, err := srv.GetLLMCall(r.Context(), r.PathValue("id"), seq)
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, d)
 	})
 	mux.HandleFunc("POST /threads/{id}/compact", func(w http.ResponseWriter, r *http.Request) {
 		res, err := srv.Compact(r.Context(), r.PathValue("id"))
@@ -131,7 +155,7 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, ErrBadRequest):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrThreadNotFound):
+	case errors.Is(err, ErrThreadNotFound), errors.Is(err, trace.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, ErrThreadBusy), errors.Is(err, ErrThreadCwdMismatch),
 		errors.Is(err, ErrPendingApproval), errors.Is(err, ErrNoPendingApproval),
