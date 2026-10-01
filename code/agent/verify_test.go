@@ -100,6 +100,51 @@ func TestVerifyGateRunTestsNoTests(t *testing.T) {
 	}
 }
 
+func TestVerifyGateBlocksFilteredRunTests(t *testing.T) {
+	filtered := step{name: "run_tests",
+		args:   map[string]any{"files": []any{"test/controllers.js"}, "run": "blocking access for unconfirmed emails"},
+		result: `{"status":"passed","framework":"mocha","passed":2,"failed":0,"skipped":0,"failures":[],"build_errors":[]}`}
+	msg, ok := verifyMessage(transcript(editStep, filtered))
+	if !ok || !strings.Contains(msg, "blocking access for unconfirmed emails") || !strings.Contains(msg, "test/controllers.js") || !strings.Contains(msg, "without a filter") {
+		t.Fatalf("ok=%v msg=%q", ok, msg)
+	}
+}
+
+func TestVerifyGateBlocksFilteredExecute(t *testing.T) {
+	for _, cmd := range []string{
+		`npm test -- --grep "blocking access for unconfirmed emails"`,
+		`npx mocha test/user.js -g 'export'`,
+		`npx jest -t=renders src/a.test.js`,
+		`go test ./pkg/... -count=1 -run TestParse`,
+		`pytest tests/test_a.py -k parse`,
+		`python -m pytest tests/test_a.py::test_parse`,
+	} {
+		filtered := step{name: "execute", args: map[string]any{"command": cmd}, result: "2 passing\n\n[Command succeeded with exit code 0]"}
+		if msg, ok := verifyMessage(transcript(editStep, filtered)); !ok || !strings.Contains(msg, "without a filter") {
+			t.Errorf("%s: ok=%v msg=%q", cmd, ok, msg)
+		}
+	}
+}
+
+func TestVerifyGateFilterDetectionIgnoresSimilarFlags(t *testing.T) {
+	for _, cmd := range []string{"go test -timeout 60s ./...", "go test -tags integration ./...", "npx mocha test/user.js"} {
+		run := step{name: "execute", args: map[string]any{"command": cmd}, result: "ok\n\n[Command succeeded with exit code 0]"}
+		if msg, ok := verifyMessage(transcript(editStep, run)); ok {
+			t.Errorf("%s blocked: %s", cmd, msg)
+		}
+	}
+}
+
+func TestVerifyGateAllowsFullRunAfterFiltered(t *testing.T) {
+	filtered := step{name: "run_tests", args: map[string]any{"files": []any{"test/controllers.js"}, "run": "unconfirmed"},
+		result: `{"status":"passed","framework":"mocha","passed":2,"failed":0}`}
+	full := step{name: "run_tests", args: map[string]any{"files": []any{"test/controllers.js"}, "run": ""},
+		result: `{"status":"passed","framework":"mocha","passed":180,"failed":0}`}
+	if msg, ok := verifyMessage(transcript(editStep, filtered, full)); ok {
+		t.Fatalf("blocked: %s", msg)
+	}
+}
+
 func TestVerifyGateSuggestsStartingService(t *testing.T) {
 	msg, ok := verifyMessage(transcript(editStep, failedExec))
 	if !ok || !strings.Contains(msg, "exited with code 1") || !strings.Contains(msg, "redis-server --daemonize yes") {

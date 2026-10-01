@@ -38,6 +38,10 @@ var (
 	// (for example a --grep that matched nothing).
 	noTestsRan    = regexp.MustCompile(`(?m)(?:^\s*0 passing\b|no tests ran|collected 0 items|Tests:\s+0 total|No test files found)`)
 	patchFileLine = regexp.MustCompile(`(?m)^\*\*\* (?:Add|Update|Delete) File: (.+)$`)
+	// testFilter matches test-name filters: mocha --grep / -g / --fgrep, jest
+	// and vitest -t / --testNamePattern, go test -run, pytest -k, and pytest
+	// node IDs (file.py::test).
+	testFilter = regexp.MustCompile(`(?:^|\s)(?:(?:--grep|-g|--fgrep|-t|--testNamePattern|--test-name-pattern|-run|-k)(?:=|\s+)(?:"[^"]*"|'[^']*'|\S+)|\S+\.py::\S+)`)
 
 	refusedMark = regexp.MustCompile(`ECONNREFUSED|[Cc]onnection refused`)
 	refusedPort = regexp.MustCompile(`(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1|\[::1\]):(\d{2,5})\b`)
@@ -130,6 +134,10 @@ type checkResult struct {
 	passed   bool
 	detail   string
 	failures []string
+	// filter is the test-name filter the run used ("" = whole files), and
+	// files the test files it was limited to.
+	filter string
+	files  []string
 }
 
 // verifyMessage decides whether the current turn must continue and builds the
@@ -178,17 +186,23 @@ func verifyMessage(msgs []llm.Message) (string, bool) {
 			last = r
 		}
 	}
-	if lastEdit < 0 || (last != nil && last.passed) {
+	if lastEdit < 0 || (last != nil && last.passed && last.filter == "") {
 		return "", false
 	}
 
 	var b strings.Builder
 	b.WriteString(verifyMarker + " ")
-	if last == nil {
+	switch {
+	case last != nil && last.passed:
+		fmt.Fprintf(&b, "The last passing check after your changes only ran tests matching `%s` (`%s`). "+
+			"Other tests in the same files can break without showing up there. Run %s again without a filter "+
+			"(run_tests with `files` and an empty `run`, or the same command without the filter) and fix what fails before finishing.",
+			clipLine(last.filter, 200), clipLine(last.command, 200), testFileList(last.files))
+	case last == nil:
 		fmt.Fprintf(&b, "You changed %s but have not run the tests or a build since the last change. "+
 			"Run the relevant tests (run_tests, or the project's own command through execute) and fix what fails before finishing.",
 			fileList(files))
-	} else {
+	default:
 		fmt.Fprintf(&b, "The last check after your changes did not pass: `%s` %s.", clipLine(last.command, 200), last.detail)
 		if len(last.failures) > 0 {
 			b.WriteString("\nFailing:")
@@ -234,7 +248,10 @@ func classifyCheck(call llm.ToolCall, text string) *checkResult {
 		if err := json.Unmarshal([]byte(text), &rep); err != nil || rep.Status == "" || rep.Status == "unsupported" {
 			return nil
 		}
-		r := &checkResult{command: "run_tests", passed: rep.Status == "passed"}
+		r := &checkResult{command: "run_tests", passed: rep.Status == "passed", files: stringArgs(call.Args["files"])}
+		if run, _ := call.Args["run"].(string); strings.TrimSpace(run) != "" {
+			r.filter, r.command = run, fmt.Sprintf("run_tests run=%q", run)
+		}
 		// The npm fallback reports no counts, only the exit code.
 		if rep.Status == "no_tests" || rep.Status == "passed" && rep.Passed == 0 && rep.Framework != "npm" {
 			r.passed, r.detail = false, "ran no tests"
@@ -265,7 +282,8 @@ func classifyCheck(call llm.ToolCall, text string) *checkResult {
 			return nil
 		}
 		code, _ := strconv.Atoi(m[1])
-		r := &checkResult{command: cmd, passed: code == 0, detail: fmt.Sprintf("exited with code %d", code)}
+		r := &checkResult{command: cmd, passed: code == 0, detail: fmt.Sprintf("exited with code %d", code),
+			filter: strings.TrimSpace(testFilter.FindString(cmd))}
 		if r.passed && noTestsRan.MatchString(text) {
 			r.passed, r.detail = false, "ran no tests"
 		}
@@ -315,6 +333,29 @@ func fileList(files []string) string {
 	default:
 		return fmt.Sprintf("`%s` and %d more files", strings.Join(files[:5], "`, `"), len(files)-5)
 	}
+}
+
+func testFileList(files []string) string {
+	if len(files) == 0 {
+		return "the same tests"
+	}
+	return fileList(files)
+}
+
+// stringArgs reads a tool argument holding a list of strings.
+func stringArgs(v any) []string {
+	var out []string
+	switch xs := v.(type) {
+	case []string:
+		out = append(out, xs...)
+	case []any:
+		for _, x := range xs {
+			if s, ok := x.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
 }
 
 func clipLine(s string, n int) string {
