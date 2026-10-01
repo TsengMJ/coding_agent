@@ -75,6 +75,20 @@ FROM dcode_threads WHERE thread_id = $1`, threadID)
 	return &info, nil
 }
 
+func (s *PostgresStore) SetTitle(ctx context.Context, threadID, title string) (*Info, error) {
+	row := s.pool.QueryRow(ctx, `
+UPDATE dcode_threads SET title = $2 WHERE thread_id = $1
+RETURNING thread_id, cwd, title, created_at, updated_at, message_count, model`, threadID, title)
+	info, err := scanInfo(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sessions: rename %s: %w", threadID, err)
+	}
+	return &info, nil
+}
+
 func (s *PostgresStore) List(ctx context.Context, f Filter) ([]Info, error) {
 	limit := f.Limit
 	if limit <= 0 {

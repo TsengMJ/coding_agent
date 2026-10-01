@@ -36,6 +36,7 @@ var (
 //	POST /runs            RunRequest -> NDJSON stream of Event, ending in done or error
 //	GET  /threads         ?cwd=&limit= -> []sessions.Info
 //	GET  /threads/{id}    -> ThreadState (404 when unknown)
+//	PATCH /threads/{id}    {"title":"..."} -> sessions.Info
 //	GET  /threads/{id}/trace -> trace.Trace (model call summaries, diffs, subagent messages)
 //	GET  /threads/{id}/trace/llm/{seq} -> trace.LLMCallDetail (404 when unknown)
 //	POST /threads/{id}/compact -> CompactResult (404 unknown, 409 busy/pending/too short)
@@ -87,6 +88,21 @@ func NewHandler(srv Server) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, ts)
+	})
+	mux.HandleFunc("PATCH /threads/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Title string `json:"title"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("decode title: %w", err))
+			return
+		}
+		info, err := srv.RenameThread(r.Context(), r.PathValue("id"), body.Title)
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, info)
 	})
 	mux.HandleFunc("GET /threads/{id}/usage", func(w http.ResponseWriter, r *http.Request) {
 		u, err := srv.GetUsage(r.Context(), r.PathValue("id"))

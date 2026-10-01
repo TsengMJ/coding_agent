@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Scope is a configuration tier, lowest to highest precedence.
@@ -24,7 +25,10 @@ const (
 // Settings is the resolved configuration used by the CLI.
 type Settings struct {
 	// Model is the default "provider:model" (models.default, $DCODE_MODEL).
-	Model              string
+	Model string
+	// WebModel ("provider:model", models.web) reads fetched pages and runs
+	// the web-researcher; empty uses the run's model.
+	WebModel           string
 	SummarizationModel string
 	ReasoningEffort    string
 	// ApprovalMode is ApprovalManual or ApprovalYolo (startup.mode, default yolo).
@@ -44,6 +48,12 @@ type Settings struct {
 	// WebSearchAPIKey is the Brave Search API key ($BRAVE_API_KEY); empty
 	// leaves web_search out.
 	WebSearchAPIKey string
+	// Context7APIKey ($CONTEXT7_API_KEY) enables resolve_library_id and
+	// query_docs.
+	Context7APIKey string
+	// ResultsTTL is how long evicted tool results stay readable
+	// (storage.results_ttl); zero uses the default.
+	ResultsTTL time.Duration
 	// Raw holds every key read from config.toml.
 	Raw map[string]any
 }

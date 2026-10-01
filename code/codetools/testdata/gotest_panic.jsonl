@@ -1,0 +1,16 @@
+{"Action":"start","Package":"example.com/t2j/c"}
+{"Action":"run","Package":"example.com/t2j/c","Test":"TestPanic"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"=== RUN   TestPanic\n","OutputType":"frame"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"--- FAIL: TestPanic (0.00s)\n","OutputType":"frame"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"panic: assignment to entry in nil map [recovered, repanicked]\n"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"\n"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"goroutine 34 [running]:\n"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"testing.tRunner.func1.2({0xa024780, 0xa05be90})\n"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"\t/usr/local/Cellar/go/1.27.1/libexec/src/testing/testing.go:2123 +0x232\n"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"panic({0xa024780?, 0xa05be90?})\n"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"\t/usr/local/Cellar/go/1.27.1/libexec/src/runtime/panic.go:859 +0x125\n"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"example.com/t2j/c.TestPanic(0x853731d0248?)\n"}
+{"Action":"output","Package":"example.com/t2j/c","Test":"TestPanic","Output":"\t/tmp/t2j/c/c_test.go:7 +0x28\n"}
+{"Action":"fail","Package":"example.com/t2j/c","Test":"TestPanic"}
+{"Action":"output","Package":"example.com/t2j/c","Output":"FAIL\texample.com/t2j/c\t1.345s\n","OutputType":"frame"}
+{"Action":"fail","Package":"example.com/t2j/c"}

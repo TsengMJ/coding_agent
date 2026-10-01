@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -16,13 +17,19 @@ const (
 	ShellAllowListEnvVar = "DEEPAGENTS_CODE_SHELL_ALLOW_LIST"
 	// BraveAPIKeyEnvVar enables the web_search tool (shell env or .env).
 	BraveAPIKeyEnvVar = "BRAVE_API_KEY"
+	// Context7APIKeyEnvVar enables the Context7 documentation tools.
+	Context7APIKeyEnvVar = "CONTEXT7_API_KEY"
 )
 
 // fileConfig is the part of config.toml with dedicated Settings fields.
 type fileConfig struct {
 	Models struct {
 		Default string `toml:"default"`
+		Web     string `toml:"web"`
 	} `toml:"models"`
+	Storage struct {
+		ResultsTTL string `toml:"results_ttl"`
+	} `toml:"storage"`
 	Startup struct {
 		Mode string `toml:"mode"`
 	} `toml:"startup"`
@@ -90,6 +97,14 @@ func loadUserFile(path string, s *Settings) error {
 	}
 	s.Raw = raw
 	s.Model = fc.Models.Default
+	s.WebModel = fc.Models.Web
+	if v := fc.Storage.ResultsTTL; v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("config %s: storage.results_ttl must be a positive duration such as \"168h\", got %q", path, v)
+		}
+		s.ResultsTTL = d
+	}
 	s.ServerURL = fc.Server.URL
 	s.MaxRetries = fc.Retries.MaxRetries
 	if s.MaxRetries != nil && *s.MaxRetries < 0 {
@@ -158,6 +173,7 @@ func applyEnv(s *Settings, getenv func(string) string) error {
 		s.ServerURL = v
 	}
 	s.WebSearchAPIKey = getenv(BraveAPIKeyEnvVar)
+	s.Context7APIKey = getenv(Context7APIKeyEnvVar)
 	if v := getenv(ShellAllowListEnvVar); v != "" {
 		if err := applyAllowList(s, v); err != nil {
 			return fmt.Errorf("$%s: %w", ShellAllowListEnvVar, err)

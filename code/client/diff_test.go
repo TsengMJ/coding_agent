@@ -73,6 +73,26 @@ func TestActionDiffIsCapped(t *testing.T) {
 	}
 }
 
+func TestActionDiffApplyPatch(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.go", "package a\n\nvar x = 1\n")
+	patch := "*** Begin Patch\n*** Update File: /a.go\n@@\n-var x = 1\n+var x = 2\n*** Add File: /b.go\n+package a\n*** End Patch"
+	d := ActionDiff(hitl.ActionRequest{Name: "apply_patch", Args: map[string]any{"patch": patch}}, dir)
+	for _, want := range []string{"--- /a.go", "-var x = 1", "+var x = 2", " package a", "--- /dev/null", "+++ /b.go"} {
+		if !strings.Contains(d, want) {
+			t.Fatalf("diff missing %q:\n%s", want, d)
+		}
+	}
+}
+
+func TestActionPreviewInApplyPatchFallsBackToPatch(t *testing.T) {
+	patch := "*** Begin Patch\n*** Update File: /missing.go\n-x\n+y\n*** End Patch"
+	req := hitl.ActionRequest{Name: "apply_patch", Args: map[string]any{"patch": patch}}
+	if got := ActionPreviewIn(req, t.TempDir()); !strings.Contains(got, "*** Update File: /missing.go") {
+		t.Fatalf("preview = %q", got)
+	}
+}
+
 func TestActionPreviewInFallsBackForExecute(t *testing.T) {
 	req := hitl.ActionRequest{Name: "execute", Args: map[string]any{"command": "go test ./..."}}
 	if got := ActionPreviewIn(req, t.TempDir()); got != "$ go test ./..." {

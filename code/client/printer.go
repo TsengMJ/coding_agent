@@ -14,7 +14,7 @@ import (
 )
 
 // toolCallArgKeys lists, in priority order, the argument shown for a tool call.
-var toolCallArgKeys = []string{"file_path", "command", "path", "pattern", "query", "url"}
+var toolCallArgKeys = []string{"file_path", "command", "path", "pattern", "library_name", "query", "url", "task_id"}
 
 // printer renders run events as plain text: assistant text on out, tool
 // activity on errw.
@@ -74,6 +74,11 @@ func ToolCallLine(call llm.ToolCall) string {
 
 // ToolCallArg returns the most informative argument of a tool call, first line only.
 func ToolCallArg(call llm.ToolCall) string {
+	if call.Name == "query_docs" {
+		id, _ := call.Args["library_id"].(string)
+		q, _ := call.Args["query"].(string)
+		return firstLine(id + " · " + q)
+	}
 	for _, key := range toolCallArgKeys {
 		if v, ok := call.Args[key].(string); ok && v != "" {
 			return firstLine(v)

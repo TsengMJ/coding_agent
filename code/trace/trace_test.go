@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tsengmingchun/deepagents_golang/backend"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/tool"
@@ -16,7 +17,12 @@ import (
 
 func newRecorder(t *testing.T) (*Store, *Recorder) {
 	t.Helper()
-	s := NewStore(t.TempDir())
+	return newRecorderOn(t, NewMemoryLog())
+}
+
+func newRecorderOn(t *testing.T, l Log) (*Store, *Recorder) {
+	t.Helper()
+	s := NewStore(l)
 	t.Cleanup(func() { _ = s.Close() })
 	r, err := s.Recorder("thread-1")
 	if err != nil {
@@ -103,7 +109,8 @@ func TestLoadSummarizesCallsWithoutBodies(t *testing.T) {
 }
 
 func TestRepeatedMessagesAreStoredOnce(t *testing.T) {
-	s, r := newRecorder(t)
+	l := NewMemoryLog()
+	_, r := newRecorderOn(t, l)
 	sys := llm.NewSystemMessage("UNIQUE-PROMPT " + strings.Repeat("long system prompt ", 200))
 	for i := range 5 {
 		msgs := []llm.Message{sys}
@@ -114,11 +121,11 @@ func TestRepeatedMessagesAreStoredOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	raw, err := os.ReadFile(s.path("thread-1"))
-	if err != nil {
-		t.Fatal(err)
+	var raw strings.Builder
+	for _, line := range l.Lines("thread-1") {
+		raw.Write(line)
 	}
-	if n := strings.Count(string(raw), "UNIQUE-PROMPT"); n != 1 {
+	if n := strings.Count(raw.String(), "UNIQUE-PROMPT"); n != 1 {
 		t.Fatalf("system prompt stored %d times, want 1", n)
 	}
 }
@@ -146,18 +153,22 @@ func TestNewFromMarksMessagesAddedSincePreviousCall(t *testing.T) {
 }
 
 func TestReopenedRecorderContinuesSequence(t *testing.T) {
-	dir := t.TempDir()
-	first := NewStore(dir)
-	r, _ := first.Recorder("t")
+	testReopen(t, NewMemoryLog(), "t")
+}
+
+func testReopen(t *testing.T, l Log, thread string) {
+	t.Helper()
+	first := NewStore(l)
+	r, _ := first.Recorder(thread)
 	msg := llm.NewUserMessage("same")
 	if _, err := r.RecordLLMCall(call(msg)); err != nil {
 		t.Fatal(err)
 	}
 	_ = first.Close()
 
-	second := NewStore(dir)
+	second := NewStore(l)
 	defer second.Close()
-	r2, err := second.Recorder("t")
+	r2, err := second.Recorder(thread)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,11 +179,11 @@ func TestReopenedRecorderContinuesSequence(t *testing.T) {
 	if seq != 2 {
 		t.Fatalf("seq after reopen = %d, want 2", seq)
 	}
-	tr, _ := second.Load("t")
+	tr, _ := second.Load(thread)
 	if tr.LLMCalls[1].NewFrom != 1 {
 		t.Fatalf("new_from after reopen = %d, want 1", tr.LLMCalls[1].NewFrom)
 	}
-	if _, err := second.LLMCall("t", 2); err != nil {
+	if _, err := second.LLMCall(thread, 2); err != nil {
 		t.Fatalf("detail after reopen: %v", err)
 	}
 }
@@ -188,12 +199,37 @@ func TestUnknownCallAndThread(t *testing.T) {
 	}
 }
 
-func TestThreadIDCannotEscapeDirectory(t *testing.T) {
-	s := NewStore(t.TempDir())
-	for _, id := range []string{"../../etc/passwd", "a/b", ".hidden", ""} {
-		if p := s.path(id); filepath.Dir(p) != s.dir {
-			t.Errorf("path(%q) = %s, outside %s", id, p, s.dir)
-		}
+func TestPostgresLog(t *testing.T) {
+	conn := os.Getenv("POSTGRES_CONN_STRING")
+	if conn == "" {
+		t.Skip("POSTGRES_CONN_STRING not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	l, err := NewPostgresLog(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := "trace-test-" + t.Name() + "-" + time.Now().Format(time.RFC3339Nano)
+	t.Cleanup(func() { _ = l.DeleteThread(ctx, thread) })
+
+	testReopen(t, l, thread)
+
+	s := NewStore(l)
+	r, err := s.Recorder(thread)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.RecordLLMCall(call(llm.NewUserMessage("nul \x00 byte"))); err != nil {
+		t.Fatalf("record with NUL: %v", err)
+	}
+	d, err := s.LLMCall(thread, 3)
+	if err != nil || d.Messages[0].Text() != "nul \x00 byte" {
+		t.Fatalf("detail = %+v, %v", d, err)
 	}
 }
 
@@ -308,5 +344,18 @@ func TestCountChangesIgnoresHeadersOnly(t *testing.T) {
 	d := "--- a\n+++ b\n@@ -1,2 +1,2 @@\n--- removed sql comment\n+++ added\n ctx\n"
 	if a, r := countChanges(d); a != 1 || r != 1 {
 		t.Fatalf("added, removed = %d, %d; want 1, 1", a, r)
+	}
+}
+
+func TestLabeledModelRecordsUnderToolCall(t *testing.T) {
+	s, r := newRecorder(t)
+	m := Labeled(WrapModel(llm.NewFakeModel(llm.NewAssistantMessage("answer"))), WebExtract)
+	ctx := tool.WithCallID(WithRecorder(context.Background(), r), "call-7")
+	if _, err := m.Generate(ctx, llm.ChatRequest{Messages: []llm.Message{llm.NewUserMessage("page")}}); err != nil {
+		t.Fatal(err)
+	}
+	tr, _ := s.Load("thread-1")
+	if len(tr.LLMCalls) != 1 || strings.Join(tr.LLMCalls[0].Namespace, "/") != "web_extract:call-7" {
+		t.Fatalf("calls = %+v", tr.LLMCalls)
 	}
 }

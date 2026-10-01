@@ -66,7 +66,7 @@ func near(a, b float64) bool { d := a - b; return d < 1e-12 && d > -1e-12 }
 
 func TestServiceGetUsageAcrossModels(t *testing.T) {
 	svc, _ := newService(t, replyWithUsage("default", 1000, 10, 0))
-	alt := llm.NewFakeModel(replyWithUsage("alt", 2000, 20, 0)).WithProfile(llm.ModelProfile{MaxInputTokens: 10000})
+	alt := llm.NewFakeModel(replyWithUsage("alt", 2000, 20, 0)).WithProfile(llm.ModelProfile{MaxInputTokens: 50000})
 	svc.newModel = func(string) (llm.ChatModel, error) { return alt, nil }
 	svc.prices = cost.Table{"fake": {Input: 1, Output: 1}}
 	cwd := t.TempDir()
@@ -82,7 +82,7 @@ func TestServiceGetUsageAcrossModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Model != "server-test:alt" || u.ContextTokens != 2000 || u.ContextLimit != 10000 || u.ContextPercent != 20 {
+	if u.Model != "server-test:alt" || u.ContextTokens != 2000 || u.ContextLimit != 50000 || u.ContextPercent != 4 {
 		t.Fatalf("usage = %+v", u)
 	}
 	if len(u.Models) != 2 || u.Models[0].Model != "fake:fake" || u.Models[1].Model != "server-test:alt" {

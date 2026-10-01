@@ -13,6 +13,8 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
+	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 )
 
 // DefaultModelSpec is used when neither Config.ModelSpec nor DCODE_MODEL is set.
@@ -62,7 +64,19 @@ type RunRequest struct {
 	// Model ("provider:model") runs this request on another model; empty
 	// uses the model the thread last ran with, else the server default.
 	Model string `json:"model,omitempty"`
+	// Mode is ModeAgent (default) or ModePlan; plan mode is read-only and
+	// needs Interactive. Clients send it on resumes too.
+	Mode string `json:"mode,omitempty"`
+	// BuildPlan starts implementing the thread's current plan; it needs
+	// Messages and agent mode.
+	BuildPlan bool `json:"build_plan,omitempty"`
 }
+
+// Run modes.
+const (
+	ModeAgent = "agent"
+	ModePlan  = planmode.ModePlan
+)
 
 // Resume answers the pending review of a thread, one decision per action request.
 type Resume struct {
@@ -113,6 +127,10 @@ type ThreadState struct {
 	Interrupts []Interrupt   `json:"interrupts,omitempty"`
 	// Model is the spec the thread runs with (its last model, else the default).
 	Model string `json:"model,omitempty"`
+	// Todos is the current write_todos list.
+	Todos []todolist.Todo `json:"todos,omitempty"`
+	// Plan is the thread's latest plan from plan mode.
+	Plan *planmode.Plan `json:"plan,omitempty"`
 }
 
 // Server is what clients talk to, in-process (Service) or over HTTP.
@@ -123,6 +141,8 @@ type Server interface {
 	// GetThread returns nil when the thread has no state.
 	GetThread(ctx context.Context, threadID string) (*ThreadState, error)
 	ListThreads(ctx context.Context, f sessions.Filter) ([]sessions.Info, error)
+	// RenameThread updates a saved thread's title.
+	RenameThread(ctx context.Context, threadID, title string) (*sessions.Info, error)
 	// Compact summarizes older messages of an idle thread so later runs
 	// send the model a shorter history.
 	Compact(ctx context.Context, threadID string) (*CompactResult, error)

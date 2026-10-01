@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/tsengmingchun/deepagents_golang/code/cache"
 	"github.com/tsengmingchun/deepagents_golang/tool"
 )
 
@@ -118,7 +119,7 @@ func TestBraveSendsOnlyGivenArguments(t *testing.T) {
 		t.Fatal(out)
 	}
 	r := s.requests[0]
-	if got := r.URL.RawQuery; got != "q=golang" {
+	if got := r.URL.RawQuery; got != "count=8&q=golang" {
 		t.Errorf("query = %q", got)
 	}
 	if r.Header.Get("Cache-Control") != "" || r.Header.Get("X-Loc-City") != "" {
@@ -164,7 +165,7 @@ func TestBraveTreatsEmptyValuesAsUnset(t *testing.T) {
 		t.Fatal(out)
 	}
 	r := s.requests[0]
-	if got := r.URL.RawQuery; got != "q=golang" {
+	if got := r.URL.RawQuery; got != "count=8&q=golang" {
 		t.Errorf("query = %q", got)
 	}
 	for h := range r.Header {
@@ -194,9 +195,9 @@ func TestBraveValidatesBeforeSending(t *testing.T) {
 		"bad lat":         {map[string]any{"query": "x", "location": map[string]any{"lat": float64(91)}}, "location.lat"},
 		"location field":  {map[string]any{"query": "x", "location": map[string]any{"zip": "1"}}, `unknown location field "zip"`},
 		"bool type":       {map[string]any{"query": "x", "summary": "yes"}, "summary must be a boolean"},
-		"goggle site":     {map[string]any{"query": "x", "goggles": []any{"go.dev"}}, "use site:"},
-		"goggle page url": {map[string]any{"query": "x", "goggles": []any{"https://go.dev"}}, "use site:"},
-		"goggle syntax":   {map[string]any{"query": "x", "goggles": []any{"$boost=5,site:go.dev"}}, "use site:"},
+		"goggle site":     {map[string]any{"query": "x", "goggles": []any{"go.dev"}}, "put site:example.com in query"},
+		"goggle page url": {map[string]any{"query": "x", "goggles": []any{"https://go.dev"}}, "put site:example.com in query"},
+		"goggle syntax":   {map[string]any{"query": "x", "goggles": []any{"$boost=5,site:go.dev"}}, "use '=', not ':'"},
 	} {
 		out, isErr := run(t, tl, tc.args)
 		if !isErr || !strings.Contains(out, tc.want) {
@@ -365,5 +366,47 @@ func TestWebSearchSchemaIsClosed(t *testing.T) {
 	}
 	if _, ok := props["goggles_id"]; ok {
 		t.Error("deprecated goggles_id must not be exposed")
+	}
+}
+
+func TestBraveDomainFiltersBecomeSiteOperators(t *testing.T) {
+	s, tl := newBraveServer(t, map[string]func(http.ResponseWriter, *http.Request){"/res/v1/web/search": jsonReply(simpleWeb)})
+	out, isErr := run(t, tl, map[string]any{"query": "context api", "allowed_domains": []any{"go.dev", "pkg.go.dev"},
+		"blocked_domains": []any{"w3schools.com"}})
+	if isErr {
+		t.Fatal(out)
+	}
+	if got := s.requests[0].URL.Query().Get("q"); got != "context api (site:go.dev OR site:pkg.go.dev) -site:w3schools.com" {
+		t.Fatalf("q = %q", got)
+	}
+}
+
+func TestBraveRejectsBadDomains(t *testing.T) {
+	_, tl := newBraveServer(t, nil)
+	for _, d := range []any{"https://go.dev/doc", "go dev", ""} {
+		out, isErr := run(t, tl, map[string]any{"query": "x", "allowed_domains": []any{d}})
+		if !isErr || !strings.Contains(out, "domain") {
+			t.Errorf("%q: %v %s", d, isErr, out)
+		}
+	}
+}
+
+func TestBraveCachesResults(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		jsonReply(simpleWeb)(w, r)
+	}))
+	defer srv.Close()
+	tl := NewBraveSearch(BraveOptions{APIKey: "k", BaseURL: srv.URL + "/res/v1", Client: srv.Client(), Cache: cache.NewMemory()})
+	first, _ := run(t, tl, map[string]any{"query": "golang"})
+	second, _ := run(t, tl, map[string]any{"query": "golang"})
+	if hits != 1 || first != second {
+		t.Fatalf("hits = %d", hits)
+	}
+	run(t, tl, map[string]any{"query": "golang", "count": float64(3)})
+	run(t, tl, map[string]any{"query": "golang", "no_cache": true})
+	if hits != 3 {
+		t.Fatalf("different arguments or no_cache reused the cache: hits = %d", hits)
 	}
 }

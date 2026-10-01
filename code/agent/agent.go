@@ -9,17 +9,23 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/tsengmingchun/deepagents_golang"
 	core "github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/backend"
+	"github.com/tsengmingchun/deepagents_golang/code/askuser"
+	"github.com/tsengmingchun/deepagents_golang/code/cache"
+	"github.com/tsengmingchun/deepagents_golang/code/codetools"
 	"github.com/tsengmingchun/deepagents_golang/code/config"
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
 	"github.com/tsengmingchun/deepagents_golang/middleware/skills"
+	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 	rt "github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
@@ -40,18 +46,28 @@ type Options struct {
 	UserDir string
 	// Backend defaults to a LocalShellBackend rooted at Cwd in virtual mode.
 	Backend backend.Backend
-	// ExtraTools are added after WebTools(Settings).
+	// ExtraTools are added after the web tools.
 	ExtraTools []tool.Tool
+	// WebModel reads fetched pages for fetch_url prompts; nil uses Model.
+	WebModel llm.ChatModel
+	// Cache holds web lookups; nil disables caching.
+	Cache cache.Cache
 	// NoWebTools leaves out web_search and fetch_url (offline evaluation).
 	NoWebTools   bool
 	Checkpointer rt.Checkpointer
 	Store        rt.Store
+	// Plans saves plan mode's plans; required when Interactive.
+	Plans planmode.Store
+	// Artifacts holds offloaded tool results, fetched pages and history;
+	// nil keeps them in the Backend under ArtifactsRoot.
+	Artifacts *Artifacts
 	// AutoApprove disables human review of tool calls (YOLO mode).
 	AutoApprove bool
 	// Interactive tailors the prompt for a human in the loop; false means headless.
 	Interactive bool
-	// ProjectContext is the rendered "Project Context" section;
-	// CreateCLIAgent fills it from LocalContext.
+	// NoVerifyGate leaves out the VerifyGate a headless run gets by default.
+	NoVerifyGate bool
+	// ProjectContext overrides the live "Project Context" section when set.
 	ProjectContext string
 	// WorkingDirSection replaces the rendered working-directory and path
 	// section, for a Backend whose commands do not run in Cwd on this host.
@@ -70,13 +86,13 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if b == nil {
 		b = NewBackend(opts.Cwd)
 	}
-	b = withHostRoutes(b, userSkillRoots(opts.UserDir, opts.AgentName))
+	b = withHostRoutes(b, userSkillRoots(opts.UserDir, opts.AgentName), opts.Artifacts, opts.Cwd)
 	skillSources := existingSkillSources(ctx, b, SkillSources(opts.UserDir, opts.AgentName))
 	b = trace.WrapBackend(b)
-	if opts.ProjectContext == "" {
-		opts.ProjectContext = LocalContext(ctx, opts.Cwd)
-	}
-	prompt, err := SystemPrompt(opts)
+	promptOpts := opts
+	promptOpts.Model = nil
+	promptOpts.ProjectContext = ""
+	prompt, err := SystemPrompt(promptOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +104,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	mws := []core.Middleware{summ, todolist.New("", ""), mem}
+	mws := []core.Middleware{summ, todolist.New("", ""), mem, &liveContext{cwd: opts.Cwd, model: opts.Model, project: opts.ProjectContext}}
 	if len(skillSources) > 0 {
 		sk, err := skills.New(skills.Options{Backend: b, Sources: skillSources})
 		if err != nil {
@@ -96,9 +112,36 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		}
 		mws = append(mws, sk)
 	}
+	if !opts.Interactive && !opts.NoVerifyGate {
+		mws = append(mws, VerifyGate{})
+	}
 	var tools []tool.Tool
+	webModel := opts.WebModel
+	if webModel == nil {
+		webModel = opts.Model
+	}
+	var subs []subagents.Spec
 	if !opts.NoWebTools {
-		tools = WebTools(opts.Settings)
+		tools = WebTools(WebOptions{
+			Settings: opts.Settings, Extractor: trace.Labeled(webModel, trace.WebExtract),
+			Pages: opts.Artifacts.WebPages(opts.Cwd), Cache: opts.Cache,
+		})
+		if hasWebResearcher(opts) {
+			subs = append(subs, webResearcher(webModel, tools))
+		}
+	}
+	tools = append(tools, codetools.New(b)...)
+	interrupts := map[string]hitl.InterruptOnConfig{}
+	if !opts.AutoApprove {
+		interrupts = InterruptOn(opts.Settings)
+	}
+	if opts.Interactive {
+		pm, err := planmode.New(planmode.Options{Store: opts.Plans})
+		if err != nil {
+			return nil, err
+		}
+		mws = append(mws, pm, askuser.Middleware{})
+		interrupts[askuser.ToolName] = askuser.InterruptOn()
 	}
 	dopts := []deepagents.Option{
 		deepagents.WithModel(opts.Model),
@@ -109,9 +152,11 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		deepagents.WithCheckpointer(opts.Checkpointer),
 		deepagents.WithStore(opts.Store),
 		deepagents.WithName(opts.AgentName),
+		deepagents.WithSubAgents(subs...),
+		deepagents.WithBackgroundTasks(),
 	}
-	if !opts.AutoApprove {
-		dopts = append(dopts, deepagents.WithInterruptOn(InterruptOn(opts.Settings)))
+	if len(interrupts) > 0 {
+		dopts = append(dopts, deepagents.WithInterruptOn(interrupts))
 	}
 	return deepagents.CreateDeepAgent(dopts...)
 }
@@ -120,33 +165,56 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 // commands or reach the network. Per run, hitl.AutoApproveKey in RunConfig.Configurable skips it.
 func DefaultInterruptOn() map[string]hitl.InterruptOnConfig {
 	return map[string]hitl.InterruptOnConfig{
-		"write_file": {},
-		"edit_file":  {},
+		"write_file":  {},
+		"edit_file":   {},
+		"apply_patch": {},
 		"delete": {
 			AllowedDecisions: []hitl.DecisionType{hitl.DecisionApprove, hitl.DecisionReject},
 			Description:      "Action: Delete file or directory",
 		},
-		"execute":    {},
-		"web_search": {Describe: FormatWebSearchDescription},
-		"fetch_url":  {Describe: FormatFetchURLDescription},
+		"execute":                 {},
+		codetools.RunTestsName:    {},
+		codetools.DiagnosticsName: {},
+		"web_search":              {Describe: FormatWebSearchDescription},
+		"fetch_url":               {Describe: FormatFetchURLDescription},
+		"resolve_library_id":      {Describe: FormatContext7Description},
+		"query_docs":              {Describe: FormatContext7Description},
+		"task":                    {When: isWebResearch, Describe: FormatWebResearchDescription},
 	}
+}
+
+// runnerTools run fixed commands whose arguments the tools validate; which
+// runner depends on the project, so the allow list must permit all of them.
+var runnerTools = map[string][]string{
+	codetools.RunTestsName:    {"go", "npx", "npm", "node", "python3", "python"},
+	codetools.DiagnosticsName: {"go", "npx", "node", "python3", "python", "ruff"},
 }
 
 // InterruptOn is DefaultInterruptOn narrowed by the shell allow list:
 // allow-listed execute calls run without review, and "all" drops review of
-// execute entirely.
+// execute entirely. run_tests and diagnostics skip review when every runner
+// they may start is allowed.
 func InterruptOn(s *config.Settings) map[string]hitl.InterruptOnConfig {
 	cfg := DefaultInterruptOn()
 	switch {
 	case s == nil:
 	case s.ShellAllowAll:
 		delete(cfg, "execute")
+		for name := range runnerTools {
+			delete(cfg, name)
+		}
 	case len(s.ShellAllowList) > 0:
 		allow := s.ShellAllowList
 		cfg["execute"] = hitl.InterruptOnConfig{When: func(call llm.ToolCall) bool {
 			cmd, _ := call.Args["command"].(string)
 			return !IsShellCommandAllowed(cmd, allow, false)
 		}}
+		for name, runners := range runnerTools {
+			if slices.ContainsFunc(runners, func(r string) bool { return !IsShellCommandAllowed(r, allow, false) }) {
+				continue
+			}
+			delete(cfg, name)
+		}
 	}
 	return cfg
 }

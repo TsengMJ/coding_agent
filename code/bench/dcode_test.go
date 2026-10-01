@@ -51,8 +51,8 @@ func TestDcodeSolverCapturesPatchAndMetrics(t *testing.T) {
 	}
 	model := llm.NewFakeModel(
 		toolCall("c1", "read_file", map[string]any{"file_path": "/README"}),
-		toolCall("c2", "execute", map[string]any{"command": "echo go test ./..."}),
-		toolCall("c3", "write_file", map[string]any{"file_path": "/fix.txt", "content": "fixed\n"}),
+		toolCall("c2", "write_file", map[string]any{"file_path": "/fix.txt", "content": "fixed\n"}),
+		toolCall("c3", "execute", map[string]any{"command": "echo go test ./..."}),
 		llm.NewAssistantMessage("done"),
 	)
 	d := newFakeDocker()
@@ -64,11 +64,13 @@ func TestDcodeSolverCapturesPatchAndMetrics(t *testing.T) {
 	}
 	work := filepath.Join(t.TempDir(), "work")
 	logDir := t.TempDir()
+	traces := trace.NewMemoryLog()
 	s := &DcodeSolver{
 		NewModel:      func() (llm.ChatModel, error) { return model, nil },
 		Prices:        cost.Table{"fake:fake": {Input: 1, Output: 10}},
 		KeepWorkspace: true,
 		DockerBinary:  hostDocker(t),
+		Traces:        traces,
 	}
 	res, err := s.Solve(context.Background(), task, SolveEnv{RunID: "r", WorkDir: work, LogDir: logDir, Docker: d})
 	if err != nil {
@@ -92,11 +94,12 @@ func TestDcodeSolverCapturesPatchAndMetrics(t *testing.T) {
 	if m.Steps != 4 || m.ToolCalls["write_file"] != 1 || m.ExecuteCalls != 1 || m.TestRuns != 1 || m.FilesRead != 1 {
 		t.Fatalf("metrics %+v", m)
 	}
-	if m.FirstEditStep == nil || *m.FirstEditStep != 3 || m.PeakContextTokens != 1000 || m.CostUSD == nil || m.AgentMS <= 0 {
+	if m.FirstEditStep == nil || *m.FirstEditStep != 2 || m.PeakContextTokens != 1000 || m.CostUSD == nil || m.AgentMS <= 0 {
 		t.Fatalf("metrics %+v", m)
 	}
-	if _, err := os.Stat(res.TracePath); err != nil {
-		t.Fatalf("trace: %v", err)
+	thread, ok := strings.CutPrefix(res.TracePath, TracePrefix)
+	if !ok || len(traces.Lines(thread)) == 0 {
+		t.Fatalf("trace %q not recorded", res.TracePath)
 	}
 	for _, tools := range model.Requests()[0].Tools {
 		if tools.Name == "fetch_url" || tools.Name == "web_search" {
@@ -114,7 +117,7 @@ func TestDcodeSolverFallsBackToTestbed(t *testing.T) {
 	task, _ := LoadTask(writeTask(t, root, "instance_a"))
 	d := &copyOutFailDocker{fakeDocker: newFakeDocker(), fail: "/app/."}
 	s := &DcodeSolver{NewModel: func() (llm.ChatModel, error) { return llm.NewFakeModel(llm.NewAssistantMessage("done")), nil },
-		DockerBinary: hostDocker(t)}
+		DockerBinary: hostDocker(t), Traces: trace.NewMemoryLog()}
 	if _, err := s.Solve(context.Background(), task, SolveEnv{RunID: "r", WorkDir: filepath.Join(t.TempDir(), "w"), Docker: d}); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +125,48 @@ func TestDcodeSolverFallsBackToTestbed(t *testing.T) {
 		if target != "/testbed" {
 			t.Fatalf("mounted at %s", target)
 		}
+	}
+}
+
+func TestDcodeSolverRefreshesGitIndexBeforeTheAgent(t *testing.T) {
+	root := t.TempDir()
+	task, _ := LoadTask(writeTask(t, root, "instance_a"))
+	d := newFakeDocker()
+	model := llm.NewFakeModel(llm.NewAssistantMessage("done"))
+	s := &DcodeSolver{NewModel: func() (llm.ChatModel, error) { return model, nil },
+		DockerBinary: hostDocker(t), Traces: trace.NewMemoryLog()}
+	if _, err := s.Solve(context.Background(), task, SolveEnv{RunID: "r", WorkDir: filepath.Join(t.TempDir(), "w"), Docker: d}); err != nil {
+		t.Fatal(err)
+	}
+	refresh, capture := -1, -1
+	for i, c := range d.calls {
+		switch {
+		case strings.HasSuffix(c, "git update-index -q --refresh"):
+			refresh = i
+		case strings.Contains(c, "git diff --cached"):
+			capture = i
+		}
+	}
+	if refresh < 0 || capture < refresh {
+		t.Fatalf("index refresh must run before the agent and capture: %q", d.calls)
+	}
+}
+
+func TestDcodeSolverFailsWhenGitIndexRefreshFails(t *testing.T) {
+	root := t.TempDir()
+	task, _ := LoadTask(writeTask(t, root, "instance_a"))
+	d := newFakeDocker()
+	d.execHook = func(_ string, spec ExecSpec) (ExecResult, bool) {
+		if strings.Join(spec.Cmd, " ") == "git update-index -q --refresh" {
+			return ExecResult{ExitCode: 128, Stderr: []byte("fatal: not a git repository")}, true
+		}
+		return ExecResult{}, false
+	}
+	s := &DcodeSolver{NewModel: func() (llm.ChatModel, error) { return llm.NewFakeModel(llm.NewAssistantMessage("done")), nil },
+		DockerBinary: hostDocker(t), Traces: trace.NewMemoryLog()}
+	_, err := s.Solve(context.Background(), task, SolveEnv{RunID: "r", WorkDir: filepath.Join(t.TempDir(), "w"), Docker: d})
+	if err == nil || !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("err %v", err)
 	}
 }
 

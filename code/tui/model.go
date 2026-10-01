@@ -16,13 +16,15 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tsengmingchun/deepagents_golang/code/askuser"
 	"github.com/tsengmingchun/deepagents_golang/code/client"
 	"github.com/tsengmingchun/deepagents_golang/code/commands"
 	"github.com/tsengmingchun/deepagents_golang/code/server"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
+	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
+	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 )
 
 // Options configures the TUI.
@@ -74,6 +76,8 @@ const (
 	modeApprove
 	modeReason
 	modePicker
+	// modeAsk answers an ask_user call among the pending requests.
+	modeAsk
 )
 
 type entryKind int
@@ -105,6 +109,8 @@ type entry struct {
 	started time.Time
 	// sub is the subagent run of a task row.
 	sub *subRun
+	// call is the tool call of a tool row.
+	call llm.ToolCall
 }
 
 // Messages delivered to Update.
@@ -140,6 +146,8 @@ type model struct {
 	thread string
 	auto   bool
 	model  client.ModelChoice
+	// runMode is sent as RunRequest.Mode (server.ModeAgent or ModePlan).
+	runMode string
 
 	entries   []entry
 	streaming strings.Builder
@@ -150,6 +158,7 @@ type model struct {
 
 	pending   []hitl.ActionRequest
 	decisions []hitl.Decision
+	ask       *askState
 
 	threads []sessions.Info
 	cursor  int
@@ -322,6 +331,8 @@ func (m *model) key(k tea.KeyMsg) tea.Cmd {
 		return m.reasonKey(k)
 	case modePicker:
 		return m.pickerKey(k)
+	case modeAsk:
+		return m.askKey(k)
 	case modeRunning:
 		if k.Type == tea.KeyCtrlC {
 			m.stopRun()
@@ -420,6 +431,21 @@ func (s tuiSession) SetAutoApprove(on bool) {
 	}
 }
 
+func (s tuiSession) Mode() string { return s.m.runMode }
+
+func (s tuiSession) SetMode(mode string) {
+	s.m.runMode = mode
+	s.m.resetPlaceholder()
+	s.m.info(client.ModeLine(mode))
+}
+
+func (s tuiSession) Build(context.Context) {
+	s.m.runMode = server.ModeAgent
+	s.m.resetPlaceholder()
+	s.m.entries = append(s.m.entries, entry{kind: entryUser, text: client.BuildMessage})
+	s.m.queued = append(s.m.queued, s.m.startRun(client.BuildRequest()))
+}
+
 func (s tuiSession) Model() string { return s.m.model.Current() }
 
 func (s tuiSession) SetModel(spec string) { s.m.model.Override = spec }
@@ -436,6 +462,9 @@ func (s tuiSession) Info(text string) { s.m.info(text) }
 func (m *model) startRun(req server.RunRequest) tea.Cmd {
 	req.ThreadID, req.Cwd, req.AutoApprove, req.Interactive = m.thread, m.opts.Cwd, m.auto, true
 	req.Model = m.model.Override
+	if req.Mode == "" {
+		req.Mode = m.runMode
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	ch := make(chan tea.Msg, 64)
 	srv := m.srv
@@ -519,6 +548,10 @@ func (m *model) message(msg llm.Message) {
 		m.assistant(msg, text)
 	case llm.RoleTool:
 		m.toolResult(msg)
+	case llm.RoleUser:
+		if n, ok := subagents.ParseNotification(msg.Text()); ok {
+			m.taskNotification(n)
+		}
 	}
 }
 
@@ -539,8 +572,8 @@ func (m *model) runEnded(err error) tea.Cmd {
 		m.errorf("%v", err)
 	}
 	if len(m.pending) > 0 && !cancelled && err == nil {
-		m.mode, m.decisions, m.previewIdx = modeApprove, nil, -1
-		return nil
+		m.decisions, m.previewIdx = nil, -1
+		return m.awaitDecision()
 	}
 	switch {
 	case cancelled:
@@ -592,7 +625,7 @@ func (m *model) approveKey(k tea.KeyMsg) tea.Cmd {
 	case k.String() == "a" || k.String() == "y":
 		m.decide(hitl.Decision{Type: hitl.DecisionApprove})
 	case k.String() == "A":
-		for len(m.decisions) < len(m.pending) {
+		for len(m.decisions) < len(m.pending) && m.current().Name != askuser.ToolName {
 			m.decide(hitl.Decision{Type: hitl.DecisionApprove})
 		}
 	case k.String() == "r" || k.String() == "n":
@@ -603,7 +636,7 @@ func (m *model) approveKey(k tea.KeyMsg) tea.Cmd {
 	default:
 		return nil
 	}
-	return m.finishApproval()
+	return m.awaitDecision()
 }
 
 func (m *model) reasonKey(k tea.KeyMsg) tea.Cmd {
@@ -619,7 +652,7 @@ func (m *model) reasonKey(k tea.KeyMsg) tea.Cmd {
 		m.resetPlaceholder()
 		m.mode = modeApprove
 		m.decide(hitl.Decision{Type: hitl.DecisionReject, Message: reason})
-		return m.finishApproval()
+		return m.awaitDecision()
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(k)
@@ -627,15 +660,22 @@ func (m *model) reasonKey(k tea.KeyMsg) tea.Cmd {
 }
 
 func (m *model) resetPlaceholder() {
+	if m.runMode == server.ModePlan {
+		m.input.Placeholder = "Plan mode: describe what to plan (read-only; /build implements the plan, /plan leaves)"
+		return
+	}
 	m.input.Placeholder = "Ask dcode to write code... (Enter to send, /help for commands)"
 }
 
 func (m *model) decide(d hitl.Decision) {
 	req := m.current()
 	title := client.ActionTitle(req)
-	if d.Type == hitl.DecisionApprove {
+	switch d.Type {
+	case hitl.DecisionApprove:
 		m.entries = append(m.entries, entry{kind: entryInfo, text: "approved " + title})
-	} else {
+	case hitl.DecisionRespond:
+		m.entries = append(m.entries, entry{kind: entryInfo, text: d.Message})
+	default:
 		text := "rejected " + title
 		if d.Message != "" {
 			text += ": " + d.Message
@@ -643,6 +683,19 @@ func (m *model) decide(d hitl.Decision) {
 		m.entries = append(m.entries, entry{kind: entryInfo, text: text})
 	}
 	m.decisions = append(m.decisions, d)
+}
+
+// awaitDecision moves to the next pending request: questions for ask_user,
+// the approval box otherwise, and resumes the run once all are decided.
+func (m *model) awaitDecision() tea.Cmd {
+	if len(m.decisions) >= len(m.pending) {
+		return m.finishApproval()
+	}
+	if m.current().Name == askuser.ToolName {
+		return m.enterAsk()
+	}
+	m.mode = modeApprove
+	return nil
 }
 
 // finishApproval resumes the thread once every pending call has a decision.
@@ -700,15 +753,19 @@ func (m *model) threadLoaded(msg threadLoadedMsg) {
 	m.model.Thread = msg.ts.Model
 	m.resetEntries()
 	for _, msg := range msg.ts.Messages {
-		if msg.Role == llm.RoleUser {
+		if msg.Role == llm.RoleUser && !isNotification(msg) {
 			m.entries = append(m.entries, entry{kind: entryUser, text: msg.Text()})
 			continue
 		}
 		m.message(msg)
 	}
 	m.info(fmt.Sprintf("resumed thread %s (%d messages)", msg.id, len(msg.ts.Messages)))
+	if p := msg.ts.Plan; p != nil && p.Status == planmode.StatusDraft {
+		m.info(fmt.Sprintf("this thread has a plan: %s — /build implements it", p.Name))
+	}
 	if len(msg.ts.Interrupts) > 0 {
-		m.pending, m.decisions, m.mode, m.previewIdx = msg.ts.Interrupts[0].ActionRequests, nil, modeApprove, -1
+		m.pending, m.decisions, m.previewIdx = msg.ts.Interrupts[0].ActionRequests, nil, -1
+		m.awaitDecision()
 		return
 	}
 	// Calls without results belong to a run that ended early.
@@ -734,31 +791,6 @@ func (m *model) info(text string) { m.entries = append(m.entries, entry{kind: en
 
 func (m *model) errorf(format string, args ...any) {
 	m.entries = append(m.entries, entry{kind: entryError, text: fmt.Sprintf(format, args...)})
-}
-
-// todoChecklist renders a write_todos call as a checklist instead of its raw
-// JSON arguments.
-func todoChecklist(call llm.ToolCall) (string, bool) {
-	if call.Name != todolist.ToolName {
-		return "", false
-	}
-	todos, err := todolist.ParseTodos(call.Args["todos"])
-	if err != nil {
-		return "", false
-	}
-	var b strings.Builder
-	b.WriteString("todos")
-	for _, t := range todos {
-		mark := "○"
-		switch t.Status {
-		case todolist.StatusInProgress:
-			mark = "▸"
-		case todolist.StatusCompleted:
-			mark = "✓"
-		}
-		fmt.Fprintf(&b, "\n  %s %s", mark, t.Content)
-	}
-	return b.String(), true
 }
 
 func firstLine(s string) string {

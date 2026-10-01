@@ -9,13 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tsengmingchun/deepagents_golang/code/storage"
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 )
 
 func newTracedService(t *testing.T, replies ...llm.Message) *Service {
 	t.Helper()
-	svc, err := New(context.Background(), Config{Model: llm.NewFakeModel(replies...), TraceDir: t.TempDir()})
+	svc, err := New(context.Background(), Config{Storage: storage.NewMemory(), Model: llm.NewFakeModel(replies...), NoVerifyGate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,16 +94,13 @@ func TestServiceTracesModelCallsDiffsAndSubagents(t *testing.T) {
 	}
 }
 
-func TestServiceWithoutTraceDirHasEmptyTrace(t *testing.T) {
+func TestUnknownThreadHasEmptyTrace(t *testing.T) {
 	svc, _ := newService(t, llm.NewAssistantMessage("hi"))
-	if _, err := collect(t, svc, userReq("x", t.TempDir(), "q")); err != nil {
-		t.Fatal(err)
-	}
-	tr, err := svc.GetTrace(context.Background(), "x")
+	tr, err := svc.GetTrace(context.Background(), "nobody")
 	if err != nil || len(tr.LLMCalls) != 0 {
 		t.Fatalf("trace = %+v, %v", tr, err)
 	}
-	if _, err := svc.GetLLMCall(context.Background(), "x", 1); !errors.Is(err, trace.ErrNotFound) {
+	if _, err := svc.GetLLMCall(context.Background(), "nobody", 1); !errors.Is(err, trace.ErrNotFound) {
 		t.Fatalf("GetLLMCall err = %v", err)
 	}
 }

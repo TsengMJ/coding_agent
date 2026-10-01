@@ -32,7 +32,7 @@ func resolve(t *testing.T, p Paths) *Settings {
 }
 
 func clearEnv(t *testing.T) {
-	for _, k := range []string{ModelEnvVar, ServerEnvVar, ShellAllowListEnvVar, BraveAPIKeyEnvVar} {
+	for _, k := range []string{ModelEnvVar, ServerEnvVar, ShellAllowListEnvVar, BraveAPIKeyEnvVar, Context7APIKeyEnvVar} {
 		t.Setenv(k, "")
 	}
 }
@@ -178,5 +178,29 @@ func TestParseShellAllowList(t *testing.T) {
 	}
 	if cmds, all, _ := ParseShellAllowList(" , "); cmds != nil || all {
 		t.Errorf("blank list = %v, %v", cmds, all)
+	}
+}
+
+func TestResolverReadsWebSettings(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(Context7APIKeyEnvVar, "ctx7sk-test")
+	s := resolve(t, writeConfig(t, `
+[models]
+web = "anthropic:claude-haiku-4-5"
+
+[storage]
+results_ttl = "48h"
+`))
+	if s.WebModel != "anthropic:claude-haiku-4-5" || s.Context7APIKey != "ctx7sk-test" || s.ResultsTTL.Hours() != 48 {
+		t.Errorf("settings = %+v", s)
+	}
+}
+
+func TestResolverRejectsBadResultsTTL(t *testing.T) {
+	clearEnv(t)
+	for _, v := range []string{`"soon"`, `"-1h"`} {
+		if _, err := NewResolver(writeConfig(t, "storage.results_ttl = "+v+"\n")); err == nil {
+			t.Errorf("results_ttl = %s accepted", v)
+		}
 	}
 }

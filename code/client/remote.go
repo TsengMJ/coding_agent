@@ -185,6 +185,26 @@ func (r *Remote) ListThreads(ctx context.Context, f sessions.Filter) ([]sessions
 	return list, nil
 }
 
+func (r *Remote) RenameThread(ctx context.Context, threadID, title string) (*sessions.Info, error) {
+	body, err := json.Marshal(map[string]string{"title": title})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := r.do(ctx, http.MethodPatch, "/threads/"+url.PathEscape(threadID), nil, body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+	var info sessions.Info
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("decode renamed thread: %w", err)
+	}
+	return &info, nil
+}
+
 func (r *Remote) Compact(ctx context.Context, threadID string) (*server.CompactResult, error) {
 	resp, err := r.do(ctx, http.MethodPost, "/threads/"+url.PathEscape(threadID)+"/compact", nil, nil)
 	if err != nil {

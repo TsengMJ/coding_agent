@@ -17,6 +17,7 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/code/server"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/storage"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 )
 
@@ -30,7 +31,7 @@ func newTestModel(t *testing.T, srv server.Server, cwd string) *model {
 
 func newService(t *testing.T, replies ...llm.Message) *server.Service {
 	t.Helper()
-	svc, err := server.New(context.Background(), server.Config{Model: llm.NewFakeModel(replies...)})
+	svc, err := server.New(context.Background(), server.Config{Storage: storage.NewMemory(), Model: llm.NewFakeModel(replies...)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,6 +543,30 @@ func TestTaskResultMarksSubagentDoneWithReport(t *testing.T) {
 	}
 }
 
+func TestBackgroundTaskRowFinishesOnNotification(t *testing.T) {
+	m := newTestModel(t, newService(t), t.TempDir())
+	call := taskCall("t1", "research pgx")
+	call.Args["run_in_background"] = true
+	m.message(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{call}})
+	m.message(llm.NewToolMessage("t1", "task", "Started background task t1 (general-purpose)."))
+
+	out := ansi.Strip(m.transcript())
+	if row := lineWith(t, out, "task #1"); !strings.Contains(row, "background") || strings.Contains(row, "✓") {
+		t.Fatalf("started row = %q", row)
+	}
+	if m.runningSubs() != 1 || strings.Contains(out, "thinking") {
+		t.Fatalf("running subs = %d, transcript:\n%s", m.runningSubs(), out)
+	}
+	m.message(llm.NewUserMessage("<task-notification>\n<task-id>t1</task-id>\n<subagent-type>general-purpose</subagent-type>\n<status>completed</status>\n<result>\npgx v5.7 is current\n</result>\n</task-notification>"))
+	out = ansi.Strip(m.transcript())
+	if row := lineWith(t, out, "task #1"); !strings.Contains(row, "✓") {
+		t.Fatalf("finished row = %q", row)
+	}
+	if !strings.Contains(out, "↳ pgx v5.7 is current") || strings.Contains(out, "<task-notification>") || m.runningSubs() != 0 {
+		t.Fatalf("transcript:\n%s", out)
+	}
+}
+
 func TestSubmitShowsThinkingRowUntilTheModelReplies(t *testing.T) {
 	m := newTestModel(t, blockingServer{}, t.TempDir())
 	cmd := m.submit("go")
@@ -630,15 +655,15 @@ func TestBatchSummaryVerdict(t *testing.T) {
 func TestStatusShowsContextShareAndCostCommand(t *testing.T) {
 	reply := llm.NewAssistantMessage("hi")
 	reply.Usage = &llm.Usage{InputTokens: 2500, OutputTokens: 10, TotalTokens: 2510}
-	model := llm.NewFakeModel(reply).WithProfile(llm.ModelProfile{MaxInputTokens: 10000})
-	svc, err := server.New(context.Background(), server.Config{Model: model})
+	model := llm.NewFakeModel(reply).WithProfile(llm.ModelProfile{MaxInputTokens: 50000})
+	svc, err := server.New(context.Background(), server.Config{Storage: storage.NewMemory(), Model: model})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = svc.Close() })
 	m := newTestModel(t, svc, t.TempDir())
 	drain(t, m, m.submit("hello"))
-	if !strings.Contains(m.statusLine(), "context 25%") {
+	if !strings.Contains(m.statusLine(), "context 5%") {
 		t.Fatalf("status line = %q", m.statusLine())
 	}
 	drain(t, m, m.submit("/cost"))

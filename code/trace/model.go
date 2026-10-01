@@ -8,6 +8,7 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/tool"
 )
 
 // Model records every call to the wrapped model made under a ctx carrying
@@ -68,6 +69,39 @@ func (m *Model) Stream(ctx context.Context, req llm.ChatRequest) iter.Seq2[llm.C
 			}
 		}
 	}
+}
+
+// WebExtract is the namespace part of model calls fetch_url makes to read a
+// page.
+const WebExtract = "web_extract"
+
+// Labeled records calls to m under the namespace part
+// "<label>:<tool call id>", so helper calls a tool makes (e.g. WebExtract)
+// show apart from the agent's own. m should already be traced.
+func Labeled(m llm.ChatModel, label string) llm.ChatModel {
+	return labeled{ChatModel: m, label: label}
+}
+
+type labeled struct {
+	llm.ChatModel
+	label string
+}
+
+func (l labeled) scope(ctx context.Context) context.Context {
+	return WithNamespace(ctx, l.label+":"+tool.CallIDFrom(ctx))
+}
+
+// ForContext keeps a run-selected model selectable through the label.
+func (l labeled) ForContext(ctx context.Context) llm.ChatModel {
+	return labeled{ChatModel: llm.ModelForContext(ctx, l.ChatModel), label: l.label}
+}
+
+func (l labeled) Generate(ctx context.Context, req llm.ChatRequest) (*llm.Message, error) {
+	return l.ChatModel.Generate(l.scope(ctx), req)
+}
+
+func (l labeled) Stream(ctx context.Context, req llm.ChatRequest) iter.Seq2[llm.Chunk, error] {
+	return l.ChatModel.Stream(l.scope(ctx), req)
 }
 
 // record stores the call and returns its seq, or 0 when recording failed;

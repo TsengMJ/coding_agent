@@ -9,22 +9,59 @@ import (
 
 	"golang.org/x/net/idna"
 
+	"github.com/tsengmingchun/deepagents_golang/backend"
+	"github.com/tsengmingchun/deepagents_golang/code/cache"
 	"github.com/tsengmingchun/deepagents_golang/code/config"
 	"github.com/tsengmingchun/deepagents_golang/code/tools"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/tool"
 )
 
-// WebTools returns fetch_url, plus web_search when a Brave API key is set.
-func WebTools(s *config.Settings) []tool.Tool {
-	out := []tool.Tool{tools.NewFetchURL()}
-	if hasWebSearch(s) {
-		out = append([]tool.Tool{tools.NewWebSearch(s.WebSearchAPIKey)}, out...)
+// WebOptions configures WebTools.
+type WebOptions struct {
+	Settings *config.Settings
+	// Extractor answers fetch_url prompts; nil leaves prompt out.
+	Extractor llm.ChatModel
+	// Pages keeps fetched pages, shown to file tools under WebDir; nil
+	// keeps none.
+	Pages backend.Backend
+	// Cache holds fetch answers and search results; nil disables caching.
+	Cache cache.Cache
+}
+
+// WebTools returns fetch_url, plus web_search when a Brave API key is set
+// and the Context7 tools when a Context7 API key is set.
+func WebTools(o WebOptions) []tool.Tool {
+	var out []tool.Tool
+	if hasWebSearch(o.Settings) {
+		out = append(out, tools.NewBraveSearch(tools.BraveOptions{APIKey: o.Settings.WebSearchAPIKey, Cache: o.Cache}))
+	}
+	out = append(out, tools.NewFetchURLWith(tools.FetchOptions{
+		Extractor: o.Extractor, Pages: o.Pages, PagesDir: WebDir, Cache: o.Cache,
+	}))
+	if hasContext7(o.Settings) {
+		out = append(out, tools.NewContext7Tools(tools.Context7Options{APIKey: o.Settings.Context7APIKey, Cache: o.Cache})...)
 	}
 	return out
 }
 
 func hasWebSearch(s *config.Settings) bool { return s != nil && s.WebSearchAPIKey != "" }
+
+func hasContext7(s *config.Settings) bool { return s != nil && s.Context7APIKey != "" }
+
+// FormatContext7Description renders the approval text for a Context7 call.
+func FormatContext7Description(call llm.ToolCall) string {
+	var b strings.Builder
+	if name, _ := call.Args["library_name"].(string); name != "" {
+		fmt.Fprintf(&b, "Library: %s\n", name)
+	}
+	if id, _ := call.Args["library_id"].(string); id != "" {
+		fmt.Fprintf(&b, "Library ID: %s\n", id)
+	}
+	q, _ := call.Args["query"].(string)
+	fmt.Fprintf(&b, "Query: %s\n\n⚠  This will send the query to Context7 and use API credits", q)
+	return b.String()
+}
 
 // webSearchDefaultArgs are the arguments summarized on the first line of the
 // approval description rather than listed as extras.
@@ -37,7 +74,7 @@ func FormatWebSearchDescription(call llm.ToolCall) string {
 	if query == "" {
 		query = "unknown"
 	}
-	count := "Brave default (20)"
+	count := fmt.Sprintf("%d (default)", tools.DefaultWebSearchCount)
 	if v, ok := call.Args["count"]; ok && v != nil {
 		count = fmt.Sprint(v)
 	}
@@ -97,7 +134,11 @@ func FormatFetchURLDescription(call llm.ToolCall) string {
 	if v, ok := call.Args["timeout"]; ok && v != nil {
 		timeout = fmt.Sprint(v)
 	}
-	s := fmt.Sprintf("URL: %s\nTimeout: %ss\n\n⚠  Will fetch and convert web content to markdown", stripHidden(raw), timeout)
+	s := fmt.Sprintf("URL: %s\nTimeout: %ss\n", stripHidden(raw), timeout)
+	if prompt, _ := call.Args["prompt"].(string); prompt != "" {
+		s += fmt.Sprintf("Prompt: %s\n", prompt)
+	}
+	s += "\n⚠  Will fetch and convert web content to markdown"
 	for _, w := range urlWarnings(raw) {
 		s += "\n⚠  " + w
 	}
@@ -146,14 +187,36 @@ const webSearchPromptSection = "### Web Search Tool Usage\n\n" +
 	"Search parameters (leave unset unless they help):\n" +
 	"- `freshness` (pd / pw / pm / py or a date range) for recent events\n" +
 	"- `result_filter` to restrict result types, e.g. [\"news\"] or [\"web\", \"faq\"]\n" +
-	"- `count` to fetch fewer results; `offset` pages further only when more results are available\n" +
-	"- `summary: true` for an AI summary of the results with sources\n" +
-	"- `fetch_url` to read a promising page in full\n\n" +
+	"- `count` (default 8) to fetch fewer or more results; `offset` pages further only when more results are available\n" +
+	"- `allowed_domains` / `blocked_domains` to keep to official documentation or drop low-quality sites\n" +
+	"- `summary: true` for an AI summary of the results with sources\n\n" +
 	"Always provide a complete, natural language answer after using web_search.\n\n"
 
+// webSearchSection tells the model where to look things up, in order of
+// reliability and cost, for the web tools it has.
 func webSearchSection(opts Options) string {
-	if opts.NoWebTools || !hasWebSearch(opts.Settings) {
+	if opts.NoWebTools {
 		return ""
 	}
-	return fmt.Sprintf(webSearchPromptSection, pick(opts.Interactive, " and ask clarifying questions", ""))
+	steps := []string{"The project itself: read the code and the dependency manifests (go.mod, package.json, lockfiles, ...) to learn which versions are in use."}
+	if hasContext7(opts.Settings) {
+		steps = append(steps, "Context7 for library, framework and API documentation: `resolve_library_id`, then `query_docs` with the version the project uses pinned (/owner/repo@version).")
+	}
+	if hasWebSearch(opts.Settings) {
+		steps = append(steps, "`web_search` for everything else (error messages, recent releases, comparisons); use `allowed_domains` to stay on official sources.")
+	}
+	steps = append(steps, "`fetch_url` to read a specific page. Pass a `prompt` saying exactly what you need, so only the answer comes back; the full page is saved, so read_file or grep it when the answer is not enough.")
+	var b strings.Builder
+	b.WriteString("### Looking Things Up\n\nCheck sources in this order and stop once you have a reliable answer:\n")
+	for i, s := range steps {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, s)
+	}
+	if hasWebResearcher(opts) {
+		fmt.Fprintf(&b, "\nFor research that needs several searches or pages, delegate to the `%s` subagent with `task` and set `run_in_background: true` when you have other work to do meanwhile; it returns a short, cited report.\n", WebResearcherName)
+	}
+	b.WriteString("\n")
+	if hasWebSearch(opts.Settings) {
+		fmt.Fprintf(&b, webSearchPromptSection, pick(opts.Interactive, " and ask clarifying questions", ""))
+	}
+	return b.String()
 }

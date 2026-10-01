@@ -12,6 +12,7 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/code/server"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/storage"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 )
 
@@ -31,7 +32,7 @@ func remoteFor(t *testing.T, srv server.Server) *Remote {
 
 func newService(t *testing.T, replies ...llm.Message) *server.Service {
 	t.Helper()
-	svc, err := server.New(context.Background(), server.Config{Model: llm.NewFakeModel(replies...)})
+	svc, err := server.New(context.Background(), server.Config{Storage: storage.NewMemory(), Model: llm.NewFakeModel(replies...), NoVerifyGate: true})
 	if err != nil {
 		t.Fatal(err)
 	}

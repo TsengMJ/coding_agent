@@ -78,9 +78,12 @@ func callsStarted(msg llm.Message) time.Time {
 func toolRow(call llm.ToolCall, last bool, started time.Time) entry {
 	text, ok := todoChecklist(call)
 	if !ok {
+		text, ok = planRow(call)
+	}
+	if !ok {
 		text = strings.TrimPrefix(client.ToolCallLine(call), "[tool] ")
 	}
-	return entry{kind: entryTool, text: text, callID: call.ID, last: last, running: true, started: started}
+	return entry{kind: entryTool, text: text, callID: call.ID, last: last, running: true, started: started, call: call}
 }
 
 // settle fills in the duration and error of a tool row from its result.
@@ -114,17 +117,22 @@ func (m *model) toolResult(msg llm.Message) {
 	}
 	e := &m.entries[idx]
 	timing, timed := settle(e, msg)
+	extra := toolResultText(e, msg)
 	if e.sub != nil {
 		e.sub.finish(msg)
 		mark := " ✓"
-		if e.failed {
+		switch {
+		case e.failed:
 			mark = " ✗"
+		case !e.sub.done:
+			mark = " ⇢ background"
 		}
 		e.meta = strings.TrimSpace(e.meta + mark)
 	}
 	delete(m.live, idx)
 	m.invalidate(idx)
 	m.finishBatchCall(msg.ToolCallID, timing, timed)
+	m.entries = append(m.entries, extra...)
 }
 
 // settleLive ends every running row with label when the run stops without
@@ -137,6 +145,12 @@ func (m *model) settleLive(label string) {
 			e.sub.stop(label)
 		}
 		m.invalidate(i)
+	}
+	for _, s := range m.subs {
+		if s.background && !s.done {
+			s.stop(label)
+			m.invalidate(s.entry)
+		}
 	}
 	clear(m.live)
 	m.batch = nil

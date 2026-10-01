@@ -3,10 +3,19 @@ package server
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/tsengmingchun/deepagents_golang/code/storage"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 )
+
+type namedFakeModel struct {
+	*llm.FakeModel
+	name string
+}
+
+func (m *namedFakeModel) Info() llm.ModelInfo { return llm.ModelInfo{Provider: "fake", Model: m.name} }
 
 func lastReply(t *testing.T, events []Event) llm.Message {
 	t.Helper()
@@ -82,5 +91,28 @@ func TestServiceDefaultModelSpec(t *testing.T) {
 	ts, err := svc.GetThread(context.Background(), "missing")
 	if err != nil || ts != nil {
 		t.Fatalf("missing thread = %+v, %v", ts, err)
+	}
+}
+
+func TestCachedAgentUsesSelectedModelWindowAndIdentity(t *testing.T) {
+	def := &namedFakeModel{FakeModel: llm.NewFakeModel().WithProfile(llm.ModelProfile{MaxInputTokens: 8000}), name: "small"}
+	svc, err := New(context.Background(), Config{Storage: storage.NewMemory(), Model: def, NoVerifyGate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	alt := &namedFakeModel{FakeModel: llm.NewFakeModel(llm.NewAssistantMessage("alt reply")).WithProfile(llm.ModelProfile{MaxInputTokens: 50000}), name: "large"}
+	svc.newModel = func(string) (llm.ChatModel, error) { return alt, nil }
+	req := userReq("selected", t.TempDir(), "hello")
+	req.Model = "fake:large"
+	if _, err := collect(t, svc, req); err != nil {
+		t.Fatal(err)
+	}
+	if len(alt.Requests()) != 1 {
+		t.Fatalf("selected calls = %d", len(alt.Requests()))
+	}
+	system := alt.Requests()[0].Messages[0].Text()
+	if !strings.Contains(system, "model `large`") || !strings.Contains(system, "50000 tokens") || strings.Contains(system, "8000 tokens") {
+		t.Fatalf("selected model identity is stale")
 	}
 }

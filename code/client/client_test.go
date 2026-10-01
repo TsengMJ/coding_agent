@@ -39,6 +39,9 @@ func (f *fakeServer) GetThread(context.Context, string) (*server.ThreadState, er
 func (f *fakeServer) ListThreads(context.Context, sessions.Filter) ([]sessions.Info, error) {
 	return nil, nil
 }
+func (f *fakeServer) RenameThread(context.Context, string, string) (*sessions.Info, error) {
+	return nil, nil
+}
 func (f *fakeServer) Compact(context.Context, string) (*server.CompactResult, error) {
 	return nil, nil
 }

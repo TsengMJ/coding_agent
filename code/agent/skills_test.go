@@ -51,7 +51,7 @@ func TestSkillSourcesOrder(t *testing.T) {
 func TestHostRoutesAreReadOnly(t *testing.T) {
 	root := t.TempDir()
 	skill := writeSkill(t, root, "review", "Review code")
-	b := withHostRoutes(NewBackend(t.TempDir()), []string{root})
+	b := withHostRoutes(NewBackend(t.TempDir()), []string{root}, nil, "")
 	ctx := context.Background()
 
 	if r := b.Read(ctx, skill, 0, 100); r.Error != "" || r.FileData == nil || !strings.Contains(r.FileData.Content, "review instructions") {
@@ -79,7 +79,7 @@ func TestHostRoutesAreReadOnly(t *testing.T) {
 }
 
 func TestHostRoutesSetArtifactsRootAndSkipMissingDirs(t *testing.T) {
-	b := trace.WrapBackend(withHostRoutes(NewBackend(t.TempDir()), []string{filepath.Join(t.TempDir(), "missing")}))
+	b := trace.WrapBackend(withHostRoutes(NewBackend(t.TempDir()), []string{filepath.Join(t.TempDir(), "missing")}, nil, ""))
 	if got := backend.ArtifactsRoot(b); got != ArtifactsRoot {
 		t.Fatalf("artifacts root = %q", got)
 	}

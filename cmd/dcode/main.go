@@ -24,11 +24,9 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/code/gui"
 	"github.com/tsengmingchun/deepagents_golang/code/server"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/storage"
 	"github.com/tsengmingchun/deepagents_golang/code/tui"
 )
-
-// postgresEnvVar selects Postgres thread storage.
-const postgresEnvVar = "POSTGRES_CONN_STRING"
 
 const (
 	modelFlagUsage  = "model as provider:model (default $" + config.ModelEnvVar + ", models.default in config.toml, or " + server.DefaultModelSpec + ")"
@@ -128,10 +126,19 @@ func connect(ctx context.Context, e env, serverURL, model string) (server.Server
 	return svc, nil
 }
 
+// newService opens Postgres and Redis, both required, and starts the
+// in-process service on them.
 func newService(ctx context.Context, e env, model string) (*server.Service, error) {
-	return server.New(ctx, server.Config{
-		Settings: e.settings, Paths: e.paths, ModelSpec: model, PostgresConn: os.Getenv(postgresEnvVar),
-	})
+	st, err := storage.Open(ctx, storage.PostgresConnFromEnv(), storage.RedisURLFromEnv())
+	if err != nil {
+		return nil, err
+	}
+	svc, err := server.New(ctx, server.Config{Settings: e.settings, Paths: e.paths, ModelSpec: model, Storage: st})
+	if err != nil {
+		st.Close()
+		return nil, err
+	}
+	return svc, nil
 }
 
 func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
@@ -156,11 +163,13 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 			"                                         (interactive: web GUI; -tui terminal UI; -plain line REPL)\n"+
 			"  dcode serve [-addr host:port]          run a long-lived agent server\n"+
 			"  dcode threads [-all] [-json]           list threads\n\n"+
-			"Threads are stored in Postgres when $%s is set, otherwise in memory.\n"+
+			"dcode needs Postgres ($DCODE_POSTGRES_CONN_STRING or $POSTGRES_CONN_STRING) for threads,\n"+
+			"plans and traces, and Redis ($DCODE_REDIS_URL or $REDIS_URL) for caches; it will not start without both.\n"+
 			"Tool calls run without approval by default. With startup.mode = \"manual\" in\n"+
-			"%s, write_file, edit_file and execute ask first\n"+
-			"(-y skips it for one run; shell.allow_list lets matching commands skip it).\n"+
-			"Shell commands run in the current directory and are not sandboxed.\n\n", postgresEnvVar, "~/.deepagents/config.toml")
+			"%s, tools that change files (write_file, edit_file, apply_patch, delete) or run\n"+
+			"commands (execute, run_tests, diagnostics) ask first (-y skips it for one run;\n"+
+			"shell.allow_list lets matching commands skip it; allowing go covers run_tests and diagnostics).\n"+
+			"Shell commands run in the current directory and are not sandboxed.\n\n", "~/.deepagents/config.toml")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -229,7 +238,10 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 		})
 	case uiGUI:
 		if thread == "" {
-			thread = sessions.NewThreadID()
+			thread, err = defaultGUIThread(ctx, srv, e.cwd)
+			if err != nil {
+				return 1, err
+			}
 		}
 		return 0, runGUI(ctx, srv, serverURL, gui.Info{
 			Cwd: e.cwd, ThreadID: thread, Model: defaultModel, ModelOverride: *model, AutoApprove: yolo, Version: deepagents.Version,
@@ -243,6 +255,25 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 		Model: *model, ModelName: defaultModel, SaveDefaultModel: saveModel,
 		In: os.Stdin, Out: stdout, Err: stderr, Interrupt: sig,
 	})
+}
+
+// defaultGUIThread opens the newest conversation with saved state in cwd.
+// A failed first run may leave a catalog entry but no checkpoint.
+func defaultGUIThread(ctx context.Context, srv server.Server, cwd string) (string, error) {
+	list, err := srv.ListThreads(ctx, sessions.Filter{Cwd: cwd})
+	if err != nil {
+		return "", err
+	}
+	for _, item := range list {
+		state, err := srv.GetThread(ctx, item.ThreadID)
+		if err != nil {
+			return "", err
+		}
+		if state != nil {
+			return item.ThreadID, nil
+		}
+	}
+	return sessions.NewThreadID(), nil
 }
 
 type ui int
@@ -340,9 +371,6 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	return server.Serve(ctx, *addr, svc, func(a net.Addr) {
 		fmt.Fprintf(stderr, "dcode serve listening on http://%s (model %s, storage %s)\n", a, svc.DefaultModel(), svc.Storage())
 		fmt.Fprintf(stderr, "  clients: export %s=http://%s\n", client.ServerEnvVar, a)
-		if svc.Storage() == "memory" {
-			fmt.Fprintf(stderr, "  note: threads are kept in memory and lost on restart; set %s to keep them\n", postgresEnvVar)
-		}
 	})
 }
 

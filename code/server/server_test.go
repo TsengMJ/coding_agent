@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
 	"github.com/tsengmingchun/deepagents_golang/code/config"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/storage"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
@@ -27,7 +29,7 @@ func init() {
 func newService(t *testing.T, replies ...llm.Message) (*Service, *llm.FakeModel) {
 	t.Helper()
 	model := llm.NewFakeModel(replies...)
-	svc, err := New(context.Background(), Config{Model: model})
+	svc, err := New(context.Background(), Config{Storage: storage.NewMemory(), Model: model, NoVerifyGate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,6 +264,9 @@ func TestServiceStreamsDeltasBeforeTheMessage(t *testing.T) {
 	var kinds []string
 	var text strings.Builder
 	for _, ev := range events {
+		if ev.Kind == EventTrace {
+			continue
+		}
 		kinds = append(kinds, string(ev.Kind))
 		text.WriteString(ev.Text)
 	}
@@ -385,15 +390,12 @@ func TestServiceKeepsCwdsApart(t *testing.T) {
 }
 
 func TestServicePostgresSurvivesRestart(t *testing.T) {
-	conn := os.Getenv("POSTGRES_CONN_STRING")
-	if conn == "" {
-		t.Skip("POSTGRES_CONN_STRING is not set")
-	}
+	conn, redisURL := requireRealStorage(t)
 	ctx := context.Background()
 	cwd := t.TempDir()
 	thread := "pg-" + sessions.NewThreadID()
 	open := func(replies ...llm.Message) *Service {
-		svc, err := New(ctx, Config{Model: llm.NewFakeModel(replies...), PostgresConn: conn})
+		svc, err := New(ctx, Config{Model: llm.NewFakeModel(replies...), Storage: openRealStorage(t, conn, redisURL), NoVerifyGate: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -406,13 +408,16 @@ func TestServicePostgresSurvivesRestart(t *testing.T) {
 	if _, err := collect(t, first, userReq(thread, cwd, "hello")); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := first.RenameThread(ctx, thread, "My named task"); err != nil {
+		t.Fatal(err)
+	}
 	_ = first.Close()
 
 	second := open(llm.NewAssistantMessage("two"))
-	defer second.Close()
 	t.Cleanup(func() {
 		_ = second.checkpointer.DeleteThread(context.Background(), thread)
 		_ = second.sessions.Delete(context.Background(), thread)
+		_ = second.Close()
 	})
 	if _, err := collect(t, second, userReq(thread, t.TempDir(), "x")); !errors.Is(err, ErrThreadCwdMismatch) {
 		t.Fatalf("cwd binding lost after restart: %v", err)
@@ -425,20 +430,17 @@ func TestServicePostgresSurvivesRestart(t *testing.T) {
 		t.Fatalf("thread after restart = %+v, %v", ts, err)
 	}
 	info, err := second.sessions.Get(ctx, thread)
-	if err != nil || info == nil || info.Title != "hello" || info.MessageCount != 4 {
+	if err != nil || info == nil || info.Title != "My named task" || info.MessageCount != 4 {
 		t.Fatalf("session = %+v, %v", info, err)
 	}
 }
 
 func TestServicePostgresResumesApprovalAfterRestart(t *testing.T) {
-	conn := os.Getenv("POSTGRES_CONN_STRING")
-	if conn == "" {
-		t.Skip("POSTGRES_CONN_STRING is not set")
-	}
+	conn, redisURL := requireRealStorage(t)
 	ctx := context.Background()
 	cwd := t.TempDir()
 	thread := "pg-" + sessions.NewThreadID()
-	first, err := New(ctx, Config{Model: llm.NewFakeModel(writeReply("w", "/a.txt", "A")), PostgresConn: conn})
+	first, err := New(ctx, Config{Model: llm.NewFakeModel(writeReply("w", "/a.txt", "A")), Storage: openRealStorage(t, conn, redisURL), NoVerifyGate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,14 +452,14 @@ func TestServicePostgresResumesApprovalAfterRestart(t *testing.T) {
 	}
 	_ = first.Close()
 
-	second, err := New(ctx, Config{Model: llm.NewFakeModel(llm.NewAssistantMessage("done")), PostgresConn: conn})
+	second, err := New(ctx, Config{Model: llm.NewFakeModel(llm.NewAssistantMessage("done")), Storage: openRealStorage(t, conn, redisURL), NoVerifyGate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer second.Close()
 	t.Cleanup(func() {
 		_ = second.checkpointer.DeleteThread(context.Background(), thread)
 		_ = second.sessions.Delete(context.Background(), thread)
+		_ = second.Close()
 	})
 	ts, err := second.GetThread(ctx, thread)
 	if err != nil || ts == nil || len(ts.Interrupts) != 1 || ts.Interrupts[0].ActionRequests[0].Name != "write_file" {
@@ -485,7 +487,7 @@ func TestServeRequiresLoopback(t *testing.T) {
 }
 
 func TestNewUsesModelSpec(t *testing.T) {
-	svc, err := New(context.Background(), Config{ModelSpec: "server-test:m"})
+	svc, err := New(context.Background(), Config{Storage: storage.NewMemory(), ModelSpec: "server-test:m"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +499,7 @@ func TestNewUsesModelSpec(t *testing.T) {
 
 func TestResolveModelSpecPrecedence(t *testing.T) {
 	t.Setenv(ModelEnvVar, "env:model")
-	if got := resolveModelSpec(Config{ModelSpec: "flag:model"}); got != "flag:model" {
+	if got := resolveModelSpec(Config{Storage: storage.NewMemory(), ModelSpec: "flag:model"}); got != "flag:model" {
 		t.Errorf("flag should win, got %q", got)
 	}
 	if got := resolveModelSpec(Config{}); got != "env:model" {
@@ -550,9 +552,12 @@ func TestServiceCompactSummarizesOlderMessagesForLaterRuns(t *testing.T) {
 	if !strings.HasPrefix(res.FilePath, "/.deepagents/conversation_history/") {
 		t.Fatalf("file path = %q", res.FilePath)
 	}
-	history, err := os.ReadFile(filepath.Join(cwd, filepath.FromSlash(res.FilePath)))
-	if err != nil || !strings.Contains(string(history), "first task") {
-		t.Fatalf("history = %q, %v", history, err)
+	history := codeagent.NewProjectBackend(cwd, svc.artifacts).Read(context.Background(), res.FilePath, 0, 1000)
+	if history.Error != "" || history.FileData == nil || !strings.Contains(history.FileData.Content, "first task") {
+		t.Fatalf("history = %+v", history)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".deepagents")); !os.IsNotExist(err) {
+		t.Fatalf("history written to the project tree: %v", err)
 	}
 
 	if _, err := collect(t, svc, userReq("t1", cwd, "q5")); err != nil {
@@ -588,5 +593,47 @@ func TestServiceCompactUnknownThread(t *testing.T) {
 	svc, _ := newService(t)
 	if _, err := svc.Compact(context.Background(), "missing"); !errors.Is(err, ErrThreadNotFound) {
 		t.Fatalf("err = %v, want ErrThreadNotFound", err)
+	}
+}
+
+// requireRealStorage skips unless Postgres and Redis are configured.
+func requireRealStorage(t *testing.T) (conn, redisURL string) {
+	t.Helper()
+	conn, redisURL = os.Getenv("POSTGRES_CONN_STRING"), os.Getenv("REDIS_URL")
+	if conn == "" || redisURL == "" {
+		t.Skip("POSTGRES_CONN_STRING and REDIS_URL are not set")
+	}
+	return conn, redisURL
+}
+
+// openRealStorage opens Postgres and Redis; the Service that gets it closes it.
+func openRealStorage(t *testing.T, conn, redisURL string) *storage.Storage {
+	t.Helper()
+	st, err := storage.Open(context.Background(), conn, redisURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+func TestNewRequiresStorage(t *testing.T) {
+	if _, err := New(context.Background(), Config{Model: llm.NewFakeModel()}); err == nil {
+		t.Fatal("New without Storage succeeded")
+	}
+}
+
+func TestNewBuildsWebModel(t *testing.T) {
+	svc, err := New(context.Background(), Config{Storage: storage.NewMemory(), Model: llm.NewFakeModel(),
+		Settings: &config.Settings{WebModel: "server-test:web"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	if svc.webModel == nil {
+		t.Fatal("models.web not built")
+	}
+	if _, err := New(context.Background(), Config{Storage: storage.NewMemory(), Model: llm.NewFakeModel(),
+		Settings: &config.Settings{WebModel: "no-such-provider:x"}}); err == nil || !strings.Contains(err.Error(), "models.web") {
+		t.Fatalf("bad models.web err = %v", err)
 	}
 }

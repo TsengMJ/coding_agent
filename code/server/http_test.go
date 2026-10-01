@@ -5,10 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"iter"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,7 +20,9 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/code/commands"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/storage"
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
+	"github.com/tsengmingchun/deepagents_golang/llm"
 )
 
 // funcServer runs fn for every Run; the other methods are unused here.
@@ -31,6 +37,10 @@ func (f funcServer) Run(ctx context.Context, _ RunRequest) iter.Seq2[Event, erro
 func (funcServer) GetThread(context.Context, string) (*ThreadState, error) { return nil, nil }
 
 func (funcServer) ListThreads(context.Context, sessions.Filter) ([]sessions.Info, error) {
+	return nil, nil
+}
+
+func (funcServer) RenameThread(context.Context, string, string) (*sessions.Info, error) {
 	return nil, nil
 }
 
@@ -69,6 +79,45 @@ func postRun(t *testing.T, base string) *http.Response {
 		t.Fatal(err)
 	}
 	return resp
+}
+
+func TestServeRefreshesProjectContextBetweenGUIRuns(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	cwd := t.TempDir()
+	if out, err := exec.Command("git", "-C", cwd, "init", "-q", "-b", "trunk").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	model := llm.NewFakeModel(llm.NewAssistantMessage("first"), llm.NewAssistantMessage("second"))
+	svc, err := New(context.Background(), Config{Storage: storage.NewMemory(), Model: model, NoVerifyGate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	base, stop, _ := startServe(t, svc)
+	t.Cleanup(stop)
+	post := func(text string) {
+		body, _ := json.Marshal(userReq("gui", cwd, text))
+		resp, err := http.Post(base+"/runs", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		if err != nil || resp.StatusCode != http.StatusOK || !bytes.Contains(data, []byte(`"event":"done"`)) {
+			t.Fatalf("run response: status %d, err %v, body %s", resp.StatusCode, err, data)
+		}
+	}
+	post("one")
+	if err := os.WriteFile(filepath.Join(cwd, "go.mod"), []byte("module x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	post("two")
+	reqs := model.Requests()
+	if len(reqs) != 2 || strings.Contains(reqs[0].Messages[0].Text(), "Project files: go.mod") || !strings.Contains(reqs[1].Messages[0].Text(), "Project files: go.mod") {
+		t.Fatalf("GUI requests did not refresh project markers")
+	}
 }
 
 func TestServeLetsInFlightRunFinishOnShutdown(t *testing.T) {

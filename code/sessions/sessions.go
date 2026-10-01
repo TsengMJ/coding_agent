@@ -40,6 +40,8 @@ type Store interface {
 	Touch(ctx context.Context, info Info) error
 	// Get returns nil when the thread is unknown.
 	Get(ctx context.Context, threadID string) (*Info, error)
+	// SetTitle changes an existing title and returns nil when the thread is unknown.
+	SetTitle(ctx context.Context, threadID, title string) (*Info, error)
 	// List returns threads, most recently updated first.
 	List(ctx context.Context, f Filter) ([]Info, error)
 	Delete(ctx context.Context, threadID string) error
@@ -113,6 +115,18 @@ func (s *MemoryStore) Get(_ context.Context, threadID string) (*Info, error) {
 	if !ok {
 		return nil, nil
 	}
+	return &info, nil
+}
+
+func (s *MemoryStore) SetTitle(_ context.Context, threadID, title string) (*Info, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	info, ok := s.threads[threadID]
+	if !ok {
+		return nil, nil
+	}
+	info.Title = title
+	s.threads[threadID] = info
 	return &info, nil
 }
 

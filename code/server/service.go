@@ -18,10 +18,13 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/code/config"
 	"github.com/tsengmingchun/deepagents_golang/code/cost"
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
+	"github.com/tsengmingchun/deepagents_golang/code/storage"
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
 	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
+	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 )
 
@@ -37,11 +40,12 @@ type Config struct {
 	ModelSpec string
 	// Model overrides ModelSpec with a constructed model.
 	Model llm.ChatModel
-	// PostgresConn stores threads in Postgres; empty keeps them in memory.
-	PostgresConn string
-	// TraceDir holds per-thread trace files; empty means Paths.UserDir/traces,
-	// and no trace is kept when both are empty.
-	TraceDir string
+	// Storage keeps threads, plans, traces and artifacts; required.
+	// Service.Close closes it.
+	Storage *storage.Storage
+	// NoVerifyGate lets headless runs finish without the agent's
+	// verify-before-done check (see codeagent.VerifyGate).
+	NoVerifyGate bool
 }
 
 // Service runs the coding agent for many threads and working directories.
@@ -52,15 +56,17 @@ type Service struct {
 	model        llm.ChatModel
 	defaultModel runModel
 	newModel     func(spec string) (llm.ChatModel, error)
+	// webModel reads fetched pages and runs web research; nil uses model.
+	webModel llm.ChatModel
 	// models caches traced models by spec, guarded by mu.
 	models       map[string]llm.ChatModel
 	prices       cost.Table
 	checkpointer runtime.Checkpointer
 	sessions     sessions.Store
-	storage      string
-	closeFn      func()
-	// traces is nil when tracing is off.
-	traces *trace.Store
+	store        *storage.Storage
+	artifacts    *codeagent.Artifacts
+	traces       *trace.Store
+	noVerifyGate bool
 
 	mu     sync.Mutex
 	agents map[agentKey]*agentEntry
@@ -78,8 +84,11 @@ type agentEntry struct {
 	err   error
 }
 
-// New builds the model and thread storage.
+// New builds the model and wires cfg.Storage.
 func New(ctx context.Context, cfg Config) (*Service, error) {
+	if cfg.Storage == nil {
+		return nil, errors.New("server.New: Storage is required")
+	}
 	newModel := func(spec string) (llm.ChatModel, error) { return llm.InitChatModel(spec, modelOptions(cfg)) }
 	model, spec := cfg.Model, ""
 	if model == nil {
@@ -101,7 +110,16 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	var webModel llm.ChatModel
+	if cfg.Settings != nil && cfg.Settings.WebModel != "" {
+		m, err := newModel(cfg.Settings.WebModel)
+		if err != nil {
+			return nil, fmt.Errorf("init models.web %q: %w", cfg.Settings.WebModel, err)
+		}
+		webModel = trace.WrapModel(m)
+	}
 	s := &Service{
+		webModel:     webModel,
 		prices:       prices,
 		settings:     cfg.Settings,
 		paths:        cfg.Paths,
@@ -111,36 +129,35 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		models:       map[string]llm.ChatModel{},
 		agents:       map[agentKey]*agentEntry{},
 		busy:         map[string]bool{},
-		closeFn:      func() {},
+		noVerifyGate: cfg.NoVerifyGate,
+		store:        cfg.Storage,
+		checkpointer: cfg.Storage.Checkpointer,
+		sessions:     cfg.Storage.Sessions,
+		traces:       trace.NewStore(cfg.Storage.Traces),
+		artifacts: &codeagent.Artifacts{
+			Results: cfg.Storage.Expiring(resultsTTL(cfg.Settings)),
+			Web:     cfg.Storage.Expiring(WebTTL),
+			History: cfg.Storage.Durable,
+		},
 	}
-	traceDir := cfg.TraceDir
-	if traceDir == "" && cfg.Paths.UserDir != "" {
-		traceDir = filepath.Join(cfg.Paths.UserDir, "traces")
-	}
-	if traceDir != "" {
-		s.traces = trace.NewStore(traceDir)
-	}
-	if cfg.PostgresConn == "" {
-		s.checkpointer = runtime.NewMemoryCheckpointer()
-		s.sessions = sessions.NewMemoryStore()
-		s.storage = "memory"
-		return s, nil
-	}
-	pg, err := runtime.NewPostgresCheckpointer(ctx, cfg.PostgresConn)
-	if err != nil {
-		return nil, err
-	}
-	store, err := sessions.NewPostgresStore(ctx, pg.Pool())
-	if err != nil {
-		pg.Close()
-		return nil, err
-	}
-	s.checkpointer, s.sessions, s.storage, s.closeFn = pg, store, "postgres", pg.Close
 	return s, nil
 }
 
+// How long offloaded artifacts are kept after their last write.
+const (
+	DefaultResultsTTL = 7 * 24 * time.Hour
+	WebTTL            = 24 * time.Hour
+)
+
+func resultsTTL(s *config.Settings) time.Duration {
+	if s != nil && s.ResultsTTL > 0 {
+		return s.ResultsTTL
+	}
+	return DefaultResultsTTL
+}
+
 // Storage reports where threads are kept: "postgres" or "memory".
-func (s *Service) Storage() string { return s.storage }
+func (s *Service) Storage() string { return s.store.Kind }
 
 // ModelInfo identifies the service's default model.
 func (s *Service) ModelInfo() llm.ModelInfo { return s.defaultModel.model.Info() }
@@ -150,29 +167,37 @@ func (s *Service) ModelInfo() llm.ModelInfo { return s.defaultModel.model.Info()
 func (s *Service) DefaultModel() string { return s.defaultModel.spec }
 
 func (s *Service) Close() error {
-	s.closeFn()
-	if s.traces != nil {
-		return s.traces.Close()
-	}
-	return nil
+	err := s.traces.Close()
+	s.store.Close()
+	return err
 }
 
 func (s *Service) GetTrace(ctx context.Context, threadID string) (*trace.Trace, error) {
-	if s.traces == nil {
-		return &trace.Trace{ThreadID: threadID, LLMCalls: []trace.LLMCall{}, Diffs: []trace.Diff{}, Messages: []trace.Message{}}, nil
-	}
 	return s.traces.Load(threadID)
 }
 
 func (s *Service) GetLLMCall(ctx context.Context, threadID string, seq int) (*trace.LLMCallDetail, error) {
-	if s.traces == nil {
-		return nil, fmt.Errorf("%w: tracing is off", trace.ErrNotFound)
-	}
 	return s.traces.LLMCall(threadID, seq)
 }
 
 func (s *Service) ListThreads(ctx context.Context, f sessions.Filter) ([]sessions.Info, error) {
 	return s.sessions.List(ctx, f)
+}
+
+// RenameThread gives a saved thread a user-chosen title.
+func (s *Service) RenameThread(ctx context.Context, threadID, title string) (*sessions.Info, error) {
+	title = strings.TrimSpace(title)
+	if threadID == "" || title == "" || len([]rune(title)) > 120 || strings.ContainsAny(title, "\r\n") {
+		return nil, fmt.Errorf("%w: title must be a single line of 1–120 characters", ErrBadRequest)
+	}
+	info, err := s.sessions.SetTitle(ctx, threadID, title)
+	if err != nil {
+		return nil, err
+	}
+	if info == nil {
+		return nil, fmt.Errorf("%w: %s", ErrThreadNotFound, threadID)
+	}
+	return info, nil
 }
 
 func (s *Service) GetThread(ctx context.Context, threadID string) (*ThreadState, error) {
@@ -187,6 +212,12 @@ func (s *Service) GetThread(ctx context.Context, threadID string) (*ThreadState,
 	for _, in := range cp.PendingInterrupts {
 		ts.Interrupts = append(ts.Interrupts, toInterrupt(in))
 	}
+	if v, ok := cp.State.Values[todolist.TodosStateKey]; ok && v != nil {
+		if todos, err := todolist.ParseTodos(v); err == nil {
+			ts.Todos = todos
+		}
+	}
+	ts.Plan = planmode.PlanOf(&cp.State)
 	return ts, nil
 }
 
@@ -219,7 +250,7 @@ func (s *Service) Compact(ctx context.Context, threadID string) (*CompactResult,
 	if rm, err := s.modelFor(info.Model); err == nil {
 		ctx = withRunModel(ctx, rm)
 	}
-	summ, err := codeagent.NewSummarization(s.model, codeagent.NewBackend(info.Cwd))
+	summ, err := codeagent.NewSummarization(s.model, codeagent.NewProjectBackend(info.Cwd, s.artifacts))
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +328,7 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	}
 	cfg := runtime.RunConfig{
 		ThreadID:     req.ThreadID,
-		Configurable: map[string]any{AutoApproveKey: req.AutoApprove},
+		Configurable: map[string]any{AutoApproveKey: req.AutoApprove, planmode.ModeKey: req.Mode, planmode.BuildKey: req.BuildPlan},
 	}
 	ctx, tr := s.startTrace(ctx, req.ThreadID)
 	defer tr.stop()
@@ -389,6 +420,18 @@ func validate(req *RunRequest) error {
 	if (len(req.Messages) > 0) == (req.Resume != nil) {
 		return fmt.Errorf("%w: exactly one of messages and resume is required", ErrBadRequest)
 	}
+	switch req.Mode {
+	case "", ModeAgent:
+	case ModePlan:
+		if !req.Interactive {
+			return fmt.Errorf("%w: plan mode needs an interactive session", ErrBadRequest)
+		}
+	default:
+		return fmt.Errorf("%w: mode must be %q or %q, got %q", ErrBadRequest, ModeAgent, ModePlan, req.Mode)
+	}
+	if req.BuildPlan && (req.Mode == ModePlan || req.Resume != nil) {
+		return fmt.Errorf("%w: build_plan needs messages and agent mode", ErrBadRequest)
+	}
 	return nil
 }
 
@@ -446,7 +489,12 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest) (agent.Agent, er
 			Cwd:          req.Cwd,
 			UserDir:      s.paths.UserDir,
 			Checkpointer: s.checkpointer,
+			Plans:        s.store.Plans,
+			Artifacts:    s.artifacts,
+			WebModel:     s.webModel,
+			Cache:        s.store.Cache,
 			Interactive:  req.Interactive,
+			NoVerifyGate: s.noVerifyGate,
 		})
 	})
 	if e.err != nil {

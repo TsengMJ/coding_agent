@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/tsengmingchun/deepagents_golang/code/askuser"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
 )
 
@@ -46,7 +47,20 @@ type PromptApprover struct {
 
 func (p PromptApprover) Decide(_ context.Context, reqs []hitl.ActionRequest) ([]hitl.Decision, error) {
 	out := make([]hitl.Decision, 0, len(reqs))
+	approveAll := false
 	for i, req := range reqs {
+		if req.Name == askuser.ToolName {
+			d, err := p.ask(req)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, d)
+			continue
+		}
+		if approveAll {
+			out = append(out, hitl.Decision{Type: hitl.DecisionApprove})
+			continue
+		}
 		fmt.Fprintf(p.Out, "\n[approve %d/%d] %s\n", i+1, len(reqs), ActionTitle(req))
 		if preview := ActionPreviewIn(req, p.Cwd); preview != "" {
 			fmt.Fprintln(p.Out, indent(preview, "  "))
@@ -61,10 +75,8 @@ func (p PromptApprover) Decide(_ context.Context, reqs []hitl.ActionRequest) ([]
 		case "y", "yes":
 			out = append(out, hitl.Decision{Type: hitl.DecisionApprove})
 		case "a", "all":
-			for range reqs[i:] {
-				out = append(out, hitl.Decision{Type: hitl.DecisionApprove})
-			}
-			return out, nil
+			approveAll = true
+			out = append(out, hitl.Decision{Type: hitl.DecisionApprove})
 		case "", "n", "no":
 			out = append(out, hitl.Decision{Type: hitl.DecisionReject})
 		default:
@@ -98,6 +110,8 @@ func ActionPreview(req hitl.ActionRequest) string {
 		return prefixLines(clip(str("old_string")), "- ") + "\n" + prefixLines(clip(str("new_string")), "+ ")
 	case "delete":
 		return "rm -r " + str("file_path") + "  (directories are removed with everything inside)"
+	case "apply_patch":
+		return clip(str("patch"))
 	case "web_search", "fetch_url":
 		return req.Description
 	default:

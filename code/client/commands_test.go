@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tsengmingchun/deepagents_golang/code/askuser"
 	"github.com/tsengmingchun/deepagents_golang/code/commands"
 	"github.com/tsengmingchun/deepagents_golang/code/server"
 )
@@ -14,6 +15,7 @@ type fakeSession struct {
 	auto  bool
 	info  []string
 	model string
+	mode  string
 	usage *server.ThreadUsage
 }
 
@@ -26,6 +28,9 @@ func (s *fakeSession) AutoApprove() bool                   { return s.auto }
 func (s *fakeSession) SetAutoApprove(on bool)              { s.auto = on }
 func (s *fakeSession) Quit()                               { s.calls = append(s.calls, "quit") }
 func (s *fakeSession) Info(text string)                    { s.info = append(s.info, text) }
+func (s *fakeSession) Mode() string                        { return s.mode }
+func (s *fakeSession) SetMode(mode string)                 { s.mode = mode }
+func (s *fakeSession) Build(context.Context)               { s.calls = append(s.calls, "build") }
 func (s *fakeSession) Model() string                       { return s.model }
 func (s *fakeSession) SetModel(spec string)                { s.model = spec }
 func (s *fakeSession) ShowUsage(_ context.Context, format func(*server.ThreadUsage) string) {
@@ -54,6 +59,41 @@ func TestCommandRegistryCoversEveryDCodeCommand(t *testing.T) {
 	}
 	if err := reg.Dispatch(ctx, "/help"); err != nil || !strings.Contains(s.info[len(s.info)-1], "keys: x") {
 		t.Fatalf("help = %v %q", err, s.info)
+	}
+}
+
+func TestPlanTogglesModeAndBuildStarts(t *testing.T) {
+	s := &fakeSession{}
+	reg := NewCommandRegistry(s, CommandOptions{})
+	ctx := context.Background()
+	if err := reg.Dispatch(ctx, "/plan"); err != nil || s.mode != server.ModePlan {
+		t.Fatalf("plan on: %v mode=%q", err, s.mode)
+	}
+	if err := reg.Dispatch(ctx, "/plan"); err != nil || s.mode != server.ModeAgent {
+		t.Fatalf("plan off: %v mode=%q", err, s.mode)
+	}
+	if err := reg.Dispatch(ctx, "/build"); err != nil || strings.Join(s.calls, ",") != "build" {
+		t.Fatalf("build: %v calls=%v", err, s.calls)
+	}
+}
+
+func TestParseAnswerLine(t *testing.T) {
+	q := askuser.Question{ID: "q", Options: []askuser.Option{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}, {ID: "c", Label: "C"}}}
+	if a := ParseAnswerLine(q, "2"); len(a.OptionIDs) != 1 || a.OptionIDs[0] != "b" {
+		t.Fatalf("single = %+v", a)
+	}
+	if a := ParseAnswerLine(q, "1,3"); len(a.OptionIDs) != 1 {
+		t.Fatalf("single-choice question took several: %+v", a)
+	}
+	q.AllowMultiple = true
+	if a := ParseAnswerLine(q, "1, 3"); strings.Join(a.OptionIDs, ",") != "a,c" {
+		t.Fatalf("multi = %+v", a)
+	}
+	if a := ParseAnswerLine(q, "use redis"); a.Other != "use redis" || a.OptionIDs != nil {
+		t.Fatalf("other = %+v", a)
+	}
+	if a := ParseAnswerLine(q, "9"); a.Other != "9" {
+		t.Fatalf("out of range = %+v", a)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/code/config"
 	"github.com/tsengmingchun/deepagents_golang/code/cost"
 	"github.com/tsengmingchun/deepagents_golang/code/server"
+	"github.com/tsengmingchun/deepagents_golang/code/storage"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 )
 
@@ -135,6 +136,11 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 		return err
 	}
 	defer closeDB()
+	agentStore, err := storage.Open(ctx, os.Getenv(postgresEnvVar), storage.RedisURLFromEnv())
+	if err != nil {
+		return err
+	}
+	defer agentStore.Close()
 	docker := bench.CLIDocker{}
 
 	var run *bench.Run
@@ -174,6 +180,7 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 	solver := &bench.DcodeSolver{
 		Settings: e.settings, Prices: prices, MaxSteps: cfg.MaxSteps, MaxCostUSD: cfg.MaxCostUSD,
 		Timeout: time.Duration(cfg.TimeoutSec * float64(time.Second)), KeepWorkspace: cfg.KeepWorkspace,
+		Traces:   agentStore.Traces,
 		NewModel: func() (llm.ChatModel, error) { return llm.InitChatModel(spec, modelOptions(e)) },
 	}
 	if _, err := solver.NewModel(); err != nil {

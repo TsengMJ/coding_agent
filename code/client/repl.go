@@ -45,6 +45,7 @@ type repl struct {
 	cmds   *commands.Registry
 	quit   bool
 	model  ModelChoice
+	mode   string
 }
 
 // RunInteractive runs a line-oriented REPL: one prompt per line, run output
@@ -87,6 +88,9 @@ func RunInteractive(ctx context.Context, srv server.Server, opts InteractiveOpti
 func (r *repl) turn(ctx context.Context, req server.RunRequest) {
 	req.ThreadID, req.Cwd, req.AutoApprove, req.Interactive = r.thread, r.opts.Cwd, r.auto, true
 	req.Model = r.model.Override
+	if req.Mode == "" {
+		req.Mode = r.mode
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -157,6 +161,18 @@ func (r *repl) AutoApprove() bool { return r.auto }
 func (r *repl) SetAutoApprove(on bool) {
 	r.auto = on
 	fmt.Fprintf(r.opts.Out, "auto-approve %s\n", onOff(r.auto))
+}
+
+func (r *repl) Mode() string { return r.mode }
+
+func (r *repl) SetMode(mode string) {
+	r.mode = mode
+	fmt.Fprintln(r.opts.Out, ModeLine(mode))
+}
+
+func (r *repl) Build(ctx context.Context) {
+	r.mode = server.ModeAgent
+	r.turn(ctx, BuildRequest())
 }
 
 func (r *repl) Model() string { return r.model.Current() }

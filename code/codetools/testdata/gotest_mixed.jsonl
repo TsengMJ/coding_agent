@@ -1,0 +1,38 @@
+{"ImportPath":"example.com/t2j/b [example.com/t2j/b.test]","Action":"build-output","Output":"# example.com/t2j/b [example.com/t2j/b.test]\n"}
+{"ImportPath":"example.com/t2j/b [example.com/t2j/b.test]","Action":"build-output","Output":"b/b.go:3:23: undefined: retryPolicy\n"}
+{"ImportPath":"example.com/t2j/b [example.com/t2j/b.test]","Action":"build-fail"}
+{"Action":"start","Package":"example.com/t2j/a"}
+{"Action":"start","Package":"example.com/t2j/b"}
+{"Action":"output","Package":"example.com/t2j/b","Output":"FAIL\texample.com/t2j/b [build failed]\n","OutputType":"frame"}
+{"Action":"fail","Package":"example.com/t2j/b","Elapsed":0,"FailedBuild":"example.com/t2j/b [example.com/t2j/b.test]"}
+{"Action":"run","Package":"example.com/t2j/a","Test":"TestOK"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestOK","Output":"=== RUN   TestOK\n","OutputType":"frame"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestOK","Output":"--- PASS: TestOK (0.00s)\n","OutputType":"frame"}
+{"Action":"pass","Package":"example.com/t2j/a","Test":"TestOK","Elapsed":0}
+{"Action":"run","Package":"example.com/t2j/a","Test":"TestFail"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestFail","Output":"=== RUN   TestFail\n","OutputType":"frame"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestFail","Output":"    a_test.go:7: expected 3 attempts,\n","OutputType":"error"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestFail","Output":"        got 1\n","OutputType":"error-continue"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestFail","Output":"--- FAIL: TestFail (0.00s)\n","OutputType":"frame"}
+{"Action":"fail","Package":"example.com/t2j/a","Test":"TestFail","Elapsed":0}
+{"Action":"run","Package":"example.com/t2j/a","Test":"TestSub"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestSub","Output":"=== RUN   TestSub\n","OutputType":"frame"}
+{"Action":"run","Package":"example.com/t2j/a","Test":"TestSub/good"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestSub/good","Output":"=== RUN   TestSub/good\n","OutputType":"frame"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestSub/good","Output":"--- PASS: TestSub/good (0.00s)\n","OutputType":"frame"}
+{"Action":"pass","Package":"example.com/t2j/a","Test":"TestSub/good","Elapsed":0}
+{"Action":"run","Package":"example.com/t2j/a","Test":"TestSub/bad"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestSub/bad","Output":"=== RUN   TestSub/bad\n","OutputType":"frame"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestSub/bad","Output":"    a_test.go:11: boom\n","OutputType":"error"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestSub/bad","Output":"--- FAIL: TestSub/bad (0.00s)\n","OutputType":"frame"}
+{"Action":"fail","Package":"example.com/t2j/a","Test":"TestSub/bad","Elapsed":0}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestSub","Output":"--- FAIL: TestSub (0.00s)\n","OutputType":"frame"}
+{"Action":"fail","Package":"example.com/t2j/a","Test":"TestSub","Elapsed":0}
+{"Action":"run","Package":"example.com/t2j/a","Test":"TestSkip"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestSkip","Output":"=== RUN   TestSkip\n","OutputType":"frame"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestSkip","Output":"    a_test.go:13: later\n"}
+{"Action":"output","Package":"example.com/t2j/a","Test":"TestSkip","Output":"--- SKIP: TestSkip (0.00s)\n","OutputType":"frame"}
+{"Action":"skip","Package":"example.com/t2j/a","Test":"TestSkip","Elapsed":0}
+{"Action":"output","Package":"example.com/t2j/a","Output":"FAIL\n","OutputType":"frame"}
+{"Action":"output","Package":"example.com/t2j/a","Output":"FAIL\texample.com/t2j/a\t1.118s\n","OutputType":"frame"}
+{"Action":"fail","Package":"example.com/t2j/a","Elapsed":1.119}

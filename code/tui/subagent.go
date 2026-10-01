@@ -32,12 +32,15 @@ type subRun struct {
 	thinkingSince time.Time
 	done          bool
 	report        string
+	// background runs report through a task notification, not the task result.
+	background bool
 }
 
 func (m *model) newSubRun(call llm.ToolCall, entryIdx int, started time.Time) *subRun {
 	m.subSeq++
 	typ, _ := call.Args["subagent_type"].(string)
 	desc, _ := call.Args["description"].(string)
+	background, _ := call.Args["run_in_background"].(bool)
 	s := &subRun{
 		num:           m.subSeq,
 		agentType:     typ,
@@ -46,6 +49,7 @@ func (m *model) newSubRun(call llm.ToolCall, entryIdx int, started time.Time) *s
 		entry:         entryIdx,
 		pending:       map[string]bool{},
 		thinkingSince: started,
+		background:    background,
 	}
 	m.subs[call.ID] = s
 	return s
@@ -59,15 +63,39 @@ func (s *subRun) title() string {
 
 // thinking reports whether the subagent is waiting for its model.
 func (s *subRun) thinking() bool {
-	return !s.done && !s.replied && len(s.pending) == 0
+	return !s.done && !s.background && !s.replied && len(s.pending) == 0
 }
 
-// finish records the task result that ends the subagent run.
+// finish records the task result, which ends the subagent run unless it
+// started in the background.
 func (s *subRun) finish(msg llm.Message) {
-	s.done = true
-	if msg.Status != llm.ToolStatusError {
-		s.report = firstLine(msg.Text())
+	if msg.Status == llm.ToolStatusError {
+		s.done = true
+		return
 	}
+	if s.background {
+		s.report = "running in the background"
+		return
+	}
+	s.done = true
+	s.report = firstLine(msg.Text())
+}
+
+// taskNotification finishes the background run a notification reports on.
+func (m *model) taskNotification(n subagents.Notification) {
+	s := m.subs[n.TaskID]
+	if s == nil {
+		m.info(fmt.Sprintf("background task %s %s", n.TaskID, n.Status))
+		return
+	}
+	s.done, s.report = true, firstLine(n.Result)
+	e := &m.entries[s.entry]
+	mark := "✓"
+	if n.Status != subagents.TaskCompleted {
+		mark, e.failed = "✗ "+n.Status, true
+	}
+	e.meta = mark
+	m.invalidate(s.entry)
 }
 
 // stop ends a run that will not report back (cancelled or failed run).
@@ -148,4 +176,9 @@ func (m *model) renderSub(s *subRun, prefix string, width int) []string {
 		out = append(out, styleMeta.Render(prefix+ansi.Truncate("↳ "+s.report, room, "…")))
 	}
 	return out
+}
+
+func isNotification(msg llm.Message) bool {
+	_, ok := subagents.ParseNotification(msg.Text())
+	return ok
 }

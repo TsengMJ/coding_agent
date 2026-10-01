@@ -44,6 +44,8 @@ func (m *switchModel) pick(ctx context.Context) runModel {
 func (m *switchModel) Info() llm.ModelInfo       { return m.def.model.Info() }
 func (m *switchModel) Profile() llm.ModelProfile { return m.def.model.Profile() }
 
+func (m *switchModel) ForContext(ctx context.Context) llm.ChatModel { return m.pick(ctx).model }
+
 func (m *switchModel) Generate(ctx context.Context, req llm.ChatRequest) (*llm.Message, error) {
 	rm := m.pick(ctx)
 	reply, err := rm.model.Generate(ctx, req)

@@ -11,7 +11,7 @@ import (
 )
 
 // localContextTimeout bounds every git command so a slow or locked repo
-// cannot delay agent startup.
+// cannot delay model requests indefinitely.
 const localContextTimeout = 2 * time.Second
 
 // maxStatusEntries caps the `git status` lines shown in the prompt.

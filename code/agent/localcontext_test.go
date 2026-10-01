@@ -48,6 +48,72 @@ func TestLocalContextOutsideGit(t *testing.T) {
 	}
 }
 
+func TestCachedAgentRefreshesProjectContext(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q", "-b", "trunk").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	model := llm.NewFakeModel(llm.NewAssistantMessage("one"), llm.NewAssistantMessage("two"))
+	a, err := CreateCLIAgent(context.Background(), Options{Model: model, Cwd: dir, AutoApprove: true, NoWebTools: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, question := range []string{"first", "second"} {
+		if question == "second" {
+			if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := exec.Command("git", "-C", dir, "switch", "-q", "-c", "feature").CombinedOutput(); err != nil {
+				t.Fatalf("git switch: %v: %s", err, out)
+			}
+		}
+		if _, err := a.Invoke(context.Background(), core.Input{Messages: []llm.Message{llm.NewUserMessage(question)}}, rt.RunConfig{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, second := model.Requests()[0].Messages[0].Text(), model.Requests()[1].Messages[0].Text()
+	if !strings.Contains(first, "Git branch: `trunk`") || strings.Contains(first, "Project files: go.mod") {
+		t.Fatalf("first context has wrong project snapshot")
+	}
+	for _, want := range []string{"Git branch: `feature`", "?? go.mod", "Project files: go.mod"} {
+		if !strings.Contains(second, want) {
+			t.Fatalf("second context missing %q: %q", want, second)
+		}
+	}
+}
+
+func TestLiveContextUsesExplicitOverrideAndDropsUnavailableGit(t *testing.T) {
+	dir := t.TempDir()
+	mw := &liveContext{cwd: dir, model: llm.NewFakeModel(), project: "fixed project"}
+	req := &core.ModelRequest{}
+	var got string
+	next := func(_ context.Context, r *core.ModelRequest) (*core.ModelResponse, error) {
+		got = r.SystemMessage.Text()
+		return &core.ModelResponse{}, nil
+	}
+	if _, err := mw.WrapModelCall(context.Background(), req, next); err != nil || !strings.Contains(got, "fixed project") {
+		t.Fatalf("override = %q, %v", got, err)
+	}
+	mw.project = ""
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = mw.WrapModelCall(context.Background(), req, next)
+	if !strings.Contains(got, "go.mod") {
+		t.Fatalf("marker missing: %q", got)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = mw.WrapModelCall(context.Background(), req, next)
+	if strings.Contains(got, "go.mod") {
+		t.Fatalf("stale context remained: %q", got)
+	}
+}
+
 func TestCLIAgentLoadsMemoryAndTodos(t *testing.T) {
 	cwd, userDir := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte("project rule"), 0o600); err != nil {

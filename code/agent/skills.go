@@ -62,10 +62,11 @@ const ArtifactsRoot = "/.deepagents"
 
 // withHostRoutes mounts each existing host directory in roots as a read-only
 // CompositeBackend route at its own host path, so project file tools can
-// read (never write) user-level skills. Every other path, and Execute, stay
-// on b. Large-result eviction writes under ArtifactsRoot.
-func withHostRoutes(b backend.Backend, roots []string) backend.Backend {
-	routes := map[string]backend.Backend{}
+// read (never write) user-level skills, and routes the artifact directories
+// to a's stores. Every other path, and Execute, stay on b. Large-result
+// eviction writes under ArtifactsRoot.
+func withHostRoutes(b backend.Backend, roots []string, a *Artifacts, cwd string) backend.Backend {
+	routes := artifactRoutes(cwd, a)
 	for _, root := range roots {
 		if st, err := os.Stat(root); err != nil || !st.IsDir() {
 			continue

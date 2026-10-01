@@ -14,6 +14,8 @@ var DCode = []Command{
 	{Name: "/context", Description: "break down what fills the context window"},
 	{Name: "/cost", Description: "show tokens and estimated cost per model"},
 	{Name: "/yolo", Description: "toggle auto-approval of tool calls"},
+	{Name: "/plan", Description: "toggle plan mode: research read-only and write a plan before changing anything"},
+	{Name: "/build", Description: "leave plan mode and implement the thread's latest plan"},
 	{Name: "/help", Description: "show this help"},
 	{Name: "/quit", Aliases: []string{"/exit", "/q"}, Description: "exit"},
 }

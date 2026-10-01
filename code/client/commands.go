@@ -22,6 +22,11 @@ type Session interface {
 	Compact(ctx context.Context)
 	AutoApprove() bool
 	SetAutoApprove(on bool)
+	// Mode is server.ModeAgent or server.ModePlan, sent with every run.
+	Mode() string
+	SetMode(mode string)
+	// Build switches to agent mode and starts implementing the thread's plan.
+	Build(ctx context.Context)
 	// Model is the "provider:model" the next run uses, for display; empty
 	// when unknown.
 	Model() string
@@ -74,6 +79,18 @@ func NewCommandRegistry(s Session, opts CommandOptions) *commands.Registry {
 			s.SetAutoApprove(!s.AutoApprove())
 			return nil
 		},
+		"/plan": func(context.Context, string) error {
+			if s.Mode() == server.ModePlan {
+				s.SetMode(server.ModeAgent)
+			} else {
+				s.SetMode(server.ModePlan)
+			}
+			return nil
+		},
+		"/build": func(ctx context.Context, _ string) error {
+			s.Build(ctx)
+			return nil
+		},
 		"/help": func(context.Context, string) error {
 			help := reg.Help()
 			if opts.HelpFooter != "" {
@@ -112,6 +129,22 @@ func NewCommandRegistry(s Session, opts CommandOptions) *commands.Registry {
 		}
 	}
 	return reg
+}
+
+// BuildMessage is the user message a /build run sends with BuildPlan.
+const BuildMessage = "Build the approved plan."
+
+// BuildRequest starts implementing the thread's plan in agent mode.
+func BuildRequest() server.RunRequest {
+	return server.RunRequest{Messages: []llm.Message{llm.NewUserMessage(BuildMessage)}, BuildPlan: true, Mode: server.ModeAgent}
+}
+
+// ModeLine reports a mode switch.
+func ModeLine(mode string) string {
+	if mode == server.ModePlan {
+		return "plan mode on: read-only research, then a plan to review (/build to implement it, /plan to leave)"
+	}
+	return "plan mode off"
 }
 
 const modelUsage = "usage: /model [provider:model] [--default]"

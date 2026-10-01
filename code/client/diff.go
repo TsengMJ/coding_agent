@@ -1,6 +1,7 @@
 package client
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 
 	udiff "github.com/aymanbagabas/go-udiff"
 
+	"github.com/tsengmingchun/deepagents_golang/code/codetools"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
 )
 
@@ -39,9 +41,35 @@ func ActionDiff(req hitl.ActionRequest, cwd string) string {
 			n = -1
 		}
 		return clipDiff(udiff.Unified(path, path, before, strings.Replace(before, old, repl, n)))
+	case "apply_patch":
+		return patchDiff(str("patch"), cwd)
 	default:
 		return ""
 	}
+}
+
+// patchDiff previews an apply_patch call as one unified diff per file; ""
+// (falling back to the raw patch) when the patch would not apply.
+func patchDiff(patch, cwd string) string {
+	planned, err := codetools.PlanPatch(patch, func(p string) (string, bool, error) {
+		s, err := readUnder(cwd, p)
+		switch {
+		case err == nil:
+			return s, true, nil
+		case errors.Is(err, os.ErrNotExist):
+			return "", false, nil
+		default:
+			return "", false, err
+		}
+	})
+	if err != nil {
+		return ""
+	}
+	parts := make([]string, len(planned))
+	for i, f := range planned {
+		parts[i] = strings.TrimRight(f.UnifiedDiff(), "\n")
+	}
+	return clipDiff(strings.Join(parts, "\n"))
 }
 
 // ActionPreviewIn prefers a diff against the files in cwd and falls back to

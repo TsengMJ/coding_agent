@@ -75,7 +75,7 @@ func MetricsFromTrace(calls []trace.LLMCallDetail, prices cost.Table) Metrics {
 				if p, _ := call.Args["file_path"].(string); p != "" {
 					filesRead[p] = true
 				}
-			case "write_file", "edit_file":
+			case "write_file", "edit_file", "apply_patch":
 				if main && m.FirstEditStep == nil {
 					step := m.Steps
 					m.FirstEditStep = &step

@@ -18,11 +18,8 @@ type runTrace struct {
 }
 
 // startTrace returns ctx carrying the thread's recorder, or ctx unchanged
-// when tracing is off or the trace file cannot be opened.
+// when the thread's trace cannot be read.
 func (s *Service) startTrace(ctx context.Context, threadID string) (context.Context, *runTrace) {
-	if s.traces == nil {
-		return ctx, nil
-	}
 	rec, err := s.traces.Recorder(threadID)
 	if err != nil {
 		log.Printf("dcode: tracing is off for thread %s: %v", threadID, err)

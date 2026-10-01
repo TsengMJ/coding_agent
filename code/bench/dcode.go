@@ -49,6 +49,16 @@ type DcodeSolver struct {
 	KeepWorkspace bool
 	// DockerBinary runs the agent's shell commands (default "docker").
 	DockerBinary string
+	// Traces records each attempt's trace under its own thread; required.
+	Traces trace.Log
+}
+
+// TracePrefix starts SolveResult.TracePath; the rest is the trace thread ID.
+const TracePrefix = "dcode_trace_records:"
+
+// traceThread names one attempt's trace.
+func traceThread(env SolveEnv, task Task) string {
+	return fmt.Sprintf("bench/%s/%s/%d", env.RunID, task.InstanceID, env.Trial)
 }
 
 func (*DcodeSolver) Name() string { return SolverDcode }
@@ -87,12 +97,14 @@ func (s *DcodeSolver) Solve(ctx context.Context, task Task, env SolveEnv) (Solve
 	if res, err := d.Exec(ctx, id, ExecSpec{Cmd: []string{"git", "config", "--global", "--add", "safe.directory", "*"}, Timeout: captureTimeout}); err != nil || res.ExitCode != 0 {
 		return SolveResult{}, fmt.Errorf("configure git: %v %s", err, res.Stderr)
 	}
-
-	logDir := env.LogDir
-	if logDir == "" {
-		logDir = env.WorkDir
+	// The copy out of the image changed every file's stat data, and the git
+	// tools never write the index (GIT_OPTIONAL_LOCKS=0); without this one
+	// refresh every git status / diff re-hashes the whole tree.
+	if res, err := d.Exec(ctx, id, ExecSpec{Cmd: []string{"git", "update-index", "-q", "--refresh"}, Workdir: repoDir, Timeout: captureTimeout}); err != nil || res.ExitCode != 0 {
+		return SolveResult{}, fmt.Errorf("refresh git index: %v %s", err, res.Stderr)
 	}
-	res := s.runAgent(ctx, task, id, ws, repoDir, logDir)
+
+	res := s.runAgent(ctx, task, id, ws, repoDir, traceThread(env, task))
 	if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return SolveResult{}, ctx.Err()
 	}
@@ -106,8 +118,12 @@ func (s *DcodeSolver) Solve(ctx context.Context, task Task, env SolveEnv) (Solve
 
 // runAgent runs dcode until it finishes or hits a budget; the outcome is
 // described by Category and Error rather than returned as an error.
-func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, repoDir, logDir string) SolveResult {
+func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, repoDir, threadID string) SolveResult {
 	var res SolveResult
+	if s.Traces == nil {
+		res.Category, res.Error = CategoryAgentError, "bench.DcodeSolver: Traces is required"
+		return res
+	}
 	timeout := s.Timeout
 	if timeout <= 0 {
 		timeout = time.Duration(task.AgentTimeout * float64(time.Second))
@@ -121,14 +137,14 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 		return res
 	}
 	model := &meteredModel{ChatModel: inner, prices: s.Prices, limit: s.MaxCostUSD}
-	traces := trace.NewStore(logDir)
+	traces := trace.NewStore(s.Traces)
 	defer traces.Close()
-	rec, err := traces.Recorder("trace")
+	rec, err := traces.Recorder(threadID)
 	if err != nil {
 		res.Category, res.Error = CategoryAgentError, err.Error()
 		return res
 	}
-	res.TracePath = filepath.Join(logDir, "trace.jsonl")
+	res.TracePath = TracePrefix + threadID
 
 	b := backend.NewDockerExecBackend(backend.DockerExecOptions{
 		FilesystemOptions: backend.FilesystemOptions{RootDir: ws, VirtualMode: true},
@@ -158,8 +174,7 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 	if runErr != nil {
 		res.Category, res.Error = classifyAgentError(runErr, runCtx, model), runErr.Error()
 	}
-	_ = traces.Close()
-	if calls, err := traces.Details("trace"); err == nil {
+	if calls, err := traces.Details(threadID); err == nil {
 		res.Metrics = MetricsFromTrace(calls, s.Prices)
 	}
 	res.Metrics.AgentMS = agentMS

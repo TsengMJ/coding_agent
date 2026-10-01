@@ -54,6 +54,15 @@ func testStore(t *testing.T, s Store) {
 	if got == nil || got.Cwd != p || got.Title != "first" || got.MessageCount != 4 || !got.CreatedAt.Equal(base) {
 		t.Fatalf("a = %+v", got)
 	}
+	renamed, err := s.SetTitle(ctx, id("a"), "My project")
+	must(err)
+	if renamed == nil || renamed.Title != "My project" {
+		t.Fatalf("renamed = %+v", renamed)
+	}
+	must(s.Touch(ctx, Info{ThreadID: id("a"), Cwd: p, Title: "ignored", MessageCount: 5}))
+	if got, err = s.Get(ctx, id("a")); err != nil || got.Title != "My project" {
+		t.Fatalf("title after touch = %+v, %v", got, err)
+	}
 	list, err := s.List(ctx, Filter{Cwd: p})
 	must(err)
 	if len(list) != 2 || list[0].ThreadID != id("a") || list[1].ThreadID != id("b") {
@@ -70,6 +79,9 @@ func testStore(t *testing.T, s Store) {
 	}
 	if missing, err := s.Get(ctx, id("zzz")); err != nil || missing != nil {
 		t.Fatalf("missing = %+v, %v", missing, err)
+	}
+	if missing, err := s.SetTitle(ctx, id("zzz"), "missing"); err != nil || missing != nil {
+		t.Fatalf("rename missing = %+v, %v", missing, err)
 	}
 }
 

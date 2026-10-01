@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tsengmingchun/deepagents_golang/code/client"
+	"github.com/tsengmingchun/deepagents_golang/code/server"
 )
 
 var (
@@ -80,6 +81,9 @@ func (m *model) statusLine() string {
 	if m.ctxPct >= 0 {
 		parts = append(parts, fmt.Sprintf("context %.0f%%", m.ctxPct))
 	}
+	if m.runMode == server.ModePlan {
+		parts = append(parts, "PLAN MODE")
+	}
 	if m.auto {
 		parts = append(parts, "AUTO-APPROVE")
 	}
@@ -105,6 +109,11 @@ func (m *model) helpLine() string {
 		return "Enter reject with reason · Esc back"
 	case modePicker:
 		return "↑/↓ choose · Enter open · Esc close"
+	case modeAsk:
+		if m.ask != nil && m.ask.other {
+			return "Enter submit answer · Esc back to options"
+		}
+		return "↑/↓ or 1-9 choose · Space toggle (multi) · Enter answer · Esc skip questions"
 	default:
 		return "Enter send · /help commands · Ctrl-C quit · PgUp/PgDn scroll"
 	}
@@ -249,6 +258,11 @@ func (m *model) panel() string {
 			b.WriteString("\n\n" + clipLines(preview, max(m.height-16, 4)))
 		}
 		return styleBox.Width(width).Render(b.String())
+	case modeAsk:
+		if m.ask == nil {
+			return ""
+		}
+		return styleBox.Width(width).Render(m.askPanel())
 	case modePicker:
 		var b strings.Builder
 		b.WriteString("Threads in this directory\n")

@@ -3,23 +3,20 @@
 // tools), the diff of every file change, and the messages of subagent runs,
 // which never reach thread state.
 //
-// Each thread has one JSONL file. System prompts, messages and tool lists
-// repeat across model calls, so each distinct one is stored once as a blob
-// and model calls refer to blobs by hash.
+// Each thread is an append-only sequence of JSON records kept in a Log
+// (Postgres in dcode). System prompts, messages and tool lists repeat
+// across model calls, so each distinct one is stored once as a blob and
+// model calls refer to blobs by hash.
 package trace
 
 import (
-	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"os"
-	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -31,8 +28,16 @@ import (
 // ErrNotFound is returned when a model call is not in the trace.
 var ErrNotFound = errors.New("trace record not found")
 
-// maxLineBytes caps one JSONL line (a blob with a large tool output).
-const maxLineBytes = 64 << 20
+// Log keeps each thread's records, one JSON document per line, in the
+// order they were appended.
+type Log interface {
+	// Append stores lines as one unit: readers see all of them or none, so
+	// a record is never read without the blobs it refers to.
+	Append(ctx context.Context, threadID string, lines [][]byte) error
+	// Each calls fn with every line of threadID in order until fn returns
+	// false. An unknown thread has no lines.
+	Each(ctx context.Context, threadID string, fn func(line []byte) bool) error
+}
 
 // responseTextLimit caps the reply text kept in an LLMCall summary.
 const responseTextLimit = 400
@@ -100,7 +105,7 @@ type Update struct {
 	Diff    *Diff    `json:"diff,omitempty"`
 }
 
-// record is one JSONL line.
+// record is one line of a thread's log.
 type record struct {
 	Type    string     `json:"type"`
 	Blob    *blob      `json:"blob,omitempty"`
@@ -123,51 +128,40 @@ type llmRecord struct {
 	Response    *llm.Message   `json:"response,omitempty"`
 }
 
-// Store keeps trace files under a directory.
+// Store reads and writes thread traces in a Log.
 type Store struct {
-	dir  string
+	log  Log
 	mu   sync.Mutex
 	recs map[string]*Recorder
 }
 
-// NewStore returns a store writing to dir, created on first use.
-func NewStore(dir string) *Store {
-	return &Store{dir: dir, recs: map[string]*Recorder{}}
+// NewStore returns a store on log.
+func NewStore(log Log) *Store {
+	return &Store{log: log, recs: map[string]*Recorder{}}
 }
 
-// Recorder returns the recorder for threadID, opening its file on first use.
+// Recorder returns the recorder for threadID, reading its existing records
+// on first use so sequence numbers and blob dedup continue.
 func (s *Store) Recorder(threadID string) (*Recorder, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r, ok := s.recs[threadID]; ok {
 		return r, nil
 	}
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return nil, fmt.Errorf("trace: create %s: %w", s.dir, err)
-	}
-	f, err := os.OpenFile(s.path(threadID), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("trace: open: %w", err)
-	}
-	r := &Recorder{f: f, blobs: map[string]bool{}, last: map[string][]string{}}
+	r := &Recorder{log: s.log, threadID: threadID, blobs: map[string]bool{}, last: map[string][]string{}}
 	if err := r.scan(); err != nil {
-		f.Close()
 		return nil, err
 	}
 	s.recs[threadID] = r
 	return r, nil
 }
 
-// Close closes every open trace file.
+// Close forgets the open recorders; the Log's owner closes the Log.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var errs []error
-	for id, r := range s.recs {
-		errs = append(errs, r.close())
-		delete(s.recs, id)
-	}
-	return errors.Join(errs...)
+	clear(s.recs)
+	return nil
 }
 
 // Load returns the summaries recorded for threadID; an unknown thread has
@@ -268,56 +262,34 @@ func decodeBlob(blobs map[string]json.RawMessage, hash string, v any) error {
 	return nil
 }
 
-// each calls fn for every record of threadID until fn returns false. A
-// torn last line (a write in progress) is skipped.
+// each calls fn for every record of threadID until fn returns false.
 func (s *Store) each(threadID string, fn func(record) bool) error {
-	f, err := os.Open(s.path(threadID))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("trace: open: %w", err)
-	}
-	defer f.Close()
-	return readRecords(f, fn)
+	return readRecords(s.log, threadID, fn)
 }
 
-func readRecords(r io.Reader, fn func(record) bool) error {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64<<10), maxLineBytes)
-	for sc.Scan() {
+// readRecords decodes threadID's lines; a line that does not decode is
+// skipped rather than failing the whole trace.
+func readRecords(l Log, threadID string, fn func(record) bool) error {
+	err := l.Each(context.Background(), threadID, func(line []byte) bool {
 		var rec record
-		if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
-			continue
+		if err := json.Unmarshal(line, &rec); err != nil {
+			return true
 		}
-		if !fn(rec) {
-			return nil
-		}
-	}
-	if err := sc.Err(); err != nil {
-		return fmt.Errorf("trace: read: %w", err)
+		return fn(rec)
+	})
+	if err != nil {
+		return fmt.Errorf("trace: read %s: %w", threadID, err)
 	}
 	return nil
 }
 
-var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]`)
-
-// path maps a thread ID to a file name; IDs with unsafe characters are
-// hashed so they can never leave the directory.
-func (s *Store) path(threadID string) string {
-	name := threadID
-	if name == "" || unsafeName.MatchString(name) || strings.HasPrefix(name, ".") {
-		name = hashBytes([]byte(threadID))
-	}
-	return filepath.Join(s.dir, name+".jsonl")
-}
-
-// Recorder appends records to one thread's trace file.
+// Recorder appends records to one thread's log.
 type Recorder struct {
-	mu    sync.Mutex
-	f     *os.File
-	seq   int
-	blobs map[string]bool
+	mu       sync.Mutex
+	log      Log
+	threadID string
+	seq      int
+	blobs    map[string]bool
 	// last holds the message hashes of the latest call per namespace.
 	last     map[string][]string
 	listen   func(Update)
@@ -333,10 +305,7 @@ func (r *Recorder) Listen(fn func(Update)) {
 }
 
 func (r *Recorder) scan() error {
-	if _, err := r.f.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("trace: seek: %w", err)
-	}
-	return readRecords(r.f, func(rec record) bool {
+	return readRecords(r.log, r.threadID, func(rec record) bool {
 		switch {
 		case rec.Blob != nil:
 			r.blobs[rec.Blob.Hash] = true
@@ -456,21 +425,17 @@ func (r *Recorder) blob(v any) (string, []byte, error) {
 	return h, line, nil
 }
 
-// write appends lines in one write so readers never see a record without
+// write appends lines as one unit so readers never see a record without
 // the blobs it refers to.
 func (r *Recorder) write(lines [][]byte) error {
-	var buf []byte
-	for _, l := range lines {
-		buf = append(append(buf, l...), '\n')
-	}
-	if _, err := r.f.Write(buf); err != nil {
+	if err := r.log.Append(context.Background(), r.threadID, lines); err != nil {
 		return fmt.Errorf("trace: write: %w", err)
 	}
 	return nil
 }
 
 // warn reports the first recording failure on stderr; later ones are
-// dropped so a full disk does not flood the terminal.
+// dropped so an unreachable database does not flood the terminal.
 func (r *Recorder) warn(err error) {
 	r.warnOnce.Do(func() {
 		log.Printf("dcode: trace recording failed, details for this thread may be incomplete: %v", err)
@@ -481,12 +446,6 @@ func (r *Recorder) notify(u Update) {
 	if r.listen != nil {
 		r.listen(u)
 	}
-}
-
-func (r *Recorder) close() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.f.Close()
 }
 
 func appendLine(lines [][]byte, line []byte) [][]byte {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tsengmingchun/deepagents_golang/backend"
+	"github.com/tsengmingchun/deepagents_golang/code/cache"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/tool"
 )
@@ -41,7 +43,16 @@ type BraveOptions struct {
 	BaseURL string
 	// Client defaults to an http.Client with a 30s timeout.
 	Client *http.Client
+	// Cache holds results for CacheTTL (default 15 minutes); nil disables it.
+	Cache    cache.Cache
+	CacheTTL time.Duration
 }
+
+// Defaults applied when the call leaves them unset.
+const (
+	DefaultWebSearchCount    = 8
+	DefaultWebSearchCacheTTL = 15 * time.Minute
+)
 
 // NewBraveSearch returns web_search backed by the Brave Web Search API. Every
 // API parameter is a tool argument; unset arguments are not sent, so Brave
@@ -53,6 +64,9 @@ func NewBraveSearch(opts BraveOptions) tool.Tool {
 	}
 	if opts.Client == nil {
 		opts.Client = &http.Client{Timeout: 30 * time.Second}
+	}
+	if opts.CacheTTL <= 0 {
+		opts.CacheTTL = DefaultWebSearchCacheTTL
 	}
 	b := &brave{opts: opts}
 	return &tool.Func{
@@ -68,7 +82,8 @@ func NewBraveSearch(opts BraveOptions) tool.Tool {
 const webSearchDescription = "Search the web with Brave Search for current information. " +
 	"Returns result titles, URLs and snippets, plus news, videos, discussions, FAQ, infobox and " +
 	"location results when relevant. Only `query` is required; leave other parameters unset to use " +
-	"Brave's defaults. Use `fetch_url` to read a full page."
+	"the defaults. Use `allowed_domains` to search official docs only. Read a promising page with " +
+	"`fetch_url` and a `prompt` saying what you need from it."
 
 var (
 	braveCountries = []string{"ALL", "AR", "AU", "AT", "BE", "BR", "CA", "CL", "DK", "FI", "FR", "DE", "GR", "HK",
@@ -113,7 +128,7 @@ var braveQueryParams = []braveParam{
 	{name: "ui_lang", kind: kindString, enum: braveUILangs,
 		description: "Language of the response UI strings (<language>-<country>). Brave default: en-US."},
 	{name: "count", kind: kindInt, min: 1, max: 20,
-		description: "Number of web results (1-20). Brave default: 20. Fewer results use fewer tokens."},
+		description: "Number of web results (1-20). Default: 8. Fewer results use fewer tokens."},
 	{name: "offset", kind: kindInt, min: 0, max: 9,
 		description: "Zero-based page of results to skip, in units of `count` (0-9). Only page further when the " +
 			"previous response said more results are available."},
@@ -131,9 +146,10 @@ var braveQueryParams = []braveParam{
 	{name: "units", kind: kindString, enum: []string{"metric", "imperial"},
 		description: "Measurement units in results. Brave default: derived from country."},
 	{name: "goggles", kind: kindStringList, max: braveMaxGoggles,
-		description: "Rarely needed; do not use it to restrict results to a site (put site:example.com in query for that). " +
-			"Up to 3 Goggles that re-rank results; each is the URL of a hosted .goggle file or an inline definition " +
-			"with one rule per line, pattern$options, e.g. \"$boost=3,site=go.dev\" or \"/docs/$downrank\"."},
+		description: "Rarely needed. Up to 3 Goggles that re-rank (not filter) results; each is the URL of a hosted " +
+			".goggle file or an inline definition with one rule per line, pattern$options. " +
+			"Goggle options use '=', never ':' — write \"$boost=3,site=go.dev\", not \"$boost=3,site:go.dev\". " +
+			"To get results only from one site, leave goggles unset and add the site operator to query instead."},
 	{name: "extra_snippets", kind: kindBool,
 		description: "Return up to 5 extra excerpts per web result. Brave default: false."},
 	{name: "summary", kind: kindBool,
@@ -159,6 +175,15 @@ var braveLocationHeaders = []struct {
 	{"country", "x-loc-country", "2-letter country code."},
 	{"postal_code", "x-loc-postal-code", "Postal code."},
 }
+
+// braveDomainArgs restrict results by site; they are added to the query as
+// site: operators.
+var braveDomainArgs = map[string]string{
+	"allowed_domains": "Only return results from these domains, e.g. [\"go.dev\", \"pkg.go.dev\"] (bare hostnames).",
+	"blocked_domains": "Never return results from these domains (bare hostnames).",
+}
+
+var braveDomain = regexp.MustCompile(`^(?i)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 
 var braveExtraArgs = map[string]string{
 	"no_cache":                  "Bypass Brave's cache and search fresh (sends Cache-Control: no-cache).",
@@ -225,6 +250,9 @@ func webSearchSchema() tool.Schema {
 	for name, desc := range braveExtraArgs {
 		props[name] = map[string]any{"type": "boolean", "description": desc}
 	}
+	for name, desc := range braveDomainArgs {
+		props[name] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1, "description": desc}
+	}
 	return tool.Schema{
 		"type":                 "object",
 		"properties":           props,
@@ -253,6 +281,9 @@ func parseBraveArgs(args map[string]any) (*braveRequest, error) {
 	for name := range braveExtraArgs {
 		known[name] = true
 	}
+	for name := range braveDomainArgs {
+		known[name] = true
+	}
 	for k := range args {
 		if !known[k] {
 			return nil, fmt.Errorf("unknown argument %q", k)
@@ -269,6 +300,13 @@ func parseBraveArgs(args map[string]any) (*braveRequest, error) {
 	if n := len(strings.Fields(q)); n > braveMaxQueryWords {
 		return nil, fmt.Errorf("query is %d words; the limit is %d", n, braveMaxQueryWords)
 	}
+	q, err := withDomainFilters(q, args["allowed_domains"], args["blocked_domains"])
+	if err != nil {
+		return nil, err
+	}
+	if n := utf8.RuneCountInString(q); n > braveMaxQueryChars {
+		return nil, fmt.Errorf("query with domain filters is %d characters; the limit is %d", n, braveMaxQueryChars)
+	}
 	req.query.Set("q", q)
 	for _, p := range braveQueryParams {
 		v := args[p.name]
@@ -278,6 +316,9 @@ func parseBraveArgs(args map[string]any) (*braveRequest, error) {
 		if err := p.apply(req.query, v); err != nil {
 			return nil, err
 		}
+	}
+	if !req.query.Has("count") {
+		req.query.Set("count", strconv.Itoa(DefaultWebSearchCount))
 	}
 	req.summary = req.query.Get("summary") == "true"
 	req.rich = req.query.Get("enable_rich_callback") == "true"
@@ -307,6 +348,49 @@ func parseBraveArgs(args map[string]any) (*braveRequest, error) {
 		}
 	}
 	return req, nil
+}
+
+// withDomainFilters appends (site:a OR site:b) for allowed and -site:c for
+// blocked domains.
+func withDomainFilters(q string, allowed, blocked any) (string, error) {
+	allow, err := domainList("allowed_domains", allowed)
+	if err != nil {
+		return "", err
+	}
+	block, err := domainList("blocked_domains", blocked)
+	if err != nil {
+		return "", err
+	}
+	switch len(allow) {
+	case 0:
+	case 1:
+		q += " site:" + allow[0]
+	default:
+		q += " (site:" + strings.Join(allow, " OR site:") + ")"
+	}
+	for _, d := range block {
+		q += " -site:" + d
+	}
+	return q, nil
+}
+
+func domainList(name string, v any) ([]string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	items, ok := v.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of domains", name)
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		s, _ := it.(string)
+		if !braveDomain.MatchString(s) {
+			return nil, fmt.Errorf("%s: %q is not a domain; give bare hostnames like \"go.dev\"", name, it)
+		}
+		out = append(out, strings.ToLower(s))
+	}
+	return out, nil
 }
 
 // isUnset reports whether an optional argument was left empty; models often
@@ -412,8 +496,9 @@ func (p braveParam) apply(q url.Values, v any) error {
 				return fmt.Errorf("%s items must be one of %s, got %q", p.name, strings.Join(p.enum, ", "), s)
 			}
 			if p.name == "goggles" && !validGoggle(s) {
-				return fmt.Errorf("goggles item %q is not a .goggle URL or an inline definition (rules like \"$boost=3,site=go.dev\"); "+
-					"to limit results to a site, use site: in query instead", s)
+				return fmt.Errorf("goggles item %q is not a .goggle URL or an inline definition; "+
+					"goggle options use '=', not ':' (write \"$boost=3,site=go.dev\"). "+
+					"To get results only from one site, drop goggles and put site:example.com in query instead", s)
 			}
 			list = append(list, s)
 		}
@@ -499,6 +584,34 @@ func (b *brave) search(ctx context.Context, args map[string]any) *tool.Result {
 	if err != nil {
 		return errResult("Error: invalid web_search arguments: %v", err)
 	}
+	useCache := b.opts.Cache != nil && req.header.Get("Cache-Control") == ""
+	key := req.cacheKey()
+	if useCache {
+		if v, ok, err := b.opts.Cache.Get(ctx, key); err == nil && ok {
+			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock(string(v))}}
+		}
+	}
+	res := b.searchUncached(ctx, req)
+	if useCache && !res.IsError {
+		_ = b.opts.Cache.Set(ctx, key, []byte(res.Content[0].Text), b.opts.CacheTTL)
+	}
+	return res
+}
+
+// cacheKey identifies the request by everything sent to Brave.
+func (r *braveRequest) cacheKey() string {
+	var h strings.Builder
+	for _, k := range slices.Sorted(maps.Keys(r.header)) {
+		fmt.Fprintf(&h, "%s=%s;", k, strings.Join(r.header[k], ","))
+	}
+	refs := ""
+	if r.inlineRefs != nil {
+		refs = strconv.FormatBool(*r.inlineRefs)
+	}
+	return cache.Key("web_search", r.query.Encode(), h.String(), strconv.FormatBool(r.entityInfo), refs)
+}
+
+func (b *brave) searchUncached(ctx context.Context, req *braveRequest) *tool.Result {
 	var resp braveResponse
 	if err := b.get(ctx, "/web/search", req.query, req.header, &resp); err != nil {
 		return errResult("Error: Brave search failed: %v", err)

@@ -1,0 +1,5 @@
+[
+  {"code": "F401", "filename": "{{CWD}}/app/models.py", "location": {"row": 1, "column": 8}, "end_location": {"row": 1, "column": 10}, "message": "`os` imported but unused", "url": "https://docs.astral.sh/ruff/rules/unused-import"},
+  {"code": "F821", "filename": "{{CWD}}/app/views.py", "location": {"row": 12, "column": 5}, "end_location": {"row": 12, "column": 9}, "message": "Undefined name `user`"},
+  {"code": null, "filename": "{{CWD}}/app/bad.py", "location": {"row": 3, "column": 1}, "end_location": {"row": 3, "column": 2}, "message": "SyntaxError: Expected an expression"}
+]

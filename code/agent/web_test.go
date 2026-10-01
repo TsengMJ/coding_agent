@@ -22,10 +22,10 @@ func names(ts []tool.Tool) []string {
 }
 
 func TestWebToolsNeedBraveKeyForSearch(t *testing.T) {
-	if got := names(WebTools(nil)); !slices.Equal(got, []string{"fetch_url"}) {
+	if got := names(WebTools(WebOptions{})); !slices.Equal(got, []string{"fetch_url"}) {
 		t.Errorf("without key = %v", got)
 	}
-	if got := names(WebTools(&config.Settings{WebSearchAPIKey: "k"})); !slices.Equal(got, []string{"web_search", "fetch_url"}) {
+	if got := names(WebTools(WebOptions{Settings: &config.Settings{WebSearchAPIKey: "k"}})); !slices.Equal(got, []string{"web_search", "fetch_url"}) {
 		t.Errorf("with key = %v", got)
 	}
 }
@@ -120,7 +120,7 @@ func TestFormatWebSearchDescriptionListsNonDefaultArgs(t *testing.T) {
 		}
 	}
 	plain := FormatWebSearchDescription(llm.ToolCall{Args: map[string]any{"query": "x"}})
-	if want := "Query: x\nMax results: Brave default (20)\n\n⚠  This will use Brave Search API credits"; plain != want {
+	if want := "Query: x\nMax results: 8 (default)\n\n⚠  This will use Brave Search API credits"; plain != want {
 		t.Errorf("plain = %q", plain)
 	}
 }
@@ -134,5 +134,49 @@ func TestFormatFetchURLDescriptionWarns(t *testing.T) {
 	}
 	if got := FormatFetchURLDescription(llm.ToolCall{Args: map[string]any{"url": "https://go.dev", "timeout": float64(10)}}); strings.Contains(got, "warning") || !strings.Contains(got, "Timeout: 10s") {
 		t.Errorf("plain = %q", got)
+	}
+}
+
+func TestFormatFetchURLDescriptionShowsPrompt(t *testing.T) {
+	got := FormatFetchURLDescription(llm.ToolCall{Args: map[string]any{"url": "https://go.dev", "prompt": "latest Go version"}})
+	if !strings.Contains(got, "Prompt: latest Go version") {
+		t.Fatalf("description = %q", got)
+	}
+}
+
+func TestWebToolsAddContext7WithKey(t *testing.T) {
+	got := names(WebTools(WebOptions{Settings: &config.Settings{Context7APIKey: "k"}}))
+	if !slices.Equal(got, []string{"fetch_url", "resolve_library_id", "query_docs"}) {
+		t.Errorf("with Context7 key = %v", got)
+	}
+}
+
+func TestContext7ToolsRequireApproval(t *testing.T) {
+	cfg := DefaultInterruptOn()
+	for _, name := range []string{"resolve_library_id", "query_docs"} {
+		if c, ok := cfg[name]; !ok || c.Describe == nil {
+			t.Errorf("%s must be reviewed with a per-call description", name)
+		}
+	}
+	got := FormatContext7Description(llm.ToolCall{Args: map[string]any{"library_id": "/vercel/next.js", "query": "middleware"}})
+	if want := "Library ID: /vercel/next.js\nQuery: middleware\n\n⚠  This will send the query to Context7 and use API credits"; got != want {
+		t.Errorf("description = %q", got)
+	}
+}
+
+func TestLookupSectionOrdersSources(t *testing.T) {
+	prompt, _ := SystemPrompt(Options{Cwd: "/w", Settings: &config.Settings{WebSearchAPIKey: "k", Context7APIKey: "c"}})
+	order := []string{"### Looking Things Up", "dependency manifests", "`resolve_library_id`", "`web_search` for everything else", "`fetch_url` to read", WebResearcherName}
+	last := -1
+	for _, want := range order {
+		i := strings.Index(prompt, want)
+		if i <= last {
+			t.Fatalf("%q missing or out of order in:\n%s", want, prompt)
+		}
+		last = i
+	}
+	plain, _ := SystemPrompt(Options{Cwd: "/w"})
+	if strings.Contains(plain, "resolve_library_id") || strings.Contains(plain, WebResearcherName) {
+		t.Error("prompt without keys must not mention Context7 or the researcher")
 	}
 }

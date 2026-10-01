@@ -99,3 +99,31 @@ func TestInterruptOnSkipsAllowListedCommands(t *testing.T) {
 		t.Error(`"all": execute should not be reviewed`)
 	}
 }
+
+func TestInterruptOnRunnerToolsFollowAllowList(t *testing.T) {
+	runnerTools := []string{"run_tests", "diagnostics"}
+	for _, tc := range []struct {
+		name     string
+		settings *config.Settings
+		reviewed bool
+	}{
+		{"no settings", nil, true},
+		{"allow list without runners", &config.Settings{ShellAllowList: []string{"ls"}}, true},
+		{"allow list with go only", &config.Settings{ShellAllowList: []string{"ls", "go"}}, true},
+		{"allow list with every runner", &config.Settings{ShellAllowList: []string{"go", "npx", "npm", "node", "python3", "python", "ruff"}}, false},
+		{"all", &config.Settings{ShellAllowAll: true}, false},
+	} {
+		cfg := InterruptOn(tc.settings)
+		for _, name := range runnerTools {
+			if _, ok := cfg[name]; ok != tc.reviewed {
+				t.Errorf("%s: %s reviewed = %v, want %v", tc.name, name, ok, tc.reviewed)
+			}
+		}
+	}
+	if _, ok := InterruptOn(nil)["apply_patch"]; !ok {
+		t.Error("apply_patch must always be reviewed")
+	}
+	if _, ok := InterruptOn(nil)["git_diff"]; ok {
+		t.Error("git_diff is read-only and must not be reviewed")
+	}
+}
