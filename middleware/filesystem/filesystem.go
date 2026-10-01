@@ -138,7 +138,13 @@ func (m *Middleware) WrapModelCall(ctx context.Context, req *agent.ModelRequest,
 	if m.opts.SystemPrompt != "" {
 		updated.SystemMessage = agent.AppendToSystemMessage(req.SystemMessage, m.opts.SystemPrompt)
 	}
-	msgs, upd, evicted := m.evictHumanMessages(ctx, req)
+	limit := m.opts.HumanMessageTokenLimitBeforeEvict
+	if active := llm.ModelForContext(ctx, req.Model); active != nil && active.Profile().MaxInputTokens > 0 {
+		limit = min(limit, max(active.Profile().MaxInputTokens/4, 1))
+	} else {
+		limit = min(limit, 4000)
+	}
+	msgs, upd, evicted := m.evictHumanMessages(ctx, req, limit)
 	if evicted {
 		updated.Messages = msgs
 	}

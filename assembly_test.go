@@ -110,7 +110,7 @@ func toolNames(req llm.ChatRequest) []string {
 
 func TestDefaultStackOrder(t *testing.T) {
 	got := middlewareNames(stackFor(t, Options{Model: llm.NewFakeModel(), Backend: tempBackend(t)}))
-	want := []string{"FilesystemMiddleware", "SubAgentMiddleware", "SummarizationMiddleware", "PatchToolCallsMiddleware"}
+	want := []string{"FilesystemMiddleware", "SubAgentMiddleware", "PatchToolCallsMiddleware", "SummarizationMiddleware"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("stack = %v, want %v", got, want)
 	}
@@ -132,12 +132,12 @@ func TestCallerMiddlewareReplacesByNameAndOtherwiseLandsBeforeTheTail(t *testing
 		Middleware:  []agent.Middleware{todolist.New("", ""), custom},
 		InterruptOn: map[string]hitl.InterruptOnConfig{"execute": {}},
 	})
-	want := []string{"FilesystemMiddleware", "SubAgentMiddleware", "SummarizationMiddleware", "PatchToolCallsMiddleware", "TodoListMiddleware", "HumanInTheLoopMiddleware"}
+	want := []string{"FilesystemMiddleware", "SubAgentMiddleware", "PatchToolCallsMiddleware", "TodoListMiddleware", "HumanInTheLoopMiddleware", "SummarizationMiddleware"}
 	if got := middlewareNames(stack); !slices.Equal(got, want) {
 		t.Fatalf("stack = %v, want %v", got, want)
 	}
-	if stack[2] != agent.Middleware(custom) {
-		t.Fatal("caller summarization must replace the default in place")
+	if stack[len(stack)-1] != agent.Middleware(custom) {
+		t.Fatal("caller summarization must replace the default and count the final request")
 	}
 }
 

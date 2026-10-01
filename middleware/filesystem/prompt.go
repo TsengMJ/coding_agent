@@ -46,7 +46,8 @@ Usage:
 		"A pattern without `/` matches the file name at any depth under the search root (`*.py` matches `src/app/main.py`). A pattern containing `/` matches the search-root-relative path (`src/**/*.py`). A leading `/` anchors to the search root (`/*.py` matches only top-level Python files)."
 
 	grepDescription = "Search for a LITERAL text pattern across files (NOT regex).\n\n" +
-		"The pattern is matched verbatim: regex metacharacters are ordinary characters, not operators. To match any of several strings, run a separate grep for each; `grep(pattern=\"foo|bar\")` searches for the literal text \"foo|bar\", and `.*` or `\\.` match those characters literally."
+		"The pattern is matched verbatim: regex metacharacters are ordinary characters, not operators. To match any of several strings, run a separate grep for each; `grep(pattern=\"foo|bar\")` searches for the literal text \"foo|bar\", and `.*` or `\\.` match those characters literally.\n\n" +
+		"Dependency directories (`node_modules`, `.venv`, `__pycache__`) are skipped; pass a path inside one to search it."
 
 	grepExecuteFallback = "\n- If you genuinely need regex, use the execute tool with `rg '<regex>'` instead."
 

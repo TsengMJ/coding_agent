@@ -63,5 +63,16 @@ type ChatModel interface {
 	Stream(ctx context.Context, req ChatRequest) iter.Seq2[Chunk, error]
 }
 
+// ModelForContext resolves a run-selected model when a wrapper supports it.
+// Other models are returned unchanged.
+func ModelForContext(ctx context.Context, model ChatModel) ChatModel {
+	if selected, ok := model.(interface {
+		ForContext(context.Context) ChatModel
+	}); ok {
+		return selected.ForContext(ctx)
+	}
+	return model
+}
+
 // TokenCounter estimates the token count of messages (and optionally tools).
 type TokenCounter func(messages []Message, tools []ToolSpec) int

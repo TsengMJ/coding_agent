@@ -102,6 +102,7 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 			SubAgents:       specs,
 			TaskDescription: a.profile.ToolDescriptionOverrides[subagents.TaskToolName],
 			StateSchema:     o.StateSchema,
+			Background:      o.BackgroundTasks,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
@@ -149,6 +150,7 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 	if err := a.verifyExcludedCoverage(); err != nil {
 		return nil, err
 	}
+	stack = placeSummarizationLast(stack)
 	shareSchemaPrivacy(stack, o.StateSchema)
 	return stack, nil
 }
@@ -236,6 +238,7 @@ func (a *assembly) generalPurpose() (subagents.SubAgent, error) {
 	if len(a.profile.ExcludedTools) > 0 {
 		mw = append(mw, toolexclusion.New(a.profile.ExcludedTools))
 	}
+	mw = placeSummarizationLast(mw)
 
 	spec := subagents.SubAgent{
 		Name:         subagents.GeneralPurposeName,
@@ -308,6 +311,7 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 	if len(profile.ExcludedTools) > 0 {
 		mw = append(mw, toolexclusion.New(profile.ExcludedTools))
 	}
+	mw = placeSummarizationLast(mw)
 
 	tools := s.Tools
 	if tools == nil {
@@ -401,6 +405,18 @@ func mergeMiddleware(stack, extra []agent.Middleware, coreLen int) ([]agent.Midd
 		added = append(added, m)
 	}
 	return slices.Insert(out, coreLen, added...), nil
+}
+
+// placeSummarizationLast lets it measure the fully assembled model request,
+// including memory, skills, caller prompts and filtered tools.
+func placeSummarizationLast(stack []agent.Middleware) []agent.Middleware {
+	for i, mw := range stack {
+		if mw.Name() == "SummarizationMiddleware" {
+			out := slices.Delete(slices.Clone(stack), i, i+1)
+			return append(out, mw)
+		}
+	}
+	return stack
 }
 
 // shareSchemaPrivacy tells the subagent middleware which state keys are

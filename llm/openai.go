@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
@@ -79,9 +80,41 @@ func (m *OpenAIModel) Generate(ctx context.Context, req ChatRequest) (*Message, 
 	return m.generate(ctx, req, nil)
 }
 
-// generate runs one completion; a non-nil sink requests a streamed response
-// whose parsed tool calls replace langchaingo's.
+// errEmptyResponse marks an HTTP 200 reply without choices, which some
+// providers send under load; it is retried like a 5xx.
+var errEmptyResponse = errors.New("model returned an empty response")
+
+// generate runs a completion, retrying empty responses up to maxRetries
+// times unless streamed output has already reached the caller.
 func (m *OpenAIModel) generate(ctx context.Context, req ChatRequest, sink *streamSink) (*Message, error) {
+	retries := m.maxRetries()
+	for attempt := 0; ; attempt++ {
+		msg, err := m.generateOnce(ctx, req, sink)
+		if !errors.Is(err, errEmptyResponse) || (sink != nil && sink.started.Load()) {
+			return msg, err
+		}
+		if attempt >= retries {
+			return nil, fmt.Errorf("%s: %w after %d retries", m.provider, errEmptyResponse, retries)
+		}
+		timer := time.NewTimer(retryDelay(attempt, nil))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctxError(ctx)
+		case <-timer.C:
+		}
+	}
+}
+
+// isEmptyResponse matches langchaingo's errors for a reply without choices;
+// the internal client's error is unexported, so it is matched by text.
+func isEmptyResponse(err error) bool {
+	return errors.Is(err, openai.ErrEmptyResponse) || strings.HasSuffix(err.Error(), "empty response")
+}
+
+// generateOnce runs one completion; a non-nil sink requests a streamed
+// response whose parsed tool calls replace langchaingo's.
+func (m *OpenAIModel) generateOnce(ctx context.Context, req ChatRequest, sink *streamSink) (*Message, error) {
 	if m.useResponses {
 		return nil, notimpl.Err("llm.OpenAIModel.Generate(Responses API)")
 	}
@@ -118,15 +151,21 @@ func (m *OpenAIModel) generate(ctx context.Context, req ChatRequest, sink *strea
 		if isContextOverflow(err) {
 			return nil, fmt.Errorf("%s: %w: %w", m.provider, ErrContextOverflow, err)
 		}
+		if isEmptyResponse(err) {
+			return nil, fmt.Errorf("%s: %w: %w", m.provider, errEmptyResponse, err)
+		}
 		return nil, fmt.Errorf("%s: %w", m.provider, err)
 	}
 	if len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("%s: response has no choices", m.provider)
+		return nil, fmt.Errorf("%s: %w: no choices", m.provider, errEmptyResponse)
 	}
 	msg := fromLangChainChoice(resp.Choices[0])
 	if sink != nil {
 		if calls := sink.toolCalls(); calls != nil {
 			msg.ToolCalls = calls
+		}
+		if !sink.started.Load() && msg.Text() == "" && len(msg.ToolCalls) == 0 {
+			return nil, fmt.Errorf("%s: %w: nothing streamed", m.provider, errEmptyResponse)
 		}
 	}
 	return msg, nil

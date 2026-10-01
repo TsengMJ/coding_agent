@@ -256,8 +256,7 @@ func mergeFilesUpdate(upd *runtime.Update, files map[string]*backend.FileData) *
 // EvictedToKey through the returned state update. Every tagged user
 // message is replaced by a preview in the returned request messages; state
 // keeps the full text. ok is false when nothing needed processing.
-func (m *Middleware) evictHumanMessages(ctx context.Context, req *agent.ModelRequest) (msgs []llm.Message, upd *runtime.Update, ok bool) {
-	limit := m.opts.HumanMessageTokenLimitBeforeEvict
+func (m *Middleware) evictHumanMessages(ctx context.Context, req *agent.ModelRequest, limit int) (msgs []llm.Message, upd *runtime.Update, ok bool) {
 	if limit <= 0 || len(req.Messages) == 0 {
 		return nil, nil, false
 	}

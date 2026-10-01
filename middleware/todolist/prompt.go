@@ -1,67 +1,51 @@
 package todolist
 
-// ToolDescription is langchain `WRITE_TODOS_TOOL_DESCRIPTION`.
-const ToolDescription = "Use this tool to create and manage a structured task list for your current work session. This helps you track progress and organize complex tasks.\n\n" +
-	"Only use this tool if you think it will be helpful in staying organized. If the user's request is trivial and takes less than 3 steps, it is better to NOT use this tool and just do the task directly.\n\n" +
+// ToolDescription extends langchain `WRITE_TODOS_TOOL_DESCRIPTION` with ids,
+// notes, cancelled and merge, and asks for todos grounded in what the agent
+// has already read.
+const ToolDescription = "Create and manage a structured task list for the current work session. It keeps you on track during multi-step work and shows the user what you are doing and what is left.\n\n" +
 	"## When to Use This Tool\n\n" +
-	"Use this tool in these scenarios:\n\n" +
-	"1. Complex multi-step tasks - When a task requires 3 or more distinct steps or actions\n" +
-	"2. Non-trivial and complex tasks - Tasks that require careful planning or multiple operations\n" +
-	"3. User explicitly requests todo list - When the user directly asks you to use the todo list\n" +
-	"4. User provides multiple tasks - When users provide a list of things to be done (numbered or comma-separated)\n" +
-	"5. The plan may need future revisions or updates based on results from the first few steps\n\n" +
-	"## How to Use This Tool\n\n" +
-	"1. When you start working on a task - Mark it as in_progress BEFORE beginning work.\n" +
-	"2. After completing a task - Mark it as completed and add any new follow-up tasks discovered during implementation.\n" +
-	"3. You can also update future tasks, such as deleting them if they are no longer necessary, or adding new tasks that are necessary. Don't change previously completed tasks.\n" +
-	"4. You can make several updates to the todo list at once. For example, when you complete a task, you can mark the next task you need to start as in_progress.\n\n" +
+	"1. Tasks that need 3 or more distinct steps, or touch several files or components\n" +
+	"2. The user gives several things to do (numbered or comma-separated), or explicitly asks for a todo list\n" +
+	"3. New requirements or follow-ups arrive while you are working — add them as items\n" +
+	"4. You discover more work than expected — add it instead of keeping it in your head\n\n" +
 	"## When NOT to Use This Tool\n\n" +
-	"It is important to skip using this tool when:\n" +
-	"1. There is only a single, straightforward task\n" +
-	"2. The task is trivial and tracking it provides no benefit\n" +
-	"3. The task can be completed in less than 3 trivial steps\n" +
-	"4. The task is purely conversational or informational\n\n" +
-	"## Task States and Management\n\n" +
-	"1. **Task States**: Use these states to track progress:\n" +
-	"    - pending: Task not yet started\n" +
-	"    - in_progress: Currently working on (you can have multiple tasks in_progress at a time if they are not related to each other and can be run in parallel)\n" +
-	"    - completed: Task finished successfully\n\n" +
-	"2. **Task Management**:\n" +
-	"    - Update task status in real-time as you work\n" +
-	"    - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)\n" +
-	"    - Complete current tasks before starting new ones\n" +
-	"    - Remove tasks that are no longer relevant from the list entirely\n" +
-	"    - IMPORTANT: When you write this todo list, you should mark your first task (or tasks) as in_progress immediately!.\n" +
-	"    - IMPORTANT: Unless all tasks are completed, you should always have at least one task in_progress.\n\n" +
-	"3. **Task Completion Requirements**:\n" +
-	"    - ONLY mark a task as completed when you have FULLY accomplished it\n" +
-	"    - If you encounter errors, blockers, or cannot finish, keep the task as in_progress\n" +
-	"    - When blocked, create a new task describing what needs to be resolved\n" +
-	"    - Never mark a task as completed if:\n" +
-	"        - There are unresolved issues or errors\n" +
-	"        - Work is partial or incomplete\n" +
-	"        - You encountered blockers that prevent completion\n" +
-	"        - You couldn't find necessary resources or dependencies\n" +
-	"        - Quality standards haven't been met\n\n" +
-	"4. **Task Breakdown**:\n" +
-	"    - Create specific, actionable items\n" +
-	"    - Break complex tasks into smaller, manageable steps\n" +
-	"    - Use clear, descriptive task names\n\n" +
-	"Being proactive with task management ensures you complete all requirements successfully\n" +
-	"Remember: If you only need to make a few tool calls to complete a task, and it is clear what you need to do, it is better to just do the task directly and NOT call this tool at all.\n\n" +
+	"1. A single, straightforward change, or work done in 1-2 trivial steps\n" +
+	"2. Purely conversational or informational requests\n\n" +
+	"## Write Todos From Evidence\n\n" +
+	"For any non-trivial task, look first: read the relevant files, grep for the symbols involved, check how tests are run. Then write the list. A list written before you have looked at the code can only be generic (\"inspect the code\", \"implement\", \"run tests\") and does not help you or the user.\n\n" +
+	"Each item must be specific and actionable:\n" +
+	"- Name the files, functions, endpoints or commands involved\n" +
+	"- One concrete outcome per item; split items that hide several changes\n" +
+	"- Say how the item will be verified (the test, command or output that proves it works), in the item or in its notes\n\n" +
+	"Good: `Add a nil check for cfg.Timeout in client/http.go NewClient; cover it in client/http_test.go`\n" +
+	"Bad: `Fix the bug`\n\n" +
+	"Some things are still unknown when you write the list. Make them explicit investigation items (e.g. `Investigate: why TestRetry times out only under -race`) and record what you need to find out in notes. Once answered, replace the investigation item with the concrete work it revealed.\n\n" +
+	"## Fields\n\n" +
+	"- `id`: short, unique and stable across updates (e.g. `parse-flags`)\n" +
+	"- `content`: what to do, as above\n" +
+	"- `status`: pending | in_progress | completed | cancelled\n" +
+	"- `notes` (optional): findings, open questions, the verification step\n" +
+	"- `merge`: false (default) replaces the whole list; true updates items by id and appends new ones, so you can send only the items that changed\n\n" +
+	"## Managing the List\n\n" +
+	"`write_todos` never needs a turn of its own: send it in the same response as the other tool calls of that step (reads, edits, test runs). Call it at most once per response.\n\n" +
+	"1. Mark an item in_progress when you start it, in the same response as its first tool calls. Normally one item is in_progress; several only when they are independent and done in parallel.\n" +
+	"2. Mark an item completed as soon as it is done — typically in the response that starts the next item — rather than saving completions for the end.\n" +
+	"3. ONLY mark completed when fully done: tests pass, no unresolved errors, nothing partial. If blocked, keep it in_progress and add an item describing what must be resolved.\n" +
+	"4. Mark items that are no longer needed as cancelled instead of silently dropping them.\n" +
+	"5. Revise freely as you learn: add follow-ups, split items, update notes. Don't rewrite completed items.\n" +
+	"6. Unless every item is completed or cancelled, keep at least one item in_progress.\n\n" +
 	"## When You Finish\n\n" +
-	"`write_todos` tracks your work; it does not deliver the answer. Whatever the user asked for — computations, summaries, comparisons, data — must appear as text content in a message after your final `write_todos` call. Marking the last todo complete is not itself an answer to the user."
+	"`write_todos` tracks your work; it does not deliver the answer. Whatever the user asked for — computations, summaries, comparisons, data — must appear as text content in a message after your final `write_todos` call. Marking the last todo complete is not itself an answer to the user. Send that final `write_todos` in the same response as your last check (e.g. the final test run or diff), not on its own."
 
-// SystemPrompt is langchain `WRITE_TODOS_SYSTEM_PROMPT`.
+// SystemPrompt extends langchain `WRITE_TODOS_SYSTEM_PROMPT`.
 const SystemPrompt = "## `write_todos`\n\n" +
-	"You have access to the `write_todos` tool to help you manage and plan complex objectives.\n" +
-	"Use this tool for complex objectives to ensure that you are tracking each necessary step.\n" +
-	"This tool is very helpful for planning complex objectives, and for breaking down these larger complex objectives into smaller steps.\n\n" +
-	"It is critical that you mark todos as completed as soon as you are done with a step. Do not batch up multiple steps before marking them as completed.\n" +
-	"For simple objectives that only require a few steps, it is better to just complete the objective directly and NOT use this tool.\n" +
-	"Writing todos takes time and tokens, use it when it is helpful for managing complex many-step problems! But not for simple few-step requests.\n\n" +
+	"You have access to the `write_todos` tool to plan and track multi-step work.\n" +
+	"For non-trivial tasks, first explore enough to understand the code involved, then write a todo list whose items name concrete files, changes and verification steps. Items you are not yet sure about should be explicit investigation items.\n" +
+	"Keep the list current: mark items in_progress before starting and completed as soon as they are done, add newly discovered work, cancel what is no longer needed. Use `merge: true` to update a few items by id.\n" +
+	"For simple requests that take only a step or two, skip the list and just do the work.\n\n" +
 	"## Important To-Do List Usage Notes to Remember\n\n" +
-	"- The `write_todos` tool should never be called multiple times in parallel.\n" +
+	"- Send `write_todos` in the same response as the tool calls for the work it describes; a response that only updates the list wastes a full model round trip. Call it at most once per response, since each call rewrites the same list.\n" +
 	"- Don't be afraid to revise the To-Do list as you go. New information may reveal new tasks that need to be done, or old tasks that are irrelevant.\n\n" +
 	"## Finishing a task\n\n" +
-	"When you finish all work, write your final answer in the message AFTER your last `write_todos` call — not in the same turn as that call. Start the final message with the substantive content the user asked for — the data, computation, summary, or analysis. The user wants the result, not confirmation that the work is done."
+	"When you finish all work, write your final answer in the message AFTER your last `write_todos` call — not in the same turn as that call. Put that last `write_todos` together with your final check rather than in a turn of its own. Start the final message with the substantive content the user asked for — the data, computation, summary, or analysis. The user wants the result, not confirmation that the work is done."

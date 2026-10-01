@@ -106,10 +106,13 @@ type Options struct {
 	TokenCounter llm.TokenCounter
 	// SummaryPrompt must contain "{messages}"; empty uses DefaultSummaryPrompt.
 	SummaryPrompt string
-	// TrimTokensToSummarize caps the history sent to the summary model,
-	// keeping the most recent messages; 0 sends everything.
+	// TrimTokensToSummarize further caps each summary request; 0 uses the
+	// model-aware default. Long history is summarized in bounded chunks.
 	TrimTokensToSummarize int
-	TruncateArgs          *TruncateArgsSettings
+	// DynamicDefaults recomputes the default trigger and keep policy for the
+	// model selected for this run. Explicit New options leave this disabled.
+	DynamicDefaults bool
+	TruncateArgs    *TruncateArgsSettings
 	// HistoryPathPrefix defaults to DefaultHistoryPathPrefix.
 	HistoryPathPrefix string
 }
@@ -174,11 +177,12 @@ func DefaultOptions(model llm.ChatModel, b backend.Backend) (Options, error) {
 		return Options{}, err
 	}
 	return Options{
-		Model:        model,
-		Backend:      b,
-		Trigger:      []TriggerClause{{d.Trigger}},
-		Keep:         d.Keep,
-		TruncateArgs: &d.TruncateArgsSettings,
+		Model:           model,
+		Backend:         b,
+		Trigger:         []TriggerClause{{d.Trigger}},
+		Keep:            d.Keep,
+		TruncateArgs:    &d.TruncateArgsSettings,
+		DynamicDefaults: true,
 	}, nil
 }
 
@@ -189,7 +193,7 @@ func ComputeDefaults(model llm.ChatModel) (Defaults, error) {
 		return Defaults{}, errors.New("summarization.ComputeDefaults: model is required")
 	}
 	if model.Profile().MaxInputTokens > 0 {
-		trigger := ContextSize{SizeFraction, 0.85}
+		trigger := ContextSize{SizeFraction, 0.80}
 		return Defaults{
 			Trigger:              trigger,
 			Keep:                 ContextSize{SizeFraction, 0.10},
@@ -218,17 +222,22 @@ func (m *Middleware) StateSchema() runtime.Schema {
 // cutoff), clipping old tool arguments and summarizing when a trigger fires.
 // A context-overflow error from the model forces one summarize-and-retry.
 func (m *Middleware) WrapModelCall(ctx context.Context, req *agent.ModelRequest, next agent.ModelHandler) (*agent.ModelResponse, error) {
+	active := llm.ModelForContext(ctx, req.Model)
+	m = m.forModel(active)
 	event := eventFrom(req.State)
 	effective := applyEvent(req.Messages, event)
 	specs := toolSpecs(req.Tools)
+	if fixed := m.count(req.SystemMessage, nil, specs); fixed >= contextBudget(active) {
+		return nil, fmt.Errorf("%w: system prompt and tool definitions use %d tokens, leaving no safe input budget", llm.ErrContextOverflow, fixed)
+	}
 	total := m.count(req.SystemMessage, effective, specs)
-	msgs, clipped := m.truncateArgs(effective, total, req.Model)
+	msgs, clipped := m.truncateArgs(effective, total, active)
 	if clipped {
 		total = m.count(req.SystemMessage, msgs, specs)
 	}
 
 	var overflow error
-	if !m.shouldSummarize(msgs, total, req.Model) {
+	if !m.shouldSummarize(msgs, total, active) {
 		resp, err := next(ctx, withMessages(req, msgs))
 		if err == nil || !errors.Is(err, llm.ErrContextOverflow) {
 			return resp, err
@@ -236,7 +245,7 @@ func (m *Middleware) WrapModelCall(ctx context.Context, req *agent.ModelRequest,
 		overflow = err
 	}
 
-	upd, summarized, err := m.summarize(ctx, req.State, event, msgs, req.Model)
+	upd, summarized, err := m.summarize(ctx, req.State, event, msgs, active)
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +257,9 @@ func (m *Middleware) WrapModelCall(ctx context.Context, req *agent.ModelRequest,
 	}
 	resp, err := next(ctx, withMessages(req, summarized))
 	if err != nil {
+		if errors.Is(err, llm.ErrContextOverflow) {
+			return nil, fmt.Errorf("%w: compacted request still exceeds the selected model window", err)
+		}
 		return nil, err
 	}
 	return withUpdate(resp, upd), nil
@@ -257,6 +269,8 @@ func (m *Middleware) WrapModelCall(ctx context.Context, req *agent.ModelRequest,
 // state update to persist. It returns ErrNothingToCompact when the keep
 // policy leaves nothing to summarize.
 func (m *Middleware) Compact(ctx context.Context, state *runtime.State, model llm.ChatModel) (*runtime.Update, error) {
+	model = llm.ModelForContext(ctx, model)
+	m = m.forModel(model)
 	event := eventFrom(state)
 	upd, _, err := m.summarize(ctx, state, event, applyEvent(state.Messages, event), model)
 	if err != nil {
@@ -266,6 +280,37 @@ func (m *Middleware) Compact(ctx context.Context, state *runtime.State, model ll
 		return nil, ErrNothingToCompact
 	}
 	return upd, nil
+}
+
+func (m *Middleware) forModel(model llm.ChatModel) *Middleware {
+	if !m.opts.DynamicDefaults {
+		return m
+	}
+	d, err := ComputeDefaults(model)
+	if err != nil {
+		return m
+	}
+	copy := *m
+	copy.opts = m.opts
+	copy.opts.Trigger = []TriggerClause{{d.Trigger}}
+	copy.opts.Keep = d.Keep
+	copy.opts.TruncateArgs = &d.TruncateArgsSettings
+	return &copy
+}
+
+// assumedContextWindow stands in for models without a known window; the
+// fallback trigger of 170k tokens is 85% of it.
+const assumedContextWindow = 200_000
+
+func contextWindow(model llm.ChatModel) int {
+	if model != nil && model.Profile().MaxInputTokens > 0 {
+		return model.Profile().MaxInputTokens
+	}
+	return assumedContextWindow
+}
+
+func contextBudget(model llm.ChatModel) int {
+	return max(contextWindow(model)*80/100, 1)
 }
 
 // summarize offloads and summarizes effective[:cutoff]. It returns a nil
@@ -306,28 +351,79 @@ func (m *Middleware) createSummary(ctx context.Context, msgs []llm.Message, mode
 	if model == nil {
 		return "", errors.New("no model to write the summary")
 	}
-	msgs = m.trimForSummary(msgs)
-	prompt := strings.Replace(m.opts.SummaryPrompt, "{messages}", formatMessages(msgs), 1)
-	reply, err := model.Generate(ctx, llm.ChatRequest{Messages: []llm.Message{llm.NewUserMessage(strings.TrimRight(prompt, " \n"))}})
-	if err != nil {
-		return "", err
+	// Chunks run one after another, each carrying the previous summary.
+	budget := max(contextWindow(llm.ModelForContext(ctx, model))/4, 1)
+	if m.opts.TrimTokensToSummarize > 0 {
+		budget = min(budget, m.opts.TrimTokensToSummarize)
 	}
-	return strings.TrimSpace(reply.Text()), nil
+	history := []rune(formatMessages(msgs))
+	var summary string
+	for start := 0; start < len(history); {
+		prior := summary
+		// Keep the previous summary within one quarter of the next input.
+		if runes := []rune(prior); len(runes) > budget/4 {
+			half := max(budget/8-40, 1)
+			prior = string(runes[:half]) + "\n[Middle of summary omitted; full history is offloaded.]\n" + string(runes[len(runes)-half:])
+		}
+		prefix := ""
+		if prior != "" {
+			prefix = "<previous_summary>\n" + prior + "\n</previous_summary>\n"
+		}
+		remaining := len(history) - start
+		low, high := 0, remaining
+		for low < high {
+			mid := low + (high-low+1)/2
+			if summaryInputCost(m.summaryPrompt(prefix+string(history[start:start+mid]))) <= budget {
+				low = mid
+			} else {
+				high = mid - 1
+			}
+		}
+		if low == 0 {
+			return "", fmt.Errorf("%w: summary instructions leave no room for conversation history", llm.ErrContextOverflow)
+		}
+		length := low
+		var reply *llm.Message
+		var err error
+		for attempt := 0; attempt < 4; attempt++ {
+			prompt := m.summaryPrompt(prefix + string(history[start:start+length]))
+			reply, err = model.Generate(ctx, llm.ChatRequest{Messages: []llm.Message{llm.NewUserMessage(prompt)}})
+			if !errors.Is(err, llm.ErrContextOverflow) {
+				break
+			}
+			length /= 2
+			if length == 0 {
+				break
+			}
+		}
+		if err != nil {
+			return "", err
+		}
+		if reply == nil || strings.TrimSpace(reply.Text()) == "" {
+			return "", errors.New("summary model returned no text")
+		}
+		summary = strings.TrimSpace(reply.Text())
+		start += length
+	}
+	return summary, nil
 }
 
-func (m *Middleware) trimForSummary(msgs []llm.Message) []llm.Message {
-	budget := m.opts.TrimTokensToSummarize
-	if budget <= 0 {
-		return msgs
-	}
-	used := 0
-	for i := len(msgs) - 1; i >= 0; i-- {
-		used += m.opts.TokenCounter(msgs[i:i+1], nil)
-		if used > budget {
-			return msgs[i+1:]
+func (m *Middleware) summaryPrompt(body string) string {
+	return strings.TrimRight(strings.Replace(m.opts.SummaryPrompt, "{messages}", body, 1), " \n")
+}
+
+// summaryInputCost is conservative for non-ASCII text, which the general
+// character/4 estimator undercounts substantially.
+func summaryInputCost(s string) int {
+	ascii, other := 0, 0
+	for _, r := range s {
+		if r < 128 {
+			ascii++
+		} else {
+			other++
 		}
 	}
-	return msgs
+	return (ascii+3)/4 + 2*other + 4
 }
 
 // offload appends evicted messages (minus earlier summaries) to the session

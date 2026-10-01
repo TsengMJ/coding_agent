@@ -34,7 +34,7 @@ func newOpenRouterFromSpec(model string, opts map[string]any) (ChatModel, error)
 }
 
 // NewOpenRouterModel builds a Chat Completions client for OpenRouter. Model
-// names use OpenRouter slugs such as "openai/gpt-6-luna".
+// names use OpenRouter slugs such as "openai/gpt-6-luna-pro".
 //
 // OPENROUTER_APP_URL / OPENROUTER_APP_TITLE override the attribution headers;
 // setting either to an empty string omits that header.

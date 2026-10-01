@@ -8,6 +8,8 @@ func TestKnownProfileMatchesLongestPrefix(t *testing.T) {
 		"gpt-4o-mini-2024-07-18":    128000,
 		"gpt-4.1-nano":              1047576,
 		"gpt-5.5":                   400000,
+		"openai/gpt-6-luna-pro":     1050000,
+		"openai/gpt-5.6-luna":       1050000,
 		"openai/gpt-4.1":            1047576,
 		"anthropic/claude-sonnet-4": 200000,
 		"google/gemini-2.5-pro":     1048576,

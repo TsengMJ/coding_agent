@@ -186,6 +186,14 @@ func TestAutoApproveSkipsReview(t *testing.T) {
 	}
 }
 
+func TestAlwaysInterruptsUnderAutoApprove(t *testing.T) {
+	cfg := map[string]InterruptOnConfig{"write_file": {Always: true}}
+	h := newHarnessWith(t, cfg, writeCall("w1", "/a.txt"), llm.NewAssistantMessage("done"))
+	if _, paused := h.start(t, runtime.RunConfig{ThreadID: "t", Configurable: map[string]any{AutoApproveKey: true}}); paused == nil {
+		t.Fatal("an Always config must interrupt even with auto-approve")
+	}
+}
+
 func TestWhenLimitsReviewToMatchingCalls(t *testing.T) {
 	onlyEtc := map[string]InterruptOnConfig{"write_file": {When: func(call llm.ToolCall) bool {
 		p, _ := call.Args["file_path"].(string)

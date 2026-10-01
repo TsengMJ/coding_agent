@@ -333,7 +333,7 @@ func (b *FilesystemBackend) Grep(ctx context.Context, pattern string, opts GrepO
 	var matches []GrepMatch
 	truncated := false
 	errStop := errors.New("stop")
-	walkErr := b.walkFiles(ctx, base, func(p string, st fs.FileInfo) error {
+	walkErr := b.walkFiles(ctx, base, true, func(p string, st fs.FileInfo) error {
 		if include != nil {
 			rel, _ := filepath.Rel(root, p)
 			if !include(filepath.ToSlash(rel)) {
@@ -389,7 +389,7 @@ func (b *FilesystemBackend) Glob(ctx context.Context, pattern, path string) Glob
 	defer cancel()
 
 	var infos []FileInfo
-	walkErr := b.walkFiles(ctx, base, func(p string, st fs.FileInfo) error {
+	walkErr := b.walkFiles(ctx, base, false, func(p string, st fs.FileInfo) error {
 		rel, _ := filepath.Rel(base, p)
 		if match(filepath.ToSlash(rel)) {
 			infos = append(infos, fileInfo(b.display(p), st))
@@ -407,9 +407,10 @@ func (b *FilesystemBackend) Glob(ctx context.Context, pattern, path string) Glob
 }
 
 // walkFiles calls fn for every regular file under base (or base itself when
-// it is a file), skipping ".git" and, in virtual mode, entries that resolve
-// outside the root. Unreadable entries are skipped.
-func (b *FilesystemBackend) walkFiles(ctx context.Context, base string, fn func(string, fs.FileInfo) error) error {
+// it is a file), skipping ".git", dependency directories below base when
+// skipDeps is set, and, in virtual mode, entries that resolve outside the
+// root. Unreadable entries are skipped.
+func (b *FilesystemBackend) walkFiles(ctx context.Context, base string, skipDeps bool, fn func(string, fs.FileInfo) error) error {
 	return filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -421,7 +422,7 @@ func (b *FilesystemBackend) walkFiles(ctx context.Context, base string, fn func(
 			return nil
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" && p != base {
+			if p != base && (d.Name() == ".git" || skipDeps && GrepSkippedDirs[d.Name()]) {
 				return fs.SkipDir
 			}
 			return nil

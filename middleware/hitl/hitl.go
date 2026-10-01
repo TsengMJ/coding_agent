@@ -40,6 +40,9 @@ type InterruptOnConfig struct {
 	Describe func(call llm.ToolCall) string
 	// When restricts the interrupt to matching calls; nil means always.
 	When func(call llm.ToolCall) bool
+	// Always keeps the interrupt when AutoApproveKey is set, for tools that
+	// ask the user something rather than wait for permission.
+	Always bool
 }
 
 // ActionRequest describes one tool call awaiting review (the interrupt value).
@@ -78,10 +81,9 @@ func (m *Middleware) AfterModel(ctx context.Context, state *runtime.State, rt *a
 	if len(m.interruptOn) == 0 || len(state.Messages) == 0 {
 		return nil, nil
 	}
+	auto := false
 	if rt != nil {
-		if auto, _ := rt.Config.Configurable[AutoApproveKey].(bool); auto {
-			return nil, nil
-		}
+		auto, _ = rt.Config.Configurable[AutoApproveKey].(bool)
 	}
 	last := state.Messages[len(state.Messages)-1]
 	if last.Role != llm.RoleAssistant {
@@ -90,7 +92,7 @@ func (m *Middleware) AfterModel(ctx context.Context, state *runtime.State, rt *a
 	var reqs []ActionRequest
 	for _, call := range last.ToolCalls {
 		cfg, ok := m.interruptOn[call.Name]
-		if !ok || (cfg.When != nil && !cfg.When(call)) {
+		if !ok || (auto && !cfg.Always) || (cfg.When != nil && !cfg.When(call)) {
 			continue
 		}
 		reqs = append(reqs, ActionRequest{

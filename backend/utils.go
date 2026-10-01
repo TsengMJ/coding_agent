@@ -244,10 +244,42 @@ func PerformStringReplacement(content, oldString, newString string, replaceAll b
 	}
 	if occurrences > 1 && !replaceAll {
 		return "", 0, fmt.Errorf("Error: String '%s' appears %d times in file. "+
-			"Use replace_all=True to replace all instances, or provide a more specific string with surrounding context.",
-			oldString, occurrences)
+			"Use replace_all=True to replace all instances, or provide a more specific string with surrounding context.\n%s",
+			oldString, occurrences, occurrenceLines(content, oldString, 5))
 	}
 	return strings.ReplaceAll(content, oldString, newString), occurrences, nil
+}
+
+// occurrenceLines lists where old starts in content (up to max matches),
+// each with the line before it, so the model can pick unique context. The
+// Python implementation only reports the count.
+func occurrenceLines(content, old string, max int) string {
+	lines := strings.Split(content, "\n")
+	numbered := func(n int) string {
+		l := lines[n-1]
+		if len(l) > 200 {
+			l = l[:200] + "..."
+		}
+		return fmt.Sprintf("%6d\t%s", n, l)
+	}
+	var b strings.Builder
+	b.WriteString("Occurrences (line number, the line before, the matching line):")
+	pos, found := 0, 0
+	for found < max {
+		i := strings.Index(content[pos:], old)
+		if i < 0 {
+			break
+		}
+		start := pos + i
+		n := strings.Count(content[:start], "\n") + 1
+		b.WriteString("\n")
+		if n > 1 {
+			b.WriteString(numbered(n-1) + "\n")
+		}
+		b.WriteString(numbered(n) + "\n")
+		pos, found = start+len(old), found+1
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // TruncateIfTooLong clips a tool result that exceeds ToolResultTokenLimit

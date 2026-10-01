@@ -79,6 +79,84 @@ func TestParallelWriteTodosAreRejected(t *testing.T) {
 	}
 }
 
+func TestWriteTodosMergeUpdatesByID(t *testing.T) {
+	st, _ := run(t,
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "t1", Name: ToolName, Args: todosArg(
+			map[string]any{"id": "a", "content": "read code", "status": "in_progress", "notes": "start in parser.go"},
+			map[string]any{"id": "b", "content": "write tests", "status": "pending"},
+		)}}},
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "t2", Name: ToolName, Args: map[string]any{
+			"merge": true,
+			"todos": []any{
+				map[string]any{"id": "a", "content": "read code", "status": "completed"},
+				map[string]any{"id": "c", "content": "update docs", "status": "pending"},
+			},
+		}}}},
+	)
+	todos, err := ParseTodos(st.Values[TodosStateKey])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Todo{
+		{ID: "a", Content: "read code", Status: StatusCompleted, Notes: "start in parser.go"},
+		{ID: "b", Content: "write tests", Status: StatusPending},
+		{ID: "c", Content: "update docs", Status: StatusPending},
+	}
+	if len(todos) != len(want) {
+		t.Fatalf("todos = %+v", todos)
+	}
+	for i := range want {
+		if todos[i] != want[i] {
+			t.Fatalf("todos[%d] = %+v, want %+v", i, todos[i], want[i])
+		}
+	}
+}
+
+func TestWriteTodosResultCarriesFullList(t *testing.T) {
+	st, _ := run(t, llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "t1", Name: ToolName, Args: map[string]any{
+		"merge": true,
+		"todos": []any{map[string]any{"id": "a", "content": "x", "status": "cancelled"}},
+	}}}})
+	todos, ok := ParseResult(st.Messages[2].Text())
+	if !ok || len(todos) != 1 || todos[0].Status != StatusCancelled {
+		t.Fatalf("ParseResult(%q) = %+v, %v", st.Messages[2].Text(), todos, ok)
+	}
+}
+
+func TestParseTodosFillsMissingIDs(t *testing.T) {
+	todos, err := ParseTodos([]any{
+		map[string]any{"content": "a", "status": "pending"},
+		map[string]any{"id": "1", "content": "b", "status": "pending"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if todos[0].ID != "2" || todos[1].ID != "1" {
+		t.Fatalf("ids = %q, %q", todos[0].ID, todos[1].ID)
+	}
+}
+
+func TestParseTodosRejectsDuplicateIDs(t *testing.T) {
+	_, err := ParseTodos([]any{
+		map[string]any{"id": "a", "content": "x", "status": "pending"},
+		map[string]any{"id": "a", "content": "y", "status": "pending"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unique") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPromptsAskToBatchWriteTodosWithOtherCalls(t *testing.T) {
+	for name, text := range map[string]string{"SystemPrompt": SystemPrompt, "ToolDescription": ToolDescription} {
+		if strings.Contains(text, "never be called multiple times in parallel") {
+			t.Errorf("%s reads as \"call write_todos alone\"", name)
+		}
+		if !strings.Contains(text, "same response") {
+			t.Errorf("%s should ask to send write_todos in the same response as other tool calls", name)
+		}
+	}
+}
+
 func TestSystemPromptIsAppended(t *testing.T) {
 	_, model := run(t)
 	sys := model.Requests()[0].Messages[0]

@@ -175,6 +175,30 @@ func TestLargeUserMessageIsEvictedOnceAndStateKeepsText(t *testing.T) {
 	}
 }
 
+func TestUserEvictionAdaptsToSmallModelWindow(t *testing.T) {
+	b, _ := newShellBackend(t)
+	m, err := New(Options{Backend: b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := llm.NewFakeModel(llm.NewAssistantMessage("done")).WithProfile(llm.ModelProfile{MaxInputTokens: 8000})
+	a, err := agent.CreateAgent(agent.Config{Model: model, Middleware: []agent.Middleware{m}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := strings.Repeat("x", 10000) // 2500 estimated tokens; below the old 50000 limit.
+	state, err := a.Invoke(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage(full)}}, runtime.RunConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Messages[0].Text() != full || evictedTo(state.Messages[0]) == "" {
+		t.Fatalf("full message was not preserved and offloaded")
+	}
+	if got := model.Requests()[0].Messages[0].Text(); !strings.Contains(got, "Message content too large") {
+		t.Fatalf("model saw unbounded input")
+	}
+}
+
 func countUser(state *runtime.State) int {
 	n := 0
 	for _, msg := range state.Messages {

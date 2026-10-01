@@ -164,6 +164,24 @@ func TestCreateDeepAgentWithBackendExposesFilesystemTools(t *testing.T) {
 	}
 }
 
+func TestWithBackgroundTasksAddsTaskOutput(t *testing.T) {
+	model := llm.NewFakeModel(llm.NewAssistantMessage("ok"))
+	a, err := CreateDeepAgent(WithModel(model), WithBackgroundTasks())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage("hi")}}, runtime.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, spec := range model.Requests()[0].Tools {
+		names = append(names, spec.Name)
+	}
+	if !slices.Contains(names, subagents.TaskOutputToolName) {
+		t.Fatalf("tools = %v", names)
+	}
+}
+
 func TestRequiredMiddlewareNames(t *testing.T) {
 	want := map[string]bool{"FilesystemMiddleware": true, "SubAgentMiddleware": true}
 	for _, name := range RequiredMiddleware {

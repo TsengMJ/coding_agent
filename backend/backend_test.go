@@ -13,6 +13,7 @@ var (
 	_ Backend        = (*CompositeBackend)(nil)
 	_ Backend        = (*ContextHubBackend)(nil)
 	_ Deleter        = (*StateBackend)(nil)
+	_ Deleter        = (*StoreBackend)(nil)
 	_ SandboxBackend = (*LocalShellBackend)(nil)
 	_ SandboxBackend = (*BaseSandbox)(nil)
 	_ SandboxBackend = (*LangSmithSandbox)(nil)
@@ -31,8 +32,8 @@ func TestStateBackendDoesNotSupportExecution(t *testing.T) {
 }
 
 func TestStubReportsNotImplemented(t *testing.T) {
-	res := NewStoreBackend(nil, nil).Ls(context.Background(), "/")
-	if !strings.Contains(res.Error, "backend.StoreBackend.Ls: not implemented") {
+	res := unimplemented{name: "Stub"}.Ls(context.Background(), "/")
+	if !strings.Contains(res.Error, "backend.Stub.Ls: not implemented") {
 		t.Fatalf("unexpected error text: %q", res.Error)
 	}
 }

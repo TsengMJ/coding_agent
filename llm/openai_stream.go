@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Stream implements ChatModel. Text deltas are yielded as they arrive; the
@@ -69,6 +70,8 @@ func streamSinkFrom(ctx context.Context) *streamSink {
 // call whenever a delta repeats "type", which some providers do.
 type streamSink struct {
 	onText func(string)
+	// started is set once text or a tool call delta has streamed.
+	started atomic.Bool
 
 	mu    sync.Mutex
 	calls map[int]*partialCall
@@ -180,6 +183,9 @@ func (t *sseTee) line(line []byte) {
 		return
 	}
 	d := c.Choices[0].Delta
+	if d.Content != "" || len(d.ToolCalls) > 0 {
+		t.sink.started.Store(true)
+	}
 	if d.Content != "" && t.sink.onText != nil {
 		t.sink.onText(d.Content)
 	}

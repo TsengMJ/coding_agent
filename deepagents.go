@@ -53,6 +53,8 @@ type Options struct {
 	Store          runtime.Store
 	Name           string
 	Debug          bool
+	// BackgroundTasks lets `task` run subagents in the background.
+	BackgroundTasks bool
 }
 
 // Option mutates Options.
@@ -77,6 +79,9 @@ func WithCheckpointer(c runtime.Checkpointer) Option {
 func WithStore(s runtime.Store) Option { return func(o *Options) { o.Store = s } }
 func WithName(n string) Option         { return func(o *Options) { o.Name = n } }
 func WithDebug(d bool) Option          { return func(o *Options) { o.Debug = d } }
+
+// WithBackgroundTasks adds run_in_background to `task` and the task_output tool.
+func WithBackgroundTasks() Option { return func(o *Options) { o.BackgroundTasks = true } }
 
 func WithMiddleware(m ...agent.Middleware) Option {
 	return func(o *Options) { o.Middleware = append(o.Middleware, m...) }

@@ -4,7 +4,6 @@ package subagents
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -118,6 +117,9 @@ type Options struct {
 	// PrivateStateKeys are excluded from state passed to isolated subagents.
 	PrivateStateKeys []string
 	StateSchema      runtime.Schema
+	// Background lets `task` run subagents in the background
+	// (run_in_background) and adds the task_output tool.
+	Background bool
 }
 
 // Middleware provides the `task` tool.
@@ -127,6 +129,7 @@ type Middleware struct {
 	names       []string
 	description string
 	prompt      string
+	bg          *registry
 }
 
 // New returns a subagent middleware. Declarative specs must already be fully
@@ -156,6 +159,10 @@ func New(opts Options) (*Middleware, error) {
 	if opts.TaskDescription != "" {
 		m.description = strings.ReplaceAll(opts.TaskDescription, "{available_agents}", available)
 	}
+	if opts.Background {
+		m.bg = newRegistry()
+		m.description += backgroundTaskNote
+	}
 	if opts.SystemPrompt != "" {
 		m.prompt = opts.SystemPrompt + "\n\nAvailable subagent types:\n\n" + available
 	}
@@ -177,26 +184,37 @@ func (m *Middleware) AddPrivateStateKeys(keys ...string) {
 }
 
 func (m *Middleware) Tools() []tool.Tool {
-	return []tool.Tool{&tool.Func{
+	props := map[string]any{
+		"description": map[string]any{
+			"type":        "string",
+			"description": "A detailed description of the task for the subagent to perform autonomously. Include all necessary context and specify the expected output format.",
+		},
+		"subagent_type": map[string]any{
+			"type":        "string",
+			"description": "The type of subagent to use. Must be one of the available agent types listed in the tool description.",
+		},
+	}
+	if m.bg != nil {
+		props["run_in_background"] = map[string]any{
+			"type":        "boolean",
+			"description": "Start the agent in the background and return its task id at once; its report arrives later in a <task-notification>.",
+		}
+	}
+	task := &tool.Func{
 		ToolName:        TaskToolName,
 		ToolDescription: m.description,
 		ToolSchema: tool.Schema{
-			"type": "object",
-			"properties": map[string]any{
-				"description": map[string]any{
-					"type":        "string",
-					"description": "A detailed description of the task for the subagent to perform autonomously. Include all necessary context and specify the expected output format.",
-				},
-				"subagent_type": map[string]any{
-					"type":        "string",
-					"description": "The type of subagent to use. Must be one of the available agent types listed in the tool description.",
-				},
-			},
+			"type":                 "object",
+			"properties":           props,
 			"required":             []string{"description", "subagent_type"},
 			"additionalProperties": false,
 		},
 		Fn: m.task,
-	}}
+	}
+	if m.bg == nil {
+		return []tool.Tool{task}
+	}
+	return []tool.Tool{task, m.taskOutputTool()}
 }
 
 // WrapModelCall appends the subagent system prompt, if configured.
@@ -301,12 +319,13 @@ func compileDeclarative(s SubAgent, schema runtime.Schema) (agent.Agent, error) 
 
 func (m *Middleware) task(ctx context.Context, rt *tool.Runtime, args map[string]any) (*tool.Result, error) {
 	for _, key := range slices.Sorted(maps.Keys(args)) {
-		if key != "description" && key != "subagent_type" {
+		if key != "description" && key != "subagent_type" && (key != "run_in_background" || m.bg == nil) {
 			return nil, fmt.Errorf("unexpected argument %q; put all instructions for the subagent in `description`", key)
 		}
 	}
 	description, _ := args["description"].(string)
 	subagentType, _ := args["subagent_type"].(string)
+	background, _ := args["run_in_background"].(bool)
 	a, ok := m.agents[subagentType]
 	if !ok {
 		allowed := make([]string, len(m.names))
@@ -335,6 +354,9 @@ func (m *Middleware) task(ctx context.Context, rt *tool.Runtime, args map[string
 		cfg.Configurable = map[string]any{}
 	}
 	cfg.Configurable["ls_agent_type"] = "subagent"
+	if background {
+		return m.startBackground(ctx, a, in, cfg, rt, subagentType), nil
+	}
 	st, err := run(ctx, a, in, cfg, rt)
 	if err != nil {
 		var paused *runtime.InterruptError
@@ -387,26 +409,9 @@ func (m *Middleware) filterValues(values map[string]any) map[string]any {
 // result turns the subagent's final state into a Command carrying its
 // shareable state and one tool message with its report.
 func (m *Middleware) result(st *runtime.State, toolCallID string) (*tool.Result, error) {
-	if st == nil {
-		return nil, errors.New("subagent returned no state")
-	}
-	var content string
-	if st.StructuredResponse != nil {
-		raw, err := json.Marshal(st.StructuredResponse)
-		if err != nil {
-			return nil, fmt.Errorf("encode subagent structured response: %w", err)
-		}
-		content = string(raw)
-	} else {
-		for _, msg := range slices.Backward(st.Messages) {
-			if msg.Role != llm.RoleAssistant {
-				continue
-			}
-			if text := strings.TrimRight(msg.Text(), " \t\r\n"); text != "" {
-				content = text
-				break
-			}
-		}
+	content, err := reportText(st)
+	if err != nil {
+		return nil, err
 	}
 	upd := &runtime.Update{Messages: []llm.Message{llm.NewToolMessage(toolCallID, TaskToolName, content)}}
 	if values := m.filterValues(st.Values); len(values) > 0 {

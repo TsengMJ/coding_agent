@@ -16,6 +16,10 @@ const (
 	DefaultReadLimit   = 2000
 )
 
+// GrepSkippedDirs are dependency directories a disk grep does not descend
+// into unless the search path is already inside one.
+var GrepSkippedDirs = map[string]bool{"node_modules": true, ".venv": true, "__pycache__": true}
+
 // FileOperationError values are the standardized, LLM-recoverable error codes.
 const (
 	ErrFileNotFound     = "file_not_found"

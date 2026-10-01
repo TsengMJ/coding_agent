@@ -263,7 +263,7 @@ func TestComputeDefaultsUsesFractionsWhenContextWindowKnown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Trigger != (ContextSize{SizeFraction, 0.85}) || d.Keep != (ContextSize{SizeFraction, 0.10}) {
+	if d.Trigger != (ContextSize{SizeFraction, 0.80}) || d.Keep != (ContextSize{SizeFraction, 0.10}) {
 		t.Fatalf("defaults = %+v", d)
 	}
 }
@@ -273,7 +273,153 @@ func TestDefaultOptionsForKnownOpenAIModelTriggerAtFraction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(opts.Trigger) != 1 || opts.Trigger[0][0] != (ContextSize{SizeFraction, 0.85}) {
+	if len(opts.Trigger) != 1 || opts.Trigger[0][0] != (ContextSize{SizeFraction, 0.80}) {
 		t.Fatalf("trigger = %+v", opts.Trigger)
+	}
+}
+
+type boundedSummaryModel struct {
+	*llm.FakeModel
+	requests []llm.ChatRequest
+	success  int
+}
+
+type selectedSummaryModel struct {
+	llm.ChatModel
+	selected llm.ChatModel
+}
+
+func (m *selectedSummaryModel) ForContext(context.Context) llm.ChatModel { return m.selected }
+
+func (m *selectedSummaryModel) Generate(ctx context.Context, req llm.ChatRequest) (*llm.Message, error) {
+	return m.selected.Generate(ctx, req)
+}
+
+func (m *boundedSummaryModel) Generate(_ context.Context, req llm.ChatRequest) (*llm.Message, error) {
+	m.requests = append(m.requests, req)
+	if summaryInputCost(req.Messages[0].Text()) > 1800 {
+		return nil, llm.ErrContextOverflow
+	}
+	m.success++
+	reply := llm.NewAssistantMessage("rolling summary")
+	return &reply, nil
+}
+
+func TestLongHistorySummaryIsBoundedAndOffloaded(t *testing.T) {
+	dir := t.TempDir()
+	model := &boundedSummaryModel{FakeModel: llm.NewFakeModel().WithProfile(llm.ModelProfile{MaxInputTokens: 16000})}
+	mw, err := New(Options{Backend: backend.NewFilesystemBackend(backend.FilesystemOptions{RootDir: dir, VirtualMode: true}), Model: model, Keep: ContextSize{SizeMessages, 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msgs []llm.Message
+	for i := 0; i < 14; i++ {
+		msgs = append(msgs, llm.NewUserMessage(strings.Repeat("漢", 400)))
+	}
+	upd, err := mw.Compact(context.Background(), &runtime.State{Messages: msgs}, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(model.requests) < 3 || model.success < 2 {
+		t.Fatalf("summary calls = %d, successful = %d", len(model.requests), model.success)
+	}
+	for _, req := range model.requests {
+		if n := summaryInputCost(req.Messages[0].Text()); n > 4000 {
+			t.Fatalf("summary input = %d, want <= 4000", n)
+		}
+	}
+	ev := upd.Values[EventStateKey].(Event)
+	if ev.FilePath == "" || !strings.Contains(ev.SummaryMessage.Text(), "rolling summary") {
+		t.Fatalf("event = %+v", ev)
+	}
+	saved, err := os.ReadFile(filepath.Join(dir, ev.FilePath))
+	if err != nil || strings.Count(string(saved), strings.Repeat("漢", 400)) != 12 {
+		t.Fatalf("offloaded history lost messages: %v", err)
+	}
+}
+
+func TestFixedPromptOverBudgetReturnsClearError(t *testing.T) {
+	mw, err := New(Options{Backend: backend.NewStateBackend(), Keep: ContextSize{SizeMessages, 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	system := llm.NewSystemMessage(strings.Repeat("x", 28000))
+	called := false
+	_, err = mw.WrapModelCall(context.Background(), &agent.ModelRequest{
+		Model: llm.NewFakeModel().WithProfile(llm.ModelProfile{MaxInputTokens: 8000}), SystemMessage: &system,
+		State: &runtime.State{Messages: []llm.Message{llm.NewUserMessage("go")}},
+	}, func(context.Context, *agent.ModelRequest) (*agent.ModelResponse, error) {
+		called = true
+		return &agent.ModelResponse{}, nil
+	})
+	if !errors.Is(err, llm.ErrContextOverflow) || !strings.Contains(err.Error(), "system prompt and tool definitions") || called {
+		t.Fatalf("err = %v, called = %v", err, called)
+	}
+}
+
+func TestUnknownWindowAcceptsCodingAgentSizedPrompt(t *testing.T) {
+	mw, err := New(Options{Backend: backend.NewStateBackend(), Keep: ContextSize{SizeMessages, 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	system := llm.NewSystemMessage(strings.Repeat("x", 80000))
+	called := false
+	_, err = mw.WrapModelCall(context.Background(), &agent.ModelRequest{
+		Model: llm.NewFakeModel(), SystemMessage: &system,
+		State: &runtime.State{Messages: []llm.Message{llm.NewUserMessage("go")}},
+	}, func(context.Context, *agent.ModelRequest) (*agent.ModelResponse, error) {
+		called = true
+		return &agent.ModelResponse{}, nil
+	})
+	if err != nil || !called {
+		t.Fatalf("a 20k-token prompt must reach a model without a known window: err = %v", err)
+	}
+}
+
+func TestLongHistoryIsSummarizedInOneCallWhenTheWindowAllows(t *testing.T) {
+	cases := map[string]llm.ModelProfile{
+		"1M window":      {MaxInputTokens: 1_000_000},
+		"unknown window": {},
+	}
+	for name, profile := range cases {
+		t.Run(name, func(t *testing.T) {
+			model := llm.NewFakeModel(llm.NewAssistantMessage("one summary")).WithProfile(profile)
+			mw, err := New(Options{Backend: backend.NewStateBackend(), Model: model, Keep: ContextSize{SizeMessages, 2}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var msgs []llm.Message
+			for i := 0; i < 20; i++ {
+				msgs = append(msgs, llm.NewUserMessage(strings.Repeat("x", 8000)))
+			}
+			if _, err := mw.Compact(context.Background(), &runtime.State{Messages: msgs}, model); err != nil {
+				t.Fatal(err)
+			}
+			if n := len(model.Requests()); n != 1 {
+				t.Fatalf("~36k tokens of history took %d sequential summary calls, want 1", n)
+			}
+		})
+	}
+}
+
+func TestSelectedModelRecomputesDefaultCompactionThreshold(t *testing.T) {
+	selected := &boundedSummaryModel{FakeModel: llm.NewFakeModel().WithProfile(llm.ModelProfile{MaxInputTokens: 8000})}
+	model := &selectedSummaryModel{ChatModel: llm.NewFakeModel().WithProfile(llm.ModelProfile{MaxInputTokens: 50000}), selected: selected}
+	mw, err := NewForModel(model, backend.NewStateBackend())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msgs []llm.Message
+	for i := 0; i < 18; i++ {
+		msgs = append(msgs, llm.NewUserMessage(strings.Repeat("x", 1600)))
+	}
+	seenSummary := false
+	resp, err := mw.WrapModelCall(context.Background(), &agent.ModelRequest{Model: model, Messages: msgs, State: &runtime.State{Messages: msgs}},
+		func(_ context.Context, req *agent.ModelRequest) (*agent.ModelResponse, error) {
+			seenSummary = len(req.Messages) < len(msgs) && isSummaryMessage(req.Messages[0])
+			return &agent.ModelResponse{Messages: []llm.Message{llm.NewAssistantMessage("done")}}, nil
+		})
+	if err != nil || !seenSummary || resp.Update == nil {
+		t.Fatalf("selected 8k model did not compact: err=%v, summary=%v", err, seenSummary)
 	}
 }

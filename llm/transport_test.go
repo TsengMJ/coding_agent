@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -142,5 +143,109 @@ func TestOpenAIStreamIdleTimeout(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Fatalf("took %s", time.Since(start))
+	}
+}
+
+const emptyReply = `{"id":"r0","model":"gpt-test","choices":[]}`
+
+// emptyThenOK answers the first empties requests with no choices, then textReply.
+func emptyThenOK(t *testing.T, empties int) (*OpenAIModel, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if int(hits.Add(1)) <= empties {
+			_, _ = io.WriteString(w, emptyReply)
+			return
+		}
+		_, _ = io.WriteString(w, textReply)
+	}))
+	t.Cleanup(srv.Close)
+	return NewOpenAIModel(ProviderConfig{Model: "gpt-test", APIKey: "sk-test", BaseURL: srv.URL}, false), &hits
+}
+
+func TestOpenAIRetriesEmptyResponse(t *testing.T) {
+	fastRetries(t)
+	m, hits := emptyThenOK(t, 1)
+	got, err := m.Generate(context.Background(), ChatRequest{Messages: []Message{NewUserMessage("hi")}})
+	if err != nil || got.Text() != "hello" {
+		t.Fatalf("reply = %+v, %v", got, err)
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("hits = %d", hits.Load())
+	}
+}
+
+func TestOpenAIGivesUpOnEmptyResponses(t *testing.T) {
+	fastRetries(t)
+	m, hits := emptyThenOK(t, 100)
+	_, err := m.Generate(context.Background(), ChatRequest{Messages: []Message{NewUserMessage("hi")}})
+	if !errors.Is(err, errEmptyResponse) || !strings.Contains(err.Error(), "after 2 retries") {
+		t.Fatalf("err = %v", err)
+	}
+	if hits.Load() != DefaultMaxRetries+1 {
+		t.Fatalf("hits = %d", hits.Load())
+	}
+}
+
+func TestOpenAIEmptyRetryStopsOnCancel(t *testing.T) {
+	old := retryBaseDelay
+	retryBaseDelay = time.Minute
+	t.Cleanup(func() { retryBaseDelay = old })
+	m, _ := emptyThenOK(t, 100)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := m.Generate(ctx, ChatRequest{Messages: []Message{NewUserMessage("hi")}}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("took %s", time.Since(start))
+	}
+}
+
+// emptyStreamThenText streams nothing but [DONE] for the first empties
+// requests, then "Hello".
+func emptyStreamThenText(t *testing.T, empties int) (*OpenAIModel, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if int(hits.Add(1)) > empties {
+			_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`+"\n\n")
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(srv.Close)
+	return NewOpenAIModel(ProviderConfig{Model: "gpt-test", APIKey: "sk-test", BaseURL: srv.URL}, false), &hits
+}
+
+func TestOpenAIStreamRetriesEmptyStream(t *testing.T) {
+	fastRetries(t)
+	m, hits := emptyStreamThenText(t, 1)
+	var final *Message
+	for c, err := range m.Stream(context.Background(), ChatRequest{Messages: []Message{NewUserMessage("hi")}}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Done {
+			final = &c.Delta
+		}
+	}
+	if final == nil || final.Text() != "Hello" || hits.Load() != 2 {
+		t.Fatalf("final = %+v, hits = %d", final, hits.Load())
+	}
+}
+
+func TestOpenAINoEmptyRetryAfterStreamedOutput(t *testing.T) {
+	fastRetries(t)
+	m, hits := emptyStreamThenText(t, 100)
+	sink := &streamSink{}
+	sink.started.Store(true)
+	if _, err := m.generate(withStreamSink(context.Background(), sink), ChatRequest{Messages: []Message{NewUserMessage("hi")}}, sink); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("hits = %d", hits.Load())
 	}
 }

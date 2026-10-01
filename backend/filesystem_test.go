@@ -213,6 +213,31 @@ func TestFilesystemGrep(t *testing.T) {
 	}
 }
 
+func TestFilesystemGrepSkipsDependencyDirs(t *testing.T) {
+	b, _ := newVirtualFS(t)
+	ctx := context.Background()
+	b.Write(ctx, "/src/a.js", "needle\n")
+	b.Write(ctx, "/node_modules/lib/index.js", "needle\n")
+	b.Write(ctx, "/pkg/.venv/site.py", "needle\n")
+	b.Write(ctx, "/pkg/__pycache__/a.txt", "needle\n")
+
+	res := b.Grep(ctx, "needle", GrepOptions{})
+	if res.Error != "" || len(res.Matches) != 1 || res.Matches[0].Path != "/src/a.js" {
+		t.Fatalf("root grep should skip dependency dirs: %+v", res)
+	}
+}
+
+func TestFilesystemGrepInsideDependencyDir(t *testing.T) {
+	b, _ := newVirtualFS(t)
+	ctx := context.Background()
+	b.Write(ctx, "/node_modules/lib/index.js", "needle\n")
+
+	res := b.Grep(ctx, "needle", GrepOptions{Path: "/node_modules"})
+	if res.Error != "" || len(res.Matches) != 1 || res.Matches[0].Path != "/node_modules/lib/index.js" {
+		t.Fatalf("explicit path inside node_modules should be searched: %+v", res)
+	}
+}
+
 func TestFilesystemGrepMaxCount(t *testing.T) {
 	b, _ := newVirtualFS(t)
 	ctx := context.Background()

@@ -14,6 +14,8 @@ var contextWindows = map[string]int{
 	"chatgpt-4o":     128000,
 	"gpt-4.1":        1047576,
 	"gpt-5":          400000,
+	"gpt-5.6-luna":   1050000,
+	"gpt-6-luna":     1050000,
 	"gpt-oss":        131072,
 	"o1":             200000,
 	"o3":             200000,

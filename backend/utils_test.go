@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -134,6 +135,26 @@ func TestPerformStringReplacement(t *testing.T) {
 		if err != nil || got != tt.want || n != tt.wantN {
 			t.Errorf("%s: got %q, %d, %v", tt.name, got, n, err)
 		}
+	}
+}
+
+func TestPerformStringReplacementListsOccurrences(t *testing.T) {
+	var content strings.Builder
+	for i := range 8 {
+		fmt.Fprintf(&content, "func f%d() {\n\treturn nil\n}\n", i)
+	}
+	_, _, err := PerformStringReplacement(content.String(), "\treturn nil", "\treturn err", false)
+	if err == nil {
+		t.Fatal("ambiguous edit accepted")
+	}
+	msg := err.Error()
+	for _, want := range []string{"appears 8 times", "     1\tfunc f0() {\n     2\t\treturn nil", "    13\tfunc f4() {\n    14\t\treturn nil"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %q in:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "func f5()") {
+		t.Errorf("listed more than 5 occurrences:\n%s", msg)
 	}
 }
 
