@@ -4,6 +4,7 @@
 
 - 進度追蹤：[`TODO.md`](TODO.md)（所有 Python 功能/物件與 Go 實作狀態的對照表，持續更新）
 - 分階段計畫：[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)
+- GUI 後續優先順序：[`GUI_ROADMAP.md`](GUI_ROADMAP.md)
 
 ## 設計原則
 
@@ -37,7 +38,7 @@ make test PKG=./runtime ARGS=-v   # 單一 package、額外參數
 make check                        # gofmt、vet、test
 make run PROMPT='summarize README.md'
 make run PROMPT='hi' MODEL=openai:gpt-5.5
-make run PROMPT='continue' THREAD=thread-id   # 續跑 thread（in-process 需要 Postgres 才留得住）
+make run PROMPT='continue' THREAD=thread-id   # 續跑 thread（需要設定 Postgres 才能跨行程保存）
 make serve                                    # 常駐 server，預設 127.0.0.1:8123
 make install                                  # go install ./cmd/dcode
 ```
@@ -53,15 +54,27 @@ go run ./cmd/dcode summarize README.md
 
 `dcode` 以目前目錄為專案根目錄。檔案工具（`ls`、`read_file`、`write_file`、`edit_file`、`glob`、`grep`）把它當成 `/`，不能讀寫根目錄以外的路徑；`execute` 在根目錄下用 `sh -c` 執行指令，執行過的工具會列在 stderr（`[tool] write_file /main.go`）。
 
-`write_file`、`edit_file`、`execute` 執行前會先問你（`ls`、`read_file`、`grep`、`glob` 不問）：
+另外有幾個把指令輸出整理成 JSON 的 coding 工具（`code/codetools`，Python 版沒有）：
+
+- `git_status` / `git_diff`：改了哪些檔案、每個檔案的增刪行數與 diff（唯讀，不需核准）
+- `apply_patch`：Codex 格式的多行、多檔案修改；任何一個 hunk 對不上就整個不套用
+- `run_tests`：Go（`go test -json`）、JS/TS（依 `package.json` 選 mocha / jest / vitest 的 JSON 報告，都沒有時退回 `npm test` 原始輸出）、Python（pytest junit XML；沒裝 pytest 時改跑標準庫 `unittest -v` 並解析輸出），整理成通過 / 失敗數、失敗位置（file:line）與狀態 `passed` / `failed` / `error` / `no_tests`
+- `diagnostics`：Go（`go build` + `go vet`）、JS/TS（有 `tsconfig.json` 跑 `tsc --noEmit`、有 ESLint 設定跑 eslint）、Python（有 `ruff` 跑 ruff，否則對每個 `.py` 做語法檢查）；JS 專案既沒有 `tsconfig.json` 也沒有 ESLint 設定時，對每個 `.js` / `.cjs` / `.mjs` 做 `node --check` 語法檢查（有 `.ts` 檔會附一則 info 說明沒做型別檢查），整理成 file / line / severity / message 清單
+- 兩個工具都吃 `dir`（專案子目錄，例如 monorepo 的 `web`）；沒給時根目錄若沒有該語言的標記檔（`go.mod`、`package.json`、`pyproject.toml` 等），會從 `files` 往上找，再往下找 3 層，唯一一個就在那裡執行，有多個則回 `unsupported` 並列出候選；回報的路徑一律相對於 workspace 根目錄
+- 語言依 `language` 參數、`files` 副檔名、根目錄標記檔（`go.mod`、`pyproject.toml` 等 Python 標記、`package.json`）依序決定
+- `edit_file` 的 `old_string` 出現多次時，錯誤訊息會列出前 5 處的行號與前一行（Python 版只回報次數）
+
+`-n` 與 dbench 這類 headless 執行另外掛了驗證閘門（`code/agent/verify.go`）：這一輪改過檔案，之後卻沒有通過的測試或 build（`run_tests` 或 `execute` 跑 `go test`、`npm test`、`pytest` 等），agent 想結束時會被擋回去繼續驗證，最多擋 2 次；測試因 `ECONNREFUSED` 失敗時會附上啟動對應服務（Redis、MongoDB、PostgreSQL、MySQL）的提示。TUI 與 GUI 不掛。
+
+`write_file`、`edit_file`、`apply_patch`、`delete`、`execute`、`run_tests`、`diagnostics` 執行前會先問你（`ls`、`read_file`、`grep`、`glob`、`git_status`、`git_diff` 不問）：
 
 - TUI：跳出核准框，`a` 核准、`r` 拒絕（可輸入理由，理由會回傳給模型）、`A` 本次全部核准
 - `-n` 且 stdin 是終端機：逐一問 `approve? [y]es / [a]ll / [N]o / or type a reason to reject`
 - `-n` 但 stdin 不是終端機（管線、CI）：自動拒絕並告訴模型沒有人可以核准
 - `-y`（或 TUI 裡的 `/yolo`、config.toml 的 `startup.mode = "yolo"`）：全部自動核准
-- `shell.allow_list`：符合的 `execute` 指令免核准（見下方設定檔）
+- `shell.allow_list`：符合的 `execute` 指令免核准；`run_tests`、`diagnostics` 會依專案啟動不同的執行器，清單要包含它們可能用到的全部指令才免核准（`run_tests`：`go`、`npx`、`npm`、`node`、`python3`、`python`；`diagnostics`：`go`、`npx`、`node`、`python3`、`python`、`ruff`）（見下方設定檔）
 
-核准框會顯示 `write_file` / `edit_file` 對照磁碟上現有檔案的 unified diff。
+核准框會顯示 `write_file` / `edit_file` / `apply_patch` 對照磁碟上現有檔案的 unified diff。
 
 > **注意**：shell 指令沒有沙箱，核准後可以存取整台機器；`-y` 等於沒有保護。請在可以放心讓它改動的目錄下使用。
 
@@ -82,7 +95,7 @@ dcode threads -json                                  # {"schema_version":1,"comm
 
 ```toml
 [models]
-default = "openrouter:openai/gpt-6-luna"   # 等同 DCODE_MODEL
+default = "openrouter:openai/gpt-6-luna-pro"   # 等同 DCODE_MODEL
 
 [startup]
 mode = "manual"                            # 或 "yolo"（等同 -y）
@@ -93,7 +106,7 @@ mode = "manual"                            # 或 "yolo"（等同 -y）
 allow_list = ["recommended", "go", "make"]
 
 [retries]
-max_retries = 2                            # 模型呼叫遇到 429 / 5xx / 連線錯誤的重試次數，0 = 不重試
+max_retries = 2                            # 模型呼叫遇到 429 / 5xx / 連線錯誤或空回應的重試次數，0 = 不重試
 
 [server]
 url = "http://127.0.0.1:8123"              # 等同 DCODE_SERVER
@@ -109,8 +122,7 @@ dcode -n '建立 main.go 印出 hello，然後 go run main.go'
 ### 常駐 server 與 TUI（邊寫邊測）
 
 ```sh
-# 終端 A：常駐 server（只綁 loopback）
-export POSTGRES_CONN_STRING='postgres://user:pass@localhost:5432/db?sslmode=disable'   # 可省略
+# 終端 A：常駐 server（只綁 loopback；先在 ~/.deepagents/.env 設定 DCODE_POSTGRES_CONN_STRING 與 DCODE_REDIS_URL）
 dcode serve                        # 或 make serve；-addr 127.0.0.1:8123、-model provider:model
 
 # 終端 B：任何專案目錄
@@ -124,16 +136,22 @@ dcode threads                      # 列出這個目錄的 threads（-all 列出
 ```
 
 - 沒設 `DCODE_SERVER`（或 `-server`）時，agent 直接在 `dcode` 行程內執行。
-- 有 `POSTGRES_CONN_STRING` 時，thread 內容（含待核准的 tool call）與 threads 列表存在 Postgres（`deepagents_checkpoints`、`dcode_threads` 表），server 重啟後仍可接續；沒設時存在記憶體，行程結束就消失。
+- dcode 需要 Postgres 與 Redis，任一個沒設定或連不上就啟動失敗。把 `DCODE_POSTGRES_CONN_STRING`（相容 `POSTGRES_CONN_STRING`）與 `DCODE_REDIS_URL`（相容 `REDIS_URL`）放在 `~/.deepagents/.env`。
+  - Postgres 存重啟後要讀回的內容：thread 與待核准的 tool call（`deepagents_checkpoints`、`dcode_threads`）、計畫（`dcode_plans`）、trace（`dcode_trace_records`、`dcode_trace_blobs`）、摘要前的完整對話（`conversation_history`）。
+  - Redis 存可重新產生的快取，會過期：網頁原文（24 小時）、搜尋 / 擷取 / Context7 結果、被移出 context 的大型 tool 輸出（`storage.results_ttl`，預設 7 天）。過期後讀取會提示重跑工具。
+  - 舊版留下的 `~/.deepagents/plans/` 與 `~/.deepagents/traces/` 已不再使用，可以刪除。
+  - `dbench` 仍使用 `POSTGRES_CONN_STRING`，可連到同一容器的另一個資料庫。
 - 一個 thread 綁定建立它的目錄，換目錄使用同一個 thread 會被拒絕；同一個 thread 同時只能跑一個 run。
 - 回覆會邊產生邊顯示（token 串流）；tool call 的參數要等模型說完才會出現。完成的回覆在 TUI 裡以 markdown 渲染。
 - `dcode serve` 收到 Ctrl-C / SIGTERM 時停止接新 run，進行中的 run 最多有 30 秒收尾，之後被取消；再按一次 Ctrl-C 立即結束。被取消的 tool call 下一輪會自動補上「未完成」的結果，thread 可以直接接續。
-- 模型呼叫遇到 429、5xx 或連線錯誤會自動重試（預設 2 次，`retries.max_retries` 可調）；串流超過 5 分鐘沒有新資料視為卡住並報錯。
+- 模型呼叫遇到 429、5xx、連線錯誤，或 HTTP 200 卻沒有任何 choices（串流則是什麼都沒送出）的空回應會自動重試（預設 2 次，`retries.max_retries` 可調；串流已經送出內容後就不重試）；串流超過 5 分鐘沒有新資料視為卡住並報錯。
 - 每個 thread 只保留最新 10 筆 checkpoint，長對話不會讓 checkpoint 表無限成長。
 
 ### GUI
 
 `dcode` 預設在 `127.0.0.1` 的隨機 port 開一個網頁介面並自動開瀏覽器（`-no-open` 只印出網址）。網址裡的 `#token=` 是這次啟動才有效的存取碼，不會送進 server log；API 只接受 loopback Host 與同源請求。
+
+重新啟動 GUI 時，預設開啟目前目錄最近有對話內容的 thread；`-thread <id>` 可指定，`-r` 可明確要求最近的 thread。側欄的 ✎ 可替已開始的 thread 命名，名稱會隨 thread 保存；執行中暫停切換 thread，避免把串流內容顯示到另一段對話。
 
 - 時間軸保留 TUI 的收合結構（`main · LLM #n`、tool call 樹、subagent 縮排），可以一路往上捲到 thread 開頭。
 - 點 tool call 展開詳細內容：grep 依檔案分組並標出命中、read_file 帶行號、execute 顯示終端輸出與 exit code、edit/write 以 GitHub 風格 diff（unified / split）呈現；另有 Arguments、Output、Raw JSON 分頁。
@@ -141,7 +159,17 @@ dcode threads                      # 列出這個目錄的 threads（-all 列出
 - 每個 turn 結尾有 Files changed 摘要；需要核准時直接在頁面上看 diff 預覽後核准或附理由拒絕。
 - 上方可篩選 Edits / Commands / Errors / LLM calls、搜尋內容；鍵盤 `j`/`k` 移動、Enter 展開、`e` 全部展開、`/` 搜尋、`i` 打開 LLM 側欄、`G` 跳到底、Esc 關閉。
 
-完整的 LLM 輸入、檔案 diff 與 subagent 訊息記在 `~/.deepagents/traces/<thread>.jsonl`（重複內容只存一次），GUI 從 `GET /threads/{id}/trace` 與 `GET /threads/{id}/trace/llm/{seq}` 讀取。
+### Plan 模式與 todo
+
+互動 session（GUI、TUI、REPL）有 Agent / Plan 兩種模式：
+
+- **Agent**（預設）：直接動手。多步驟的工作會先探索、再用 `write_todos` 列出具體的 todo（每項有 `id`、`content`、`status`，可選 `notes`；狀態有 `pending`、`in_progress`、`completed`、`cancelled`）。之後用 `merge: true` 依 `id` 只更新變動的項目。還沒查清楚的事情以 `Investigate:` 開頭列出。
+- **Plan**：GUI 輸入框旁的 Agent/Plan 切換，或 TUI/REPL 的 `/plan`。只開放唯讀工具（`ls`、`read_file`、`glob`、`grep`、`web_search`、`fetch_url`、`resolve_library_id`、`query_docs`、`git_status`、`git_diff`），其他工具一律擋下。模型先研究，有需要用 `ask_user` 問你，最後呼叫 `create_plan`，把計畫存進 Postgres（id 為 `<thread>-<名稱>`）後停下來。計畫是查證過的結果：包含發現（附路徑）、做法、驗證方式與風險，結尾是 todo checklist，不應再有待調查的項目。
+- **Build**：核准計畫只是標記，要按 GUI 的 Build 或輸入 `/build` 才會切回 Agent 模式開始實作。計畫的 todo 會成為 thread 的 todo list（第一項設為 `in_progress`），模型依序完成並回報進度。同一個 thread 再進 Plan 模式修改時，會覆寫同一個計畫。
+
+`ask_user` 會中斷 run 等你回答（選項可多選，另有自由輸入的 Other），即使開了自動核准也一樣。GUI 在核准卡片上作答；TUI 用方向鍵或數字選擇、空白鍵切換多選、Esc 略過；REPL 輸入以逗號分隔的選項編號，或直接打字當作 Other。`POST /runs` 用 `mode`（`agent` / `plan`，plan 需要 `interactive`）與 `build_plan` 控制模式，`GET /threads/{id}` 會回傳 `todos` 與 `plan`。
+
+完整的 LLM 輸入、檔案 diff 與 subagent 訊息記在 Postgres（重複內容只存一次）；`fetch_url` 擷取網頁用的模型呼叫也會記下，GUI 在該 tool call 的詳細內容顯示，GUI 從 `GET /threads/{id}/trace` 與 `GET /threads/{id}/trace/llm/{seq}` 讀取。
 
 前端原始碼在 `code/gui/web`（React + Vite），建置結果 `code/gui/dist` 有進版控，一般 `go build` 不需要 Node。改前端後執行 `make web`（需要 Node）重新產生，`make web-test` 跑前端測試；開發時先跑 `dcode -no-open`，再到 `code/gui/web` 執行 `DCODE_GUI_URL=http://127.0.0.1:<port> npm run dev`，用 Vite 的網址加上同一段 `#token=...` 開啟即可熱更新。
 
@@ -155,6 +183,7 @@ TUI 按鍵（`dcode -tui`）：
 | PgUp / PgDn | 捲動對話 |
 | `/new`、`/thread`、`/threads`、`/resume <id>` | 新 thread、顯示 id、選擇 thread、切換 thread |
 | `/yolo` | 切換自動核准 |
+| `/plan`、`/build` | 切換 Plan 模式、實作最新的計畫 |
 | `/help`、`/quit` | 說明、離開 |
 
 server 的 HTTP 介面：`GET /healthz`、`POST /runs`（回傳 NDJSON：`delta`、`message`、`interrupt`、`trace`、`done`、`error`）、`GET /threads?cwd=&limit=`、`GET /threads/{id}`、`GET /threads/{id}/trace`、`GET /threads/{id}/trace/llm/{seq}`。
@@ -165,7 +194,7 @@ server 的 HTTP 介面：`GET /healthz`、`POST /runs`（回傳 NDJSON：`delta`
 
 | provider | 範例 | API key | 端點覆寫 |
 | --- | --- | --- | --- |
-| `openrouter` | `openrouter:openai/gpt-6-luna` | `OPENROUTER_API_KEY` | `OPENROUTER_API_BASE` |
+| `openrouter` | `openrouter:openai/gpt-6-luna-pro` | `OPENROUTER_API_KEY` | `OPENROUTER_API_BASE` |
 | `openai` | `openai:gpt-5.5` | `OPENAI_API_KEY` | `OPENAI_BASE_URL` |
 
 OpenRouter 會帶上 app attribution header（`HTTP-Referer`、`X-Title`），可用 `OPENROUTER_APP_URL`、`OPENROUTER_APP_TITLE` 覆寫，設成空字串則不送。
@@ -183,7 +212,15 @@ make run PROMPT='hello'
 2. 專案 `.env`：從目前目錄往上找到的第一個 `.env`
 3. 全域 `~/.deepagents/.env`
 
-`BRAVE_API_KEY`（Brave Search）也放在 `.env`：有設定時 dcode 才會掛上 `web_search` 工具，`fetch_url` 不需要 key。
+`BRAVE_API_KEY`（Brave Search）也放在 `.env`：有設定時 dcode 才會掛上 `web_search` 工具，`fetch_url` 不需要 key。`CONTEXT7_API_KEY` 會掛上 `resolve_library_id` / `query_docs`，查詢指定版本的函式庫文件。
+
+web 工具的做法對齊 Claude Code：
+
+- `fetch_url(url, prompt)` 用 `models.web`（config.toml，未設定用主模型）讀整頁，只把答案回給主 agent。完整頁面存成 `/.deepagents/web/<hash>.md`，需要細節時可以 `read_file` / `grep`。
+- `web_search` 預設 8 筆，可用 `allowed_domains` / `blocked_domains` 限定來源。
+- 搜尋與擷取結果快取 15 分鐘，Context7 快取 1 小時。
+- 有 Brave 或 Context7 key 時，會多一個 `web-researcher` subagent：它用 `models.web`，只有 web 工具與唯讀檔案工具，每次最多 4 次搜尋、8 頁，最後回報結論、引用 URL、適用版本與來源衝突。啟動它的 `task` 需要核准，核准後裡面的網路呼叫不再逐一詢問。
+- `task` 可加 `run_in_background: true` 在背景執行。主 agent 先做別的事，結果以 `<task-notification>` 送回，或用 `task_output` 等待；run 會等背景 task 結束才收尾，取消 run 會一併取消。背景 task 只存在 server 記憶體：`dcode serve` 重啟，或 run 停下來等待核准時，背景 task 會中止，下一輪會收到「cancelled」通知。
 
 `.env` 已列在 `.gitignore`，只有 `.env.example` 會進版控。
 
@@ -199,6 +236,7 @@ docker run -d --name dbench-postgres -p 127.0.0.1:5433:5432 \
   -e POSTGRES_USER=dbench -e POSTGRES_PASSWORD=dbench -e POSTGRES_DB=dbench \
   -v dbench-pgdata:/var/lib/postgresql/data postgres:16-alpine
 export POSTGRES_CONN_STRING='postgres://dbench:dbench@127.0.0.1:5433/dbench?sslmode=disable'
+export REDIS_URL='redis://127.0.0.1:6379/0'   # dcode 的快取，dbench run 也需要
 
 make bench-prepare                 # 固定 commit 的 task 目錄、驗證 SHA256SUMS、HF metadata、寫入 bench_tasks
 make bench-gate                    # 驗收評分器：官方 patch（oracle）要全過、空 patch（nop）要全不過

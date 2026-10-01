@@ -212,3 +212,102 @@
 ### Stage B5: 第一輪基準線
 **Goal**: 用官方 harness 研究中的開源模型跑 smoke50，和 mini-swe-agent / Pi / OpenCode 同題同模型比較，產出下一步優化清單。
 **Status**: Not Started
+
+## Stage 11: 結構化 coding tools（超出 Python 版）
+
+**Goal**: dcode 層（`code/codetools`）新增 `git_status` / `git_diff`、Codex 格式 `apply_patch`、Go 的 `run_tests` / `diagnostics`，把指令輸出整理成 JSON 回給 LLM。指令一律經 `SandboxBackend.Execute`（dbench 容器也能用），檔案改動經 backend 讀寫。核心 `middleware/filesystem` 不動。
+**Success Criteria**: 每個子階段 `make check` 通過（有動前端加跑 `make web-test`）；backend 不能執行指令時只提供 `apply_patch`；`apply_patch` 任一 hunk 失敗時沒有檔案被改；核准畫面顯示 patch 的 unified diff。
+**子階段**:
+- 11a `git_status` / `git_diff`（唯讀、不需核准；porcelain v2、numstat、按檔切 diff、untracked、沒有 HEAD、輸出上限）
+- 11b `apply_patch`（解析、逐層放寬的 seekSequence、全有或全無、平行寫入保護、HITL diff 預覽、GUI、bench metrics）
+- 11c `run_tests` / `diagnostics`（Go：test2json、`go build` / `go vet` 解析；參數驗證；沒有 go.mod 回 unsupported；核准規則比照 execute）
+**Tests**:
+- 解析器 table-driven：改名、檔名含空白、binary、刪除；patch 每種 op 與格式錯誤；test2json 通過 / 失敗 / panic / build fail / subtest；vet 輸出
+- 端到端：暫存目錄 `git init` 經 `LocalShellBackend`；apply_patch 在 `FilesystemBackend` 與 `StateBackend`；會失敗的 Go module
+- 核准：apply_patch 需核准且預覽為 diff；run_tests / diagnostics 依 shell allow list
+**Status**: Complete（真模型 smoke：有 bug 的 Go 專案裡 `dcode -n` 依序用了 apply_patch → run_tests → diagnostics → git_diff 並修好測試。dbench smoke50 的 Go 題比較尚未跑：需要 `POSTGRES_CONN_STRING`，排在 Stage B5 基準線一起做）
+
+## Stage 12: 驗證閘門與多語言驗證工具
+
+**Why**: dbench NodeBB 題（gpt-6-luna-pro）只過 2/4 F2P。agent 因為 Redis 沒啟動而一次測試都沒跑成功，只跑 lint 就宣告完成；兩個錯（`relative_path` 前綴、slugify 小寫檔名）跑測試就會現形。system prompt 早就要求「Verify before declaring done」，所以只靠 prompt 不夠。
+**Goal**: headless 模式加入確定性的完成前驗證（改過檔案卻沒有通過的測試 / build 就擋下結束，最多 2 次）；`run_tests` / `diagnostics` 支援 JS/TS 與 Python；prompt 補上環境建置與最小改動；工具錯誤訊息改成可操作。
+**Success Criteria**: 每個子階段 `make check` 通過；NodeBB 題 agent 會自己啟動服務並跑測試；`dbench run -limit 10` 前後比較有數據。
+**子階段**:
+- 12a `VerifyGate`（`code/agent/verify.go`）：AfterAgent 判斷修改後有沒有驗證證據，`[verify]` 標記計數、上限 2；WrapToolCall 對 `ECONNREFUSED` 附服務啟動提示；只在 headless 掛上，`Options.NoVerifyGate` 可關
+- 12b `run_tests` / `diagnostics` 多語言：依 `go.mod` / `package.json` / Python 標記檔偵測；mocha / jest / vitest JSON、pytest junit XML（改用 XML 而非 `-rA`：輸出大小可控），報告由內嵌的 node / python 腳本壓成摘要再交給 Go 解析；tsc / eslint、ruff / 記憶體內語法檢查（不寫 `__pycache__`）
+- 12c system prompt：run_tests 語言、測試環境自己建、不加題目沒要求的驗證、不確定就印出實際值
+- 12d 工具錯誤訊息：edit_file 多處相符時列行號、apply_patch hunk 規則與最接近行提示、git 逾時 120 秒
+**Tests**:
+- gate：沒修改放行、修改未驗證擋下、驗證通過放行、驗證失敗擋下並附失敗測試、擋滿放行、服務提示、FakeModel 整合（擋下後繼續跑）
+- 解析器 table-driven：mocha / jest / vitest JSON（含混入 log 的 stdout）、pytest 摘要、tsc / eslint / ruff 輸出
+- 錯誤訊息：多處相符列出行號、空 hunk、最接近行
+**Evidence**: 無外部回饋的自我修正無效（Huang et al. ICLR 2024）、有可靠外部回饋才有效（Kamoi et al. 2024）；Claude Code `Stop` hook；SWE-agent ACI ablation；Anthropic 工具設計與 eval 文章
+**Results**（gpt-6-luna-pro）:
+- NodeBB 題重跑 `20260930-155159`：resolved（f2p 4/4、p2p 307/307，$0.06）。eslint diagnostics 抓到重複宣告；mocha run_tests 回報 `ECONNREFUSED 6379` 後 agent 自己 `redis-server --daemonize yes`，再跑 207 / 334 個測試全過。
+- smoke50 前 10 題 A/B（before = 同一份程式碼關掉 gate、run_tests / diagnostics 只支援 Go、舊 prompt）：`20260930-160724` 8/10 vs `20260930-160743` 8/10，解出的題目相同（McNemar p = 1.0；10 題樣本太小，看不出解題率差異）。過程指標有變：after 每題都用 run_tests（2–8 次）與 diagnostics，before 幾乎沒用（0–1 次，Node 題會回 unsupported）；gate 在 10 題中擋下 1 次。成本 $0.52 vs $0.57。
+- 驗證時發現：工作目錄裡另一份未提交的 summarization 修改把「模型沒有 context window 資訊」時的觸發門檻從 170k 降到 16k tokens，gpt-6-luna-pro 不在 context window 表內，於是每幾步就摘要一次、反覆重讀檔案而不動手（`20260930-151154`，343 次 tool call 沒有任何修改，已中止）。上面的數據是在 /tmp 複本把門檻改回 170k 後跑的。
+**Status**: Complete
+
+## Stage 13: Plan 模式與 write_todos 強化（參考 Cursor / Claude Code）
+
+**Why**: trace 顯示 agent 在讀任何檔案前就呼叫 `write_todos`，清單是三條通用步驟（「檢視專案」「實作」「跑測試」）；沒有先研究、再產出確定性計畫並等使用者同意的流程。
+**Goal**: todo 是執行中會修正的追蹤清單（可含待查證項目）；plan 是唯讀研究後產出的確定性計畫，附 checklist，使用者按 Build 才轉成 todos 開始實作。TUI 與 GUI 都支援。
+**Success Criteria**: 每個子階段 `make check` 通過（有動前端加跑 `make web-test`）；Plan 模式下模型拿不到寫入工具、呼叫也會被擋；計畫寫到 `~/.deepagents/plans/`；Build 之後 todos 與計畫一致。
+**子階段**:
+- 13a `write_todos`：`{id, content, status, notes?}`、`cancelled`、`merge` 依 id 部分更新、舊資料自動補 id；prompt 改成先探索再寫、項目具體可驗證、不確定的寫成 investigation
+- 13b `ask_user`：選擇題提問，走 HITL 中斷（只允許 respond / reject）；`InterruptOnConfig.Always` 讓它在 YOLO 下仍中斷；只在 interactive 註冊
+- 13c `middleware/planmode`：`RunConfig.Configurable` 帶 mode；唯讀工具白名單（WrapModelCall 過濾 + WrapToolCall 擋）、plan prompt、`create_plan` 寫檔與 state `plan`、`build_plan` 時把計畫 todos 寫進 state
+- 13d server / 指令：`RunRequest.Mode`、`BuildPlan`（plan 只限 interactive）、`ThreadState.Todos` / `Plan`、`/plan`、`/build`
+- 13e TUI / GUI：模式顯示與切換、todo notes、計畫檢視與 Build、ask_user 選擇介面
+**Tests**:
+- todolist：merge、補 id、cancelled、錯誤狀態、merge 未知 id
+- ask_user：參數驗證、auto-approve 下仍中斷、respond 答案成為 tool 結果
+- planmode：兩種模式的工具清單、擋下寫入、create_plan 寫檔與 state、覆寫同一檔、build 產生 todos
+- server：headless 不能 plan、Configurable 帶 mode
+- TUI：`/plan`、`/build`、ask 流程；GUI vitest：todosOf、planOf、答案序列化
+**Status**: Complete
+**結果**: `make check`、`make web-test` 通過，`code/gui/dist` 已重建。真實模型 smoke（`openrouter:openai/gpt-6-luna-pro`，`dcode serve` + `POST /runs`）：plan 模式只提供 10 個唯讀工具；模型先呼叫 `ask_user` 中斷，回答後讀檔並 `create_plan`，寫出含 Findings / Approach / Verification / Risks 與 2 項 todo 的計畫檔；`build_plan` 後 todos 與計畫 id 一致，模型依序以 `write_todos`（含 merge 與 notes）推進並全部完成，產出的程式與測試可執行。
+
+## Stage 14: 持久儲存改用 Postgres / Redis，web 工具對齊主流 coding agent
+
+**Why**: `fetch_url` 把整頁 markdown（最多 20k tokens）直接放進主 context，`web_search` 預設回 20 筆加 extra snippets / rich JSON；網頁內容沒有 prompt injection 框隔。主流做法：Claude Code `WebFetch(url, prompt)` 由 Haiku 擷取後只回答案、`WebSearch` 只回標題 / URL / 摘要；Gemini CLI `web_fetch(prompt)`、Amp `read_web_page(prompt)` 同樣模式；多步研究交給 subagent，Claude Code subagent 可背景執行、完成時以通知送回主 agent。另外 plan、trace、eviction 結果散落在本機檔案，重啟或換機器就不一致。
+**設計取捨**:
+- 單頁擷取是「一次 LLM 呼叫、不帶工具」，放在 tool 內部，不做成 subagent；每頁一次（同 Claude Code），可平行、可用 `url + prompt` 快取、單頁失敗不影響其他頁。
+- 平行不需要 subagent：loop 已平行執行同一輪的 tool calls（`maxParallelTools = 8`）。
+- 「搜尋時主 agent 繼續做別的事」靠背景 `task`，這是通用能力，不綁 web。
+- 儲存：重啟後要讀回的完整內容放 Postgres（thread、checkpoint、plan、trace、`conversation_history`）；可重新產生的快取放 Redis 並設 TTL（網頁原文、搜尋 / 擷取 / Context7 結果、`large_tool_results`）。沒有設定 Postgres 或 Redis 時啟動失敗。
+**Goal**: 主 context 只收到擷取後的答案與引用；多查詢研究可委派給 `web-researcher`；`task` 可背景執行；本機不再存 plan / trace / eviction 檔。
+**Success Criteria**: 每個子階段 `make check` 通過（有動前端加跑 `make web-test`）。
+**子階段**:
+- 14.0 儲存基礎：`DCODE_REDIS_URL`（相容 `REDIS_URL`）、`runtime.PostgresStore` / `RedisStore`、`backend.StoreBackend`、`code/storage.Open` 啟動檢查
+- 14.1 搬移本機資料：plan 存 `dcode_plans`、trace 存 `dcode_trace_records` / `dcode_trace_blobs`、`large_tool_results` 與網頁原文走 Redis（`storage.results_ttl`，預設 7 天；網頁 24 小時）、`conversation_history` 走 Postgres store
+- 14a `fetch_url(url, prompt)`：以 `models.web`（未設定用主模型）擷取，網頁以 `<web_content>` 框住；完整頁面存 `/.deepagents/web/<hash>.md`；15 分鐘快取；擷取失敗退回原文
+- 14b `web_search`：`count` 預設 8、`allowed_domains` / `blocked_domains`、15 分鐘快取；prompt 改為「Looking Things Up」查詢順序
+- 14c Context7：`resolve_library_id` / `query_docs`（`CONTEXT7_API_KEY`），1 小時快取、錯誤碼對應、需核准
+- 14d `web-researcher` subagent：web 工具 + 唯讀檔案工具，最多 4 次搜尋、8 頁；啟動研究的 `task` 需核准
+- 14e 背景 `task`：`run_in_background`、`<task-notification>`（BeforeModel 注入、進 checkpoint）、`task_output(task_id, timeout)`、AfterAgent 等待、取消 run 連帶取消；registry 只在記憶體
+- 14f TUI / GUI：背景 task 顯示「background」直到通知到達；Context7 / fetch 的專屬檢視；`fetch_url` 掛上 `web_extract` 擷取呼叫
+**Tests**: 各子階段的單元測試（httptest 驗請求形狀與快取、FakeModel 端到端、barrier 證明 fetch 平行與背景 task 與主 agent 重疊、`-race` 壓測背景 task）、真實 Postgres / Redis 的 store 與 storage 測試、GUI vitest。
+**Status**: Complete
+**結果**: `make check`、`make web-test` 通過，`code/gui/dist` 已重建。尚未做真實模型 smoke（整頁 vs. 擷取的 token 比較、Context7 釘選版本查詢、serve 重啟後 plan / trace 仍在）。
+
+## Stage 15: 縮短單題時間（慢工具與 write_todos 回合）
+
+**Why**: smoke50 前 10 題 trace（`20260930-160724` / `160743`）中 agent 時間約 85% 在等模型。工具端：`git_status` ansible 中位數 21 秒、`git_diff` 最慢 61 秒、從根目錄 `grep` NodeBB 最慢 15 秒。模型端：520 個主 agent 回合裡有 68 個只呼叫 `write_todos`（約 995 秒）。
+**實測**（NodeBB-8168 映像、照 `DcodeSolver` 複製 `/app` 並掛回容器）:
+- git：`docker cp` 讓每個檔案的 stat 資料都變了，而 git 工具帶 `GIT_OPTIONAL_LOCKS=0` 不會寫回 index，所以每次都重新 hash 整個工作樹。`git status` 6–8 秒、`git diff` 9.1 秒；先跑一次 `git update-index -q --refresh`（0.3 秒）後分別是 0.9 秒、0.4 秒。
+- grep：從 `/` 搜尋 11–15 秒，第一次撞到 15 秒預算回傳 0 筆且 truncated；只搜 `/src` 0.03 秒；glob 全樹 0.7 秒。時間都花在讀 `node_modules` 內容。
+- eslint 單檔 4–8 秒（`--cache` 無明顯差異），屬專案本身成本，不在這一步處理。
+**子階段**:
+- 15a `DcodeSolver` 啟動容器後刷新一次 git index
+- 15b `FilesystemBackend.Grep` 略過依賴目錄（`node_modules` 等），搜尋路徑本身在其中時照常搜尋；工具說明寫明
+- 15c `write_todos` prompt：明說可以和其他工具放在同一個回應，只是不能同一回應呼叫兩次
+**Success Criteria**: `make check` 通過；實測 git_status / git_diff / 根目錄 grep 回到 1 秒左右。
+**Tests**:
+- solver：refresh 指令在 agent 執行前送出、失敗時回報錯誤
+- grep：根目錄搜尋不回傳 `node_modules` 內的結果、明確指定 `node_modules` 路徑時照常回傳
+- todolist：prompt 不再出現會被理解成「單獨呼叫」的措辭、含同回應搭配其他工具的指示
+**Status**: Complete
+**結果**: `make check` 通過。同一份 NodeBB 工作目錄重測：刷新 index 後 `git status` 0.9 秒、`git diff` 0.4 秒；根目錄 grep 0.6–2 秒且結果正確（原本 11–15 秒、會逾時回傳 0 筆）。`write_todos` 回合數的變化要等下一次 dbench 跑完才有數據。
+**另外確認 summarization**: 觸發門檻已不是 16k。gpt-6-luna 已在 context window 表內（1,050,000），觸發點是 80%（約 840k），保留 10%；沒有 profile 的模型退回 170k 觸發。原本兩個 16k 相關常數之後都已移除：`createSummary` 每塊上限改為 `window/4`（`TrimTokensToSummarize` 預設不設），`contextBudget` 對沒有 profile 的模型假設 200k context window（`assumedContextWindow`）再取 80%。
+- 15d 已修：沒有 profile 的模型一律假設 200k window（與 170k 退回觸發點一致），`contextBudget` 與摘要每塊上限都由同一個 window 推算；每塊上限改為 window / 4，不再封頂 16k（luna 約 262k、未知模型 50k，原本是 16k / 4k）。測試：未知 window 的模型接受 20k tokens 的 system prompt（原本被拒）、約 36k tokens 的歷史在 1M 與未知 window 下都只要 1 次摘要呼叫（原本 3 次與 10 次左右）。

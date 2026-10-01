@@ -18,7 +18,7 @@
 
 - 最後更新：2026-09-30（Stage 10 完成：context 管理與 dcode 日常體驗）
 - 核心 SDK：圖、in-memory / Postgres checkpoint（每 thread 保留最新 10 筆）、interrupt、OpenAI Generate / Stream 走套件（含重試與串流閒置逾時）；FilesystemBackend / LocalShellBackend / FilesystemMiddleware / HITL（approve / reject、`When`）/ PatchToolCalls 可用；StateBackend（CreateDeepAgent 預設）可用；其餘 middleware、Store 仍為 stub
-- CLI：`dcode serve`（HTTP + NDJSON、兩階段關閉）、預設瀏覽器 GUI（可展開每一步、GitHub 樣式 diff、LLM 檢視器；trace 存在 `~/.deepagents/traces`）、`-tui` Bubble Tea TUI（markdown、diff 預覽）與 line REPL、`-n` / `-thread` / `-r` / `-y` / `-q` / `-no-stream` / `-timeout`、`dcode threads [-json]`；使用者層 `config.toml` 與 shell allow-list
+- CLI：`dcode serve`（HTTP + NDJSON、兩階段關閉）、預設瀏覽器 GUI（可展開每一步、GitHub 樣式 diff、LLM 檢視器；trace 存在 Postgres）、`-tui` Bubble Tea TUI（markdown、diff 預覽）與 line REPL、`-n` / `-thread` / `-r` / `-y` / `-q` / `-no-stream` / `-timeout`、`dcode threads [-json]`；使用者層 `config.toml` 與 shell allow-list
 
 ---
 
@@ -117,7 +117,7 @@
 - [x] `Checkpoint`、`Checkpointer` 介面（對外 API；儲存交給套件）。續跑欄位 `Seq` / `Steps` / `ResumeFrom` 具型別，不放在 `Metadata`
 - [-] `MemoryCheckpointer`（`InMemorySaver`）— 轉接 langgraphgo `MemoryCheckpointStore`，不自寫儲存。Latest / Put / List / DeleteThread 已接上
 - [x] `PostgresCheckpointer` — go: `runtime/postgres.go`，轉接 langgraphgo `checkpoint/postgres`（`POSTGRES_CONN_STRING`，表 `deepagents_checkpoints`）。JSON 讀回還原 `Checkpoint`；pending interrupt 與 `ResumeFrom` 可跨行程讀取
-- [-] SQLite checkpointer（`AsyncSqliteSaver`）— CLI 改用 Postgres（`POSTGRES_CONN_STRING`），沒設時 in-memory
+- [-] SQLite checkpointer（`AsyncSqliteSaver`）— CLI 使用 Postgres（`DCODE_POSTGRES_CONN_STRING`，相容 `POSTGRES_CONN_STRING`），未設定時用 in-memory
 - [x] `PostgresCheckpointer.Pool()` 讓 sessions 表共用連線池
 - [x] checkpoint 序列化格式（JSON）— Postgres 路徑把 `map[string]any` 解回 `Checkpoint`
 - [x] 每 thread 只保留最新 `DefaultCheckpointsPerThread`（10）筆；`version` 欄存 seq，Postgres 以索引取最新與裁剪，舊資料（version=0）仍可讀
@@ -357,6 +357,7 @@
   - [x] subagent 的 state update 回寫 parent（files 等）
   - [ ] response_format（per-subagent）
   - [x] 未知 subagent_type 錯誤
+  - [x] 背景執行（Go 版延伸，參考 Claude Code）：`Options.Background` 加 `run_in_background` 與 `task_output`；完成時 BeforeModel 注入一次 `<task-notification>`；AfterAgent 等待未完成的 task；取消 run 連帶取消；registry 只在記憶體、不轉發事件
 - [~] 事件 namespace / tracing metadata（`ls_agent_type`）— 串流時 subagent 的 values 事件以 `task:<tool call id>` namespace 轉發給 parent；tracing metadata 未做
 
 ### 4.4 AsyncSubAgents `middleware/asyncsubagents`（py: `middleware/async_subagents.py`）
@@ -444,6 +445,9 @@
   - [x] `Describe`：每個 call 各自產生 description（Python callable `description`）
 - [x] TodoList `middleware/todolist`（langchain `TodoListMiddleware`）
   - [x] `write_todos` 工具與 system prompt；同一輪多次呼叫全部回錯誤；TUI 以 checklist 顯示
+  - [x] 擴充（Go 版延伸，Python 沒有）：`id`、`notes`、`cancelled`，`merge: true` 依 id 更新；prompt 要求先探索再列具體 todo，不確定的列成 `Investigate:`
+  - `interrupt_on` 的 `Always`：自動核准時仍中斷（`ask_user` 使用）
+- [x] PlanMode `middleware/planmode`（Go 版延伸，參考 Cursor Plan 模式）：plan 模式只開唯讀工具；`create_plan` 存進 Postgres（`dcode_plans`，`planmode.Store`）並存進 state；`build_plan` 把計畫 todo 種進 todo list；dcode 的 `ask_user`（`code/askuser`）以 HITL respond 收答案；GUI / TUI / REPL 支援 `/plan`、`/build`
 - [~] PromptCaching `middleware/promptcaching`（py: `_prompt_caching.py`）
   - [~] `AppendDefaults`
   - [ ] Anthropic cache_control 標記
@@ -520,15 +524,16 @@
   - [ ] 自動完成、貼上收合、ask_user
   - [ ] model / agent / theme 選擇器、context 用量、通知中心
 - [x] GUI `code/gui` + `code/gui/web`（Stage 9；Python 沒有對應功能）
-  - [x] trace `code/trace`：完整 LLM request / 回覆、檔案 unified diff、subagent 訊息，每 thread 一個 JSONL、內容去重
+  - [x] trace `code/trace`：完整 LLM request / 回覆、檔案 unified diff、subagent 訊息，存在 Postgres（`trace.Log`：`dcode_trace_records` / `dcode_trace_blobs`）、內容去重；`fetch_url` 擷取呼叫記在 `web_extract:<call id>`
   - [x] 內嵌 React SPA、loopback + token + Origin 檢查、遠端 server 走 reverse proxy；`dcode` 預設開啟，`-tui` / `-plain` / `-no-open`
   - [x] timeline（TUI 同款收合樹、完整歷史虛擬捲動、串流、核准卡片）、各 tool 詳情、unified / split diff、LLM 檢視器、Files changed
   - [x] thread 側欄、過濾 / 搜尋、快捷鍵、`make web` / `make web-test`
+  - [x] 重啟後自動開啟目前目錄最近的 thread、側欄重新命名（`PATCH /threads/{id}`）
 
 ### 6.2 Agent `code/agent`（code: `agent.py`）
 
-- [~] `CreateCLIAgent` / `Options`（LocalShellBackend virtual mode 以 cwd 為根 + system prompt + TodoList + Memory（`~/.deepagents/<agent>/AGENTS.md`、`/.deepagents/AGENTS.md`、`/AGENTS.md`；headless 用 `_MEMORY_HEADLESS_SYSTEM_PROMPT`）+ HITL `DefaultInterruptOn`（含 web_search / fetch_url，description 照 Python 格式）+ `WebTools`（有 `BRAVE_API_KEY` 才掛 web_search，fetch_url 一律掛）+ SkillsMiddleware（`SkillSources`，見 6.10）；MCP 未接）
-- [~] `SystemPrompt`（headless / interactive、model identity、cwd 與虛擬路徑說明、Project Context、web search 段落（有 key 才加，另說明 freshness / result_filter / offset / summary）；skills 段落由 SkillsMiddleware 注入）— go: `code/agent/system_prompt.md`
+- [~] `CreateCLIAgent` / `Options`（LocalShellBackend virtual mode 以 cwd 為根 + system prompt + TodoList + Memory（`~/.deepagents/<agent>/AGENTS.md`、`/.deepagents/AGENTS.md`、`/AGENTS.md`；headless 用 `_MEMORY_HEADLESS_SYSTEM_PROMPT`）+ HITL `DefaultInterruptOn`（含 web_search / fetch_url / Context7、啟動 web-researcher 的 task，description 照 Python 格式）+ `WebTools`（有 `BRAVE_API_KEY` 才掛 web_search，有 `CONTEXT7_API_KEY` 才掛 Context7，fetch_url 一律掛）+ `web-researcher` subagent + 背景 task（`deepagents.WithBackgroundTasks`）+ 儲存（`Plans`、`Artifacts`、`Cache`、`WebModel`）+ SkillsMiddleware（`SkillSources`，見 6.10）；MCP 未接）
+- [~] `SystemPrompt`（headless / interactive、model identity、cwd 與虛擬路徑說明、Project Context、Looking Things Up 段落（本地 → Context7 → web_search → fetch_url(prompt) → web-researcher）與 web search 段落（有 key 才加，另說明 freshness / result_filter / offset / summary）；skills 段落由 SkillsMiddleware 注入）— go: `code/agent/system_prompt.md`
 - [~] `ListAgents` / `ResetAgent`
 - [x] shell allow-list（`IsShellCommandAllowed`，移植 `contains_dangerous_patterns` / `is_shell_command_allowed`）— 以 hitl `When` 讓符合的 execute 免核准，`all` 取消 execute 核准；取代 `ShellAllowListMiddleware` stub
 - [ ] 任務錯誤格式化（`_format_task_error`）
@@ -542,7 +547,7 @@
 - [x] `DefaultPaths`（`~/.deepagents`、`cwd/.deepagents`；尚未處理 profile state dir）
 - [x] `config.SetDefaultModel`：只改 `models.default` 一行（保留註解與其他 key），前後都要能解析才寫入
 - [x] config.toml 解析（`github.com/BurntSushi/toml`）：`models.default`、`startup.mode`（manual / yolo，預設 yolo）、`shell.allow_list`（陣列、逗號字串、`recommended`、`all`）、`retries.max_retries`、`server.url`；其餘 key 放 `Raw`；錯誤帶行號
-- [~] 分層合併：flag > env（`DCODE_MODEL`、`DCODE_SERVER`、`DEEPAGENTS_CODE_SHELL_ALLOW_LIST`、`BRAVE_API_KEY` → `WebSearchAPIKey`）> 使用者 config.toml > 預設；managed / project / session 層未做
+- [~] 分層合併：flag > env（`DCODE_MODEL`、`DCODE_SERVER`、`DEEPAGENTS_CODE_SHELL_ALLOW_LIST`、`BRAVE_API_KEY` → `WebSearchAPIKey`、`CONTEXT7_API_KEY` → `Context7APIKey`；config.toml 另有 `models.web`、`storage.results_ttl`）> 使用者 config.toml > 預設；managed / project / session 層未做
 - [x] .env 載入（shell > 最近的專案 `.env` > `~/.deepagents/.env`）— go: `code/config/dotenv.go`
   - [ ] 拒絕危險 key（`_DOTENV_DENIED_ENV_KEYS`、專案 `.env` 不可設定的 LangSmith key）
   - [ ] 變數內插（`${VAR}`）、`/reload` 時移除先前注入的值
@@ -552,7 +557,8 @@
 ### 6.4 Sessions `code/sessions`（code: `sessions.py`）
 
 - [x] `Info` / `Filter` / `Store` / `Latest` / `NewThreadID` / `Title`
-- [-] SQLite schema — 改用 Postgres `dcode_threads`（`PostgresStore`）與 `MemoryStore`
+- [-] SQLite schema — 改用 Postgres `PostgresStore`，嵌入／測試服務可用 `MemoryStore`
+- [x] `SetTitle`：更新已存在 thread 的名稱，不被後續 `Touch` 覆蓋
 - [x] list / most recent / get / delete；thread 綁定 cwd
 - [x] message count、title（第一則 prompt 前 60 字）
 - [ ] find similar（打錯 thread id 時提示）
@@ -566,7 +572,10 @@
   - [x] summary 自動打 summarizer、enable_rich_callback 自動打 /web/rich；後續呼叫失敗只附 note
   - [x] 401 / 403 / 422 / 429（Retry-After）與缺 key 轉成 error tool message
   - [x] 輸出：query、summary、rich、web、news、videos、discussions、faq、infobox、locations
+  - [x] `count` 預設 8、`allowed_domains` / `blocked_domains`（轉 `site:` / `-site:`）、Redis 快取 15 分鐘
 - [x] `NewFetchURL` — go: `code/tools/fetch.go`（輸出為文字而非 Python 的 dict）
+  - [x] `prompt`：以 `models.web` 擷取（`<web_content>` 框隔、每頁一次、15 分鐘快取），完整頁面存 `/.deepagents/web/`，擷取失敗退回原文
+- [x] Context7 `resolve_library_id` / `query_docs` — go: `code/tools/context7.go`（REST v2、錯誤碼對應、1 小時快取）
 - [x] SSRF 防護（只允許 http / https、封鎖非公開 IP 含 IPv4-mapped / 6to4、連線釘在驗證過的 IP、不走 proxy、每個 redirect 重新驗證、上限 5 次）
 - [x] HTML → markdown（`html-to-markdown/v2`，相對連結轉絕對）；純文字 / JSON 原樣回傳；回應上限 5 MiB
 - [~] approval 的 URL 警告：只檢查隱藏字元與 punycode 解碼（Python `unicode_security` 其餘規則未移植）
@@ -679,6 +688,7 @@
 - [~] Extensions `code/extensions`（`Extension`、`Register`、`Loaded`）— code: `extensions/*`
 - [ ] model config / 切換 / reasoning effort — code: `model_config.py`, `configurable_model.py`, `reasoning_effort.py`
 - [x] model retry — code: `model_retry.py`；go: `llm/transport.go`（429 / 5xx / 連線錯誤指數退避、Retry-After、`retries.max_retries`；串流閒置 5 分鐘逾時）
+- [x] 空回應重試 — go: `llm/openai.go`（200 但 0 choices、或串流什麼都沒送出 → 依 `max_retries` 退避重試；串流已輸出就不重試）
 - [ ] auth store / 顯示 — code: `auth_store.py`, `auth_display.py`
 - [ ] OpenAI Codex 整合 — code: `integrations/openai_codex.py`
 - [ ] btw（旁支問題）— code: `btw*.py`
@@ -699,6 +709,22 @@
 - [ ] cold cache — code: `cold_cache.py`
 - [ ] state migration — code: `state_migration.py`
 - [-] `_textual_patches.py`、`iterm_cursor_guide.py`、`_dep_floor_check.py` — Python / Textual 特有
+
+### 6.13 超出 Python 版的功能：結構化 coding tools `code/codetools`（Stage 11）
+
+Python 版沒有這些工具；它們把凌亂的指令輸出整理成 JSON 再回給 LLM。
+
+- [x] `git_status`（porcelain v2 → branch / modified / added / deleted / renamed / untracked / conflicted）
+- [x] `git_diff`（每檔 path / status / additions / deletions / diff；含 untracked、沒有 HEAD、輸出上限）
+- [x] `apply_patch`（Codex 格式、逐層放寬比對、全有或全無（寫入失敗會 rollback）、HITL diff 預覽、GUI 預覽）
+- [x] `run_tests`（Go：`go test -json` → passed / failed / failures 帶 file:line）
+- [x] `diagnostics`（Go：`go build` + `go vet` → file / line / column / message）
+- [x] 其他語言的 run_tests / diagnostics（Stage 12：mocha / jest / vitest / npm test、pytest；tsc / eslint、ruff / 語法檢查）
+- [x] 減少 unsupported：`dir` 參數與子目錄專案自動偵測（`code/codetools/target.go`）、無 tsconfig/ESLint 時 `node --check` 語法檢查、無 pytest 時改用 unittest
+- [x] headless 驗證閘門 `VerifyGate`（Stage 12：改檔後沒有通過的測試 / build 就擋下結束，最多 2 次；ECONNREFUSED 服務啟動提示）
+- [x] `edit_file` 多處相符時列出行號與前一行（與 Python 版不同：Python 只回報次數）；`apply_patch` 對不上時指出最接近的行
+- [ ] 驗證閘門的 `execute` 判斷目前靠指令 regex，不認得的測試指令（例如自訂 script 名稱）不算驗證
+- [ ] symbol 導航（find_symbol / find_definition / find_references，LSP）
 
 ---
 
