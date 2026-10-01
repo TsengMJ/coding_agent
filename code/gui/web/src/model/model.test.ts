@@ -4,7 +4,7 @@ import { applyEvent, emptyView, endRun, fromHistory, startRun } from "./state";
 import { buildTimeline, groupFiles } from "./timeline";
 import { diffLines, gapBefore, parseUnified, splitRows } from "./diff";
 import { failedCommand, matchTurn } from "./filter";
-import { buildTree, commandLine, parseExecute, parseGrep, parseNumbered, summarize } from "./tools";
+import { buildTree, commandLine, parseExecute, parseGrep, parseLibraries, parseNumbered, summarize } from "./tools";
 
 const user = (text: string): Message => ({ role: "user", content: [{ type: "text", text }] });
 const assistant = (text: string, calls: Message["tool_calls"] = [], seq?: number): Message => ({
@@ -158,6 +158,65 @@ describe("buildTimeline", () => {
   it("sums tokens over main and subagent replies", () => {
     expect(buildTimeline(history()).tokens).toBe(110 * 6);
   });
+
+  const notice = (id: string, status: string, result: string) =>
+    user(
+      `<task-notification>\n<task-id>${id}</task-id>\n<subagent-type>web-researcher</subagent-type>\n<status>${status}</status>\n<result>\n${result}\n</result>\n</task-notification>`,
+    );
+  const bgHistory = (...rest: Message[]) =>
+    fromHistory(
+      {
+        thread_id: "t",
+        messages: [
+          user("research"),
+          assistant("", [{ id: "b1", name: "task", args: { subagent_type: "web-researcher", description: "pgx", run_in_background: true } }]),
+          toolMsg("b1", "Started background task b1 (web-researcher)."),
+          ...rest,
+        ],
+      },
+      null,
+    );
+
+  it("keeps a background task running until its notification arrives", () => {
+    const running = buildTimeline({ ...bgHistory(), running: true }).turns[0].steps[0].tools[0];
+    expect(running.status).toBe("running");
+    expect(running.sub?.background).toBe(true);
+    expect(running.sub?.report).toBeUndefined();
+
+    const tl = buildTimeline(bgHistory(notice("b1", "completed", "pgx v5.7"), assistant("done")));
+    expect(tl.turns).toHaveLength(1);
+    const done = tl.turns[0].steps[0].tools[0];
+    expect(done.status).toBe("ok");
+    expect(done.sub?.report).toBe("pgx v5.7");
+    expect(tl.turns[0].steps.map((s) => s.text)).toEqual(["", "done"]);
+  });
+
+  it("attaches the web_extract model call to its fetch_url step", () => {
+    const v = fromHistory(
+      {
+        thread_id: "t",
+        messages: [
+          user("read"),
+          assistant("", [{ id: "f1", name: "fetch_url", args: { url: "https://go.dev", prompt: "version" } }]),
+          toolMsg("f1", "Go 1.27"),
+        ],
+      },
+      {
+        thread_id: "t",
+        llm_calls: [{ seq: 9, namespace: ["web_extract:f1"], model: "haiku", start: "", duration_ms: 300, message_count: 1, new_from: 0, tool_count: 0 }],
+        diffs: [],
+        messages: [],
+      },
+    );
+    const fetch = buildTimeline(v).turns[0].steps[0].tools[0];
+    expect(fetch.extract?.seq).toBe(9);
+    expect(fetch.extract?.model).toBe("haiku");
+  });
+
+  it("marks failed background tasks as errors and stopped ones without a notification", () => {
+    expect(buildTimeline(bgHistory(notice("b1", "failed", "boom"))).turns[0].steps[0].tools[0].status).toBe("error");
+    expect(buildTimeline(bgHistory()).turns[0].steps[0].tools[0].status).toBe("stopped");
+  });
 });
 
 describe("diff", () => {
@@ -249,6 +308,36 @@ describe("tool output", () => {
     const call = { id: "1", name: "grep", args: { pattern: "Handle Func", path: "/src", output_mode: "content", glob: "*.go" } };
     expect(commandLine(call)).toBe("grep -r -F -n --include='*.go' 'Handle Func' /src");
     expect(summarize(call)).toBe('"Handle Func" in /src (*.go)');
+  });
+
+  it("summarizes web and Context7 calls", () => {
+    const call = (name: string, args: Record<string, unknown>) => summarize({ id: "1", name, args });
+    expect(call("web_search", { query: "pgx v5", count: 8 })).toBe("pgx v5");
+    expect(call("fetch_url", { url: "https://go.dev", prompt: "latest version" })).toBe("https://go.dev · latest version");
+    expect(call("resolve_library_id", { library_name: "next.js", query: "routing" })).toBe("next.js · routing");
+    expect(call("query_docs", { library_id: "/vercel/next.js", query: "middleware" })).toBe("/vercel/next.js · middleware");
+    expect(call("task_output", { task_id: "b1" })).toBe("b1");
+    expect(call("task", { subagent_type: "web-researcher", description: "pgx", run_in_background: true })).toBe(
+      "web-researcher · pgx · background",
+    );
+  });
+
+  it("parses Context7 library lists", () => {
+    const out = [
+      'Context7 libraries for "next.js" (pass the ID to query_docs):',
+      "",
+      "1. Next.js — /vercel/next.js",
+      "   The React framework",
+      "   Snippets: 3000 · Trust: 10 · Benchmark: 90",
+      "   Versions: v15.1.0, v14.2.0 (pin one as /vercel/next.js@v15.1.0)",
+      "2. Next Auth — /nextauthjs/next-auth",
+      "   Snippets: 400 · Trust: 8",
+    ].join("\n");
+    expect(parseLibraries(out)).toEqual([
+      { title: "Next.js", id: "/vercel/next.js", description: "The React framework", stats: "Snippets: 3000 · Trust: 10 · Benchmark: 90", versions: "v15.1.0, v14.2.0" },
+      { title: "Next Auth", id: "/nextauthjs/next-auth", description: "", stats: "Snippets: 400 · Trust: 8", versions: "" },
+    ]);
+    expect(parseLibraries("no libraries")).toBeNull();
   });
 });
 

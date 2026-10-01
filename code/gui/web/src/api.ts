@@ -4,6 +4,7 @@ import type {
   LLMCallDetail,
   Message,
   RunEvent,
+  RunMode,
   SlashCommand,
   ThreadInfo,
   ThreadState,
@@ -72,10 +73,17 @@ export class Api {
     return this.json("/commands");
   }
 
-  threads(cwd: string, limit = 50): Promise<ThreadInfo[]> {
+  threads(cwd: string, limit = 0): Promise<ThreadInfo[]> {
     const q = new URLSearchParams({ limit: String(limit) });
     if (cwd) q.set("cwd", cwd);
     return this.json(`/threads?${q}`);
+  }
+
+  renameThread(id: string, title: string): Promise<ThreadInfo> {
+    return this.json(`/threads/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    });
   }
 
   async thread(id: string): Promise<ThreadState | null> {
@@ -122,6 +130,8 @@ export class Api {
       resume?: { decisions: Decision[] };
       auto_approve: boolean;
       model?: string;
+      mode?: RunMode;
+      build_plan?: boolean;
     },
     signal: AbortSignal,
   ): AsyncGenerator<RunEvent> {

@@ -121,11 +121,54 @@ export interface RunEvent {
   namespace?: string[];
 }
 
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+// Todo mirrors todolist.Todo.
+export interface Todo {
+  id: string;
+  content: string;
+  status: TodoStatus | string;
+  notes?: string;
+}
+
+// Plan mirrors planmode.Plan.
+export interface Plan {
+  name: string;
+  overview: string;
+  body: string;
+  todos: Todo[];
+  id: string;
+  status: "draft" | "building" | string;
+}
+
+export type RunMode = "agent" | "plan";
+
 export interface ThreadState {
   thread_id: string;
   messages: Message[];
   interrupts?: Interrupt[];
   model?: string;
+  todos?: Todo[];
+  plan?: Plan;
+}
+
+// Question, Option and Answer mirror code/askuser.
+export interface QuestionOption {
+  id: string;
+  label: string;
+}
+
+export interface Question {
+  id: string;
+  prompt: string;
+  options: QuestionOption[];
+  allow_multiple?: boolean;
+}
+
+export interface Answer {
+  question_id: string;
+  option_ids: string[];
+  other?: string;
 }
 
 // ThreadUsage mirrors server.ThreadUsage from GET /api/threads/{id}/usage.

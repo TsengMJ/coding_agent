@@ -25,8 +25,14 @@ type Item = { kind: "turn"; turn: Turn } | { kind: "live" };
 // Timeline is the scrollable history: one virtualized item per turn, so
 // long threads stay fast, plus a live item for what is streaming now. It
 // follows new output only while scrolled to the bottom.
-export const Timeline = forwardRef<VirtuosoHandle, { turns: Turn[]; live: LiveState; threadId: string }>(
-  function Timeline({ turns, live, threadId }, ref) {
+export const Timeline = forwardRef<VirtuosoHandle, {
+  turns: Turn[];
+  live: LiveState;
+  threadId: string;
+  onReuseUserMessage: (text: string) => void;
+  reuseDisabled: boolean;
+}>(
+  function Timeline({ turns, live, threadId, onReuseUserMessage, reuseDisabled }, ref) {
     const items: Item[] = [...turns.map((turn) => ({ kind: "turn" as const, turn })), { kind: "live" }];
     const [atBottom, setAtBottom] = useState(true);
     const handle = ref as React.RefObject<VirtuosoHandle | null>;
@@ -54,20 +60,34 @@ export const Timeline = forwardRef<VirtuosoHandle, { turns: Turn[]; live: LiveSt
         atBottomThreshold={80}
         increaseViewportBy={{ top: 800, bottom: 800 }}
         computeItemKey={(_, it) => (it.kind === "turn" ? it.turn.key : "live")}
-        itemContent={(_, it) => (it.kind === "turn" ? <TurnView turn={it.turn} /> : <LiveView live={live} />)}
+        itemContent={(_, it) => (it.kind === "turn" ? <TurnView turn={it.turn} onReuseUserMessage={onReuseUserMessage} reuseDisabled={reuseDisabled} /> : <LiveView live={live} />)}
       />
     );
   },
 );
 
-function TurnView({ turn }: { turn: Turn }) {
+function TurnView({ turn, onReuseUserMessage, reuseDisabled }: { turn: Turn; onReuseUserMessage: (text: string) => void; reuseDisabled: boolean }) {
   const { query } = useUI();
+  const userText = textOf(turn.user);
   return (
     <div className="turn" data-turn={turn.index}>
       {turn.user && (
         <div className="user-msg">
-          <div className="who">You</div>
-          <Highlighted text={textOf(turn.user)} query={query} />
+          <div className="user-msg-head">
+            <span className="who">You</span>
+            {userText.trim() && (
+              <button
+                className="reuse-message"
+                type="button"
+                title="Fill the composer with this message to edit and resend"
+                disabled={reuseDisabled}
+                onClick={() => onReuseUserMessage(userText)}
+              >
+                Edit &amp; resend
+              </button>
+            )}
+          </div>
+          <div className="user-msg-text"><Highlighted text={userText} query={query} /></div>
         </div>
       )}
       {turn.notes.map((m, i) => (

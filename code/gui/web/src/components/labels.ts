@@ -1,6 +1,7 @@
 import type { LLMStep, ToolStep } from "../model/timeline";
 import { formatDuration, formatTokens, textOf } from "../model/messages";
-import { grepMode, parseExecute, parseGrep, parseNumbered, pathList, todosOf } from "../model/tools";
+import { grepMode, parseExecute, parseGrep, parseNumbered, pathList } from "../model/tools";
+import { currentTodos, planOf } from "../model/plan";
 
 export function category(name: string): string {
   switch (name) {
@@ -13,12 +14,20 @@ export function category(name: string): string {
     case "write_file":
     case "edit_file":
     case "delete":
+    case "apply_patch":
       return "cat-edit";
     case "execute":
+    case "run_tests":
+    case "diagnostics":
       return "cat-exec";
+    case "git_status":
+    case "git_diff":
+      return "cat-read";
     case "task":
       return "cat-task";
     case "write_todos":
+    case "create_plan":
+    case "ask_user":
       return "cat-plan";
     default:
       return "cat-other";
@@ -52,9 +61,13 @@ export function resultSummary(t: ToolStep): string {
       return r.exitCode !== undefined ? `exit ${r.exitCode}` : "";
     }
     case "write_todos": {
-      const todos = todosOf(t.call);
+      const todos = currentTodos(t.call, out);
       return `${todos.filter((x) => x.status === "completed").length}/${todos.length} done`;
     }
+    case "create_plan":
+      return `plan saved · ${planOf(t.call).todos.length} todos`;
+    case "ask_user":
+      return "answered";
     default:
       return "";
   }

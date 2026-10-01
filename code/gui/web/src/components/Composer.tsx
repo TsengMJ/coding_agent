@@ -1,5 +1,5 @@
-import { forwardRef, useState } from "react";
-import type { SlashCommand } from "../types";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import type { RunMode, SlashCommand } from "../types";
 import { matchCommands, usage } from "../model/commands";
 
 // Composer is the message box. Enter sends, Shift+Enter adds a line.
@@ -11,22 +11,52 @@ export const Composer = forwardRef<
     running: boolean;
     blocked: boolean;
     commands: SlashCommand[];
-    onSend: (text: string) => void;
+    mode: RunMode;
+    text: string;
+    literal: boolean;
+    replacePending: boolean;
+    onTextChange: (text: string, literal: boolean) => void;
+    onReplaceConfirm: () => void;
+    onReplaceCancel: () => void;
+    onMode: (m: RunMode) => void;
+    onSend: (text: string, literal: boolean) => void;
     onStop: () => void;
   }
->(function Composer({ running, blocked, commands, onSend, onStop }, ref) {
-  const [text, setText] = useState("");
+>(function Composer({ running, blocked, commands, mode, text, literal, replacePending, onTextChange, onReplaceConfirm, onReplaceCancel, onMode, onSend, onStop }, ref) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useImperativeHandle(ref, () => textareaRef.current!, []);
   const [pick, setPick] = useState(0);
-  const matches = matchCommands(text, commands);
+  const matches = literal ? [] : matchCommands(text, commands);
   const picked = matches[Math.min(pick, matches.length - 1)];
+  const sizeTextarea = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
+  };
+  useLayoutEffect(() => {
+    sizeTextarea();
+  }, [text]);
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      sizeTextarea();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const send = () => {
-    const t = text.trim();
-    if (!t || running || blocked) return;
-    onSend(t);
-    setText("");
+    if (!text.trim() || running || blocked) return;
+    const t = literal ? text : text.trim();
+    onSend(t, literal);
+    onTextChange("", false);
   };
   const complete = (c: SlashCommand) => {
-    setText(c.args ? `${c.name} ` : c.name);
+    onTextChange(c.args ? `${c.name} ` : c.name, false);
     setPick(0);
   };
   return (
@@ -49,14 +79,27 @@ export const Composer = forwardRef<
           ))}
         </ul>
       )}
-      <div className="composer-box">
+      {replacePending && (
+        <div className="draft-replace" role="status">
+          <span>Replace your current draft with this earlier message?</span>
+          <button type="button" onClick={onReplaceConfirm} disabled={running || blocked}>Replace draft</button>
+          <button type="button" onClick={onReplaceCancel}>Cancel</button>
+        </div>
+      )}
+      <div className={`composer-box ${mode === "plan" ? "plan-mode" : ""}`}>
         <textarea
-          ref={ref}
-          rows={Math.min(8, Math.max(1, text.split("\n").length))}
-          placeholder={blocked ? "Answer the approval above first" : "Ask dcode… (/ for commands)"}
+          ref={textareaRef}
+          rows={3}
+          placeholder={
+            blocked
+              ? "Answer the approval above first"
+              : mode === "plan"
+                ? "Describe what to plan — dcode researches read-only and writes a plan (/ for commands)"
+                : "Ask dcode… (/ for commands)"
+          }
           value={text}
           onChange={(e) => {
-            setText(e.target.value);
+            onTextChange(e.target.value, literal);
             setPick(0);
           }}
           onKeyDown={(e) => {
@@ -77,20 +120,33 @@ export const Composer = forwardRef<
             }
           }}
         />
-        {running ? (
-          <button className="btn danger" onClick={onStop}>
-            Stop
-          </button>
-        ) : (
-          <button className="btn primary" onClick={send} disabled={!text.trim() || blocked}>
-            Send
-          </button>
-        )}
+        <div className="composer-actions">
+          <div className="mode-toggle" role="radiogroup" aria-label="mode">
+            {(["agent", "plan"] as const).map((m) => (
+              <button
+                key={m}
+                role="radio"
+                aria-checked={mode === m}
+                className={mode === m ? "active" : ""}
+                disabled={running}
+                onClick={() => onMode(m)}
+                title={m === "plan" ? "Plan mode: read-only research, then a plan to review before any change" : "Agent mode: make the changes"}
+              >
+                {m === "plan" ? "Plan" : "Agent"}
+              </button>
+            ))}
+          </div>
+          {literal && <span className="composer-origin">From history · sends as message</span>}
+          <span className="composer-spacer" />
+          {running ? (
+            <button className="btn danger composer-submit" type="button" onClick={onStop}>Stop</button>
+          ) : (
+            <button className="btn primary composer-submit" type="button" onClick={send} disabled={!text.trim() || blocked}>Send</button>
+          )}
+        </div>
       </div>
       <div className="hint">
-        <kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> newline · <kbd>/</kbd> commands (<kbd>Tab</kbd>{" "}
-        completes) · <kbd>Esc</kbd> leave box, then <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>Enter</kbd> expand ·{" "}
-        <kbd>e</kbd> expand all · <kbd>/</kbd> search
+        <kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> newline · <kbd>/</kbd> commands (<kbd>Tab</kbd> completes)
       </div>
     </div>
   );

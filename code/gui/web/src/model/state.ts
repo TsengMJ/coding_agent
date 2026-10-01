@@ -1,4 +1,4 @@
-import type { FileDiff, Interrupt, LLMCall, Message, RunEvent, ThreadState, Trace } from "../types";
+import type { FileDiff, Interrupt, LLMCall, Message, Plan, RunEvent, ThreadState, Trace } from "../types";
 import { nsKey } from "./messages";
 
 // ThreadView is everything the page knows about the open thread.
@@ -16,6 +16,8 @@ export interface ThreadView {
   interrupts: Interrupt[];
   running: boolean;
   error: string;
+  // plan is the thread's latest plan as the server last reported it.
+  plan: Plan | null;
 }
 
 export function emptyView(): ThreadView {
@@ -29,6 +31,7 @@ export function emptyView(): ThreadView {
     interrupts: [],
     running: false,
     error: "",
+    plan: null,
   };
 }
 
@@ -36,6 +39,7 @@ export function fromHistory(ts: ThreadState | null, trace: Trace | null): Thread
   const v = emptyView();
   v.messages = ts?.messages ?? [];
   v.interrupts = ts?.interrupts ?? [];
+  v.plan = ts?.plan ?? null;
   if (trace) {
     for (const c of trace.llm_calls) v.llm[c.seq] = c;
     v.diffs = trace.diffs;
@@ -53,6 +57,11 @@ export function startRun(v: ThreadView, userText: string): ThreadView {
 
 export function endRun(v: ThreadView, error = ""): ThreadView {
   return { ...v, running: false, streamText: "", pendingUser: "", error };
+}
+
+// showBuild reports whether the page should offer to build the plan.
+export function showBuild(v: ThreadView): boolean {
+  return !v.running && v.interrupts.length === 0 && v.plan?.status === "draft";
 }
 
 // applyEvent folds one run event into the view.

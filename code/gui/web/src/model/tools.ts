@@ -4,6 +4,8 @@
 
 import type { ToolCall } from "../types";
 import { str } from "./messages";
+import { patchPaths } from "./patch";
+import { isMerge, planOf, questionsOf, todosOf } from "./plan";
 
 export interface GrepLine {
   no: number;
@@ -136,17 +138,6 @@ export function pathList(output: string): string[] {
   return t.split("\n").filter((l) => l !== "");
 }
 
-export interface Todo {
-  content: string;
-  status: string;
-}
-
-export function todosOf(call: ToolCall): Todo[] {
-  const list = call.args["todos"];
-  if (!Array.isArray(list)) return [];
-  return list.map((t) => ({ content: str((t as Todo).content), status: str((t as Todo).status) }));
-}
-
 // summarize is the one-line label of a tool call in the collapsed tree.
 export function summarize(call: ToolCall): string {
   const a = call.args;
@@ -176,12 +167,36 @@ export function summarize(call: ToolCall): string {
     case "edit_file":
     case "delete":
       return s("file_path");
+    case "apply_patch": {
+      const paths = patchPaths(s("patch"));
+      return paths.length > 3 ? `${paths.slice(0, 3).join(", ")} +${paths.length - 3} more` : paths.join(", ");
+    }
     case "execute":
       return first(s("command"));
-    case "write_todos":
-      return `${todosOf(call).length} items`;
+    case "write_todos": {
+      const n = todosOf(call).length;
+      return isMerge(call) ? `update ${n} item${n === 1 ? "" : "s"}` : `${n} items`;
+    }
+    case "create_plan": {
+      const p = planOf(call);
+      return `${p.name} · ${p.todos.length} todos`;
+    }
+    case "ask_user": {
+      const n = questionsOf(call.args)?.length ?? 0;
+      return `${n} question${n === 1 ? "" : "s"}`;
+    }
     case "task":
-      return `${s("subagent_type")} · ${first(s("description"))}`;
+      return `${s("subagent_type")} · ${first(s("description"))}${a["run_in_background"] === true ? " · background" : ""}`;
+    case "task_output":
+      return s("task_id");
+    case "web_search":
+      return s("query");
+    case "fetch_url":
+      return s("prompt") ? `${s("url")} · ${first(s("prompt"))}` : s("url");
+    case "resolve_library_id":
+      return `${s("library_name")} · ${first(s("query"))}`;
+    case "query_docs":
+      return `${s("library_id")} · ${first(s("query"))}`;
     default: {
       const kv = Object.entries(a)
         .map(([k, v]) => `${k}=${first(str(v))}`)
@@ -189,6 +204,36 @@ export function summarize(call: ToolCall): string {
       return kv.length > 120 ? kv.slice(0, 120) + "…" : kv;
     }
   }
+}
+
+export interface Library {
+  title: string;
+  id: string;
+  description: string;
+  stats: string;
+  versions: string;
+}
+
+// parseLibraries reads the resolve_library_id result: a numbered entry per
+// library with indented description, stats and versions lines.
+export function parseLibraries(output: string): Library[] | null {
+  const lines = output.split("\n");
+  if (!lines[0]?.startsWith("Context7 libraries for ")) return null;
+  const out: Library[] = [];
+  for (const l of lines.slice(1)) {
+    const head = /^\d+\. (.*) — (\/\S+)$/.exec(l);
+    if (head) {
+      out.push({ title: head[1], id: head[2], description: "", stats: "", versions: "" });
+      continue;
+    }
+    const cur = out.at(-1);
+    const body = l.trim();
+    if (!cur || body === "") continue;
+    if (body.startsWith("Snippets:")) cur.stats = body;
+    else if (body.startsWith("Versions:")) cur.versions = body.slice("Versions: ".length).replace(/ \(pin one as .*\)$/, "");
+    else cur.description = body;
+  }
+  return out;
 }
 
 // commandLine renders a call as the equivalent shell-style command, so a

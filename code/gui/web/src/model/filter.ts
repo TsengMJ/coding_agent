@@ -31,9 +31,9 @@ export function matchTurn(turn: Turn, filter: Filter, query: string): boolean {
       case "llm":
         return true;
       case "edits":
-        return turn.files.length > 0 || eachTool(turn.steps, (t) => ["write_file", "edit_file", "delete"].includes(t.call.name));
+        return turn.files.length > 0 || eachTool(turn.steps, (t) => ["write_file", "edit_file", "delete", "apply_patch"].includes(t.call.name));
       case "commands":
-        return eachTool(turn.steps, (t) => t.call.name === "execute");
+        return eachTool(turn.steps, (t) => ["execute", "run_tests", "diagnostics"].includes(t.call.name));
       case "errors":
         return eachTool(turn.steps, (t) => t.status === "error" || failedCommand(t)) || turn.steps.some((s) => !!s.call?.error);
     }

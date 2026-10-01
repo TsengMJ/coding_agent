@@ -16,7 +16,11 @@ export interface ToolStep {
   durationMs?: number;
   diffs: FileDiff[];
   sub?: SubRun;
+  // the model call that extracted the answer from a fetched page
+  extract?: LLMCall;
 }
+
+const WEB_EXTRACT = "web_extract:";
 
 export interface BatchSummary {
   count: number;
@@ -44,6 +48,26 @@ export interface SubRun {
   description: string;
   steps: LLMStep[];
   report?: string;
+  // background runs report through a <task-notification>, not the task result
+  background: boolean;
+  done: boolean;
+}
+
+export interface TaskNotification {
+  taskId: string;
+  subagentType: string;
+  status: string;
+  result: string;
+}
+
+// parseTaskNotification reads the message the subagents middleware adds when
+// a background task finishes.
+export function parseTaskNotification(text: string): TaskNotification | null {
+  const m =
+    /^<task-notification>\n<task-id>(.*)<\/task-id>\n<subagent-type>(.*)<\/subagent-type>\n<status>(.*)<\/status>\n<result>\n([\s\S]*)\n<\/result>\n<\/task-notification>$/.exec(
+      text,
+    );
+  return m ? { taskId: m[1], subagentType: m[2], status: m[3], result: m[4] } : null;
 }
 
 export interface Turn {
@@ -67,6 +91,7 @@ export const TASK_TOOL = "task";
 interface Ctx {
   view: ThreadView;
   diffsByCall: Map<string, FileDiff[]>;
+  extractByCall: Map<string, LLMCall>;
   awaiting: Set<string>;
   subCount: number;
   tokens: number;
@@ -76,10 +101,15 @@ export function buildTimeline(view: ThreadView): Timeline {
   const ctx: Ctx = {
     view,
     diffsByCall: new Map(),
+    extractByCall: new Map(),
     awaiting: new Set(),
     subCount: 0,
     tokens: 0,
   };
+  for (const c of Object.values(view.llm)) {
+    const ns = c.namespace?.at(-1);
+    if (ns?.startsWith(WEB_EXTRACT)) ctx.extractByCall.set(ns.slice(WEB_EXTRACT.length), c);
+  }
   for (const d of view.diffs) {
     if (!d.tool_call_id) continue;
     const list = ctx.diffsByCall.get(d.tool_call_id) ?? [];
@@ -99,6 +129,16 @@ export function buildTimeline(view: ThreadView): Timeline {
   };
 
   for (const m of view.messages) {
+    const notice = m.role === "user" ? parseTaskNotification(textOf(m)) : null;
+    if (notice) {
+      const ts = toolIndex.get(notice.taskId);
+      if (ts?.sub) {
+        ts.sub.done = true;
+        ts.sub.report = notice.result;
+        ts.status = notice.status === "completed" ? "ok" : "error";
+      }
+      continue;
+    }
     if (m.role === "user") {
       newTurn(m);
       continue;
@@ -146,6 +186,7 @@ function llmStep(ctx: Ctx, m: Message, label: string, ns: string, key: string): 
       call,
       status: "running",
       diffs: ctx.diffsByCall.get(call.id) ?? [],
+      extract: ctx.extractByCall.get(call.id),
     };
     if (call.name === TASK_TOOL) ts.sub = subRun(ctx, call);
     step.tools.push(ts);
@@ -163,6 +204,8 @@ function subRun(ctx: Ctx, call: ToolCall): SubRun {
     type: str(call.args["subagent_type"]) || "subagent",
     description: str(call.args["description"]),
     steps: [],
+    background: call.args["run_in_background"] === true,
+    done: false,
   };
   const index = new Map<string, ToolStep>();
   let n = 0;
@@ -184,7 +227,14 @@ function settle(ts: ToolStep, m: Message) {
   ts.result = m;
   ts.status = m.status === "error" ? "error" : "ok";
   ts.durationMs = timingOf(m)?.durationMs;
-  if (ts.sub) ts.sub.report = textOf(m);
+  if (!ts.sub) return;
+  if (ts.sub.background && ts.status === "ok") {
+    // the report arrives later in a notification
+    ts.status = "running";
+    return;
+  }
+  ts.sub.done = true;
+  ts.sub.report = textOf(m);
 }
 
 // finishStatuses marks calls still without a result: running while the run
@@ -192,7 +242,9 @@ function settle(ts: ToolStep, m: Message) {
 // stopped (cancelled).
 function finishStatuses(ctx: Ctx, s: LLMStep, last: boolean) {
   for (const ts of s.tools) {
-    if (!ts.result) {
+    if (ts.sub?.background && ts.result && !ts.sub.done) {
+      ts.status = ctx.view.running ? "running" : "stopped";
+    } else if (!ts.result) {
       if (ctx.view.running) ts.status = "running";
       else if (last && ctx.awaiting.has(ts.call.name)) ts.status = "awaiting";
       else ts.status = "stopped";

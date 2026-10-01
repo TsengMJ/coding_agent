@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ToolStep } from "../model/timeline";
 import { formatDuration, str, textOf } from "../model/messages";
 import { countKinds, diffLines, type Hunk } from "../model/diff";
+import { parsePatch } from "../model/patch";
 import {
   buildTree,
   commandLine,
@@ -9,9 +10,9 @@ import {
   languageOf,
   parseExecute,
   parseGrep,
+  parseLibraries,
   parseNumbered,
   pathList,
-  todosOf,
   type CodeLine,
   type GrepFile,
   type TreeNode,
@@ -19,6 +20,8 @@ import {
 import { Code, Command, CopyButton, Markdown, Section, Tabs, type CodeRow } from "./common";
 import { DiffView } from "./DiffView";
 import { JsonTree } from "./JsonTree";
+import { currentTodos, isMerge, planOf, planID, questionsOf, todosOf } from "../model/plan";
+import { doneCount, PlanDoc, TodoList } from "./Plan";
 
 type Tab = "pretty" | "args" | "output" | "raw";
 
@@ -75,14 +78,25 @@ function Pretty({ step, output }: { step: ToolStep; output: string }) {
       case "edit_file":
       case "write_file":
       case "delete":
+      case "apply_patch":
         return <EditView step={step} output={output} />;
       case "ls":
       case "glob":
         return <PathsView step={step} output={output} />;
       case "write_todos":
-        return <TodosView step={step} />;
+        return <TodosView step={step} output={output} />;
+      case "create_plan":
+        return <PlanView step={step} output={output} />;
+      case "ask_user":
+        return <AskView step={step} output={output} />;
       case "task":
         return <TaskView step={step} />;
+      case "fetch_url":
+        return <FetchView step={step} output={output} />;
+      case "resolve_library_id":
+        return <LibrariesView step={step} output={output} />;
+      case "query_docs":
+        return <DocsView step={step} output={output} />;
       default:
         return <GenericView step={step} output={output} />;
     }
@@ -244,6 +258,16 @@ function EditView({ step, output }: { step: ToolStep; output: string }) {
   }
   // No recorded diff (tracing off, or the call failed): show what the
   // model asked for.
+  if (step.call.name === "apply_patch") {
+    return (
+      <>
+        <Section title="Requested change">
+          <PatchPreview patch={str(step.call.args["patch"])} label="requested" />
+        </Section>
+        {step.result && step.status !== "error" && <div className="muted">{output}</div>}
+      </>
+    );
+  }
   const hunk = requestedChange(step);
   return (
     <>
@@ -255,6 +279,31 @@ function EditView({ step, output }: { step: ToolStep; output: string }) {
         )}
       </Section>
       {step.result && step.status !== "error" && <div className="muted">{output}</div>}
+    </>
+  );
+}
+
+// PatchPreview shows an apply_patch patch as one diff per file; text that
+// does not parse is shown as is.
+export function PatchPreview({ patch, label }: { patch: string; label: string }) {
+  const files = parsePatch(patch);
+  if (!files) return <pre className="terminal">{patch}</pre>;
+  return (
+    <>
+      {files.map((f, i) => (
+        <div key={i} style={{ marginBottom: 10 }}>
+          {f.op === "delete" ? (
+            <div className="mono">Deletes {f.path}</div>
+          ) : (
+            <DiffView
+              hunks={f.hunks}
+              path={f.moveTo ? `${f.path} → ${f.moveTo}` : f.path}
+              {...countKinds(f.hunks.flatMap((h) => h.lines))}
+              label={`${label} ${f.op}`}
+            />
+          )}
+        </div>
+      ))}
     </>
   );
 }
@@ -303,27 +352,55 @@ function Tree({ root }: { root: TreeNode }) {
   return <div className="ftree">{render(root, "")}</div>;
 }
 
-function TodosView({ step }: { step: ToolStep }) {
-  const todos = todosOf(step.call);
-  const done = todos.filter((t) => t.status === "completed").length;
+function TodosView({ step, output }: { step: ToolStep; output: string }) {
+  const todos = currentTodos(step.call, step.result && step.status !== "error" ? output : undefined);
+  const changed = isMerge(step.call) ? new Set(todosOf(step.call).map((t) => t.id)) : null;
   return (
-    <Section title="Plan" extra={<span className="badge">{done}/{todos.length} done</span>}>
-      <ul className="todos">
-        {todos.map((t, i) => (
-          <li key={i} className={t.status === "completed" ? "done" : t.status}>
-            <span>{t.status === "completed" ? "☑" : t.status === "in_progress" ? "◐" : "☐"}</span>
-            <span>{t.content}</span>
-          </li>
-        ))}
-      </ul>
+    <Section
+      title={changed ? `Todos · updated ${changed.size}` : "Todos"}
+      extra={<span className="badge">{doneCount(todos)}</span>}
+    >
+      <TodoList todos={todos} />
     </Section>
+  );
+}
+
+function PlanView({ step, output }: { step: ToolStep; output: string }) {
+  const id = step.result && step.status !== "error" ? planID(output) : "";
+  return <PlanDoc plan={planOf(step.call)} id={id} />;
+}
+
+function AskView({ step, output }: { step: ToolStep; output: string }) {
+  const qs = questionsOf(step.call.args) ?? [];
+  return (
+    <>
+      <Section title="Questions">
+        <ol className="ask-list">
+          {qs.map((q) => (
+            <li key={q.id}>
+              {q.prompt}
+              <span className="muted"> — {q.options.map((o) => o.label).join(" / ")}</span>
+            </li>
+          ))}
+        </ol>
+      </Section>
+      {step.result && (
+        <Section title={step.status === "error" ? "Skipped" : "Answers"}>
+          <pre className="terminal">{output}</pre>
+        </Section>
+      )}
+    </>
   );
 }
 
 function TaskView({ step }: { step: ToolStep }) {
   return (
     <>
-      <Section title={`Subagent · ${str(step.call.args["subagent_type"])}`} extra={<Timing step={step} />}>
+      <Section title={`Subagent · ${str(step.call.args["subagent_type"])}`} extra={
+          <>
+            {step.sub?.background && <span className="badge">background</span>} <Timing step={step} />
+          </>
+        }>
         <div className="md user-msg" style={{ margin: 0 }}>
           <Markdown text={str(step.call.args["description"])} />
         </div>
@@ -346,6 +423,80 @@ function GenericView({ step, output }: { step: ToolStep; output: string }) {
       {step.result && step.status !== "error" && (
         <Section title="Output">
           <pre className="terminal">{output || "(empty)"}</pre>
+        </Section>
+      )}
+    </>
+  );
+}
+
+function LibrariesView({ step, output }: { step: ToolStep; output: string }) {
+  const libs = step.result && step.status !== "error" ? parseLibraries(output) : null;
+  return (
+    <>
+      <Section title="Context7 search" extra={<Timing step={step} />}>
+        <div className="mono">
+          {str(step.call.args["library_name"])} · {str(step.call.args["query"])}
+        </div>
+      </Section>
+      {libs && (
+        <Section title="Libraries" extra={<span className="badge">{libs.length} found</span>}>
+          <ol className="ask-list">
+            {libs.map((l) => (
+              <li key={l.id}>
+                <strong>{l.title}</strong> <span className="mono">{l.id}</span>
+                {l.description && <div>{l.description}</div>}
+                <div className="muted">
+                  {l.stats}
+                  {l.versions && ` · versions ${l.versions}`}
+                </div>
+              </li>
+            ))}
+          </ol>
+        </Section>
+      )}
+      {step.result && !libs && step.status !== "error" && <pre className="terminal">{output}</pre>}
+    </>
+  );
+}
+
+function DocsView({ step, output }: { step: ToolStep; output: string }) {
+  return (
+    <>
+      <Section title="Context7 docs" extra={<Timing step={step} />}>
+        <div className="mono">
+          {str(step.call.args["library_id"])} · {str(step.call.args["query"])}
+        </div>
+      </Section>
+      {step.result && step.status !== "error" && (
+        <Section title="Documentation">
+          <Markdown text={output} />
+        </Section>
+      )}
+    </>
+  );
+}
+
+function FetchView({ step, output }: { step: ToolStep; output: string }) {
+  const x = step.extract;
+  return (
+    <>
+      <Section title="Fetch" extra={<Timing step={step} />}>
+        <div className="mono">{str(step.call.args["url"])}</div>
+        {str(step.call.args["prompt"]) && <div className="muted">Prompt: {str(step.call.args["prompt"])}</div>}
+      </Section>
+      {x && (
+        <Section title="Extraction" extra={<span className="badge">{formatDuration(x.duration_ms)}</span>}>
+          <div className="muted">
+            LLM #{x.seq}
+            {x.model && ` · ${x.model}`}
+            {x.usage && ` · ${x.usage.input_tokens} in / ${x.usage.output_tokens} out`}
+            {x.error && ` · ${x.error}`}
+          </div>
+        </Section>
+      )}
+      {step.result && step.status !== "error" && (
+        <Section title={x ? "Answer" : "Content"}>
+          <Markdown text={output} />
         </Section>
       )}
     </>

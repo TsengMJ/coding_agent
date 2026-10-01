@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { Api, ApiError } from "./api";
-import type { Decision, Info, Message, SlashCommand, ThreadInfo, ThreadUsage } from "./types";
+import type { Decision, Info, Message, RunMode, SlashCommand, ThreadInfo, ThreadUsage } from "./types";
 import { helpText, parseModelArgs, resolveCommand } from "./model/commands";
 import { contextText, costText, tokensText } from "./model/usage";
-import { applyEvent, emptyView, endRun, fromHistory, startRun, type ThreadView } from "./model/state";
+import { applyEvent, emptyView, endRun, fromHistory, showBuild, startRun, type ThreadView } from "./model/state";
+import { BUILD_MESSAGE } from "./model/plan";
+import { PlanBanner } from "./components/Plan";
 import { buildTimeline, type LLMStep, type Turn } from "./model/timeline";
 import { matchTurn, type Filter } from "./model/filter";
 import { formatTokens } from "./model/messages";
@@ -23,6 +25,36 @@ function newThreadID(): string {
 }
 
 const userMessage = (text: string): Message => ({ role: "user", content: [{ type: "text", text }] });
+
+const DRAWER_STORAGE_KEY = "dcode.inspectorWidth";
+const SIDEBAR_WIDTH = 260;
+const RESIZE_HANDLE_WIDTH = 8;
+const DRAWER_MIN_WIDTH = 420;
+const MAIN_MIN_WIDTH = 480;
+const DRAWER_OVERLAY_WIDTH = SIDEBAR_WIDTH + RESIZE_HANDLE_WIDTH + DRAWER_MIN_WIDTH + MAIN_MIN_WIDTH;
+
+type Draft = { text: string; literal: boolean };
+
+function savedDrawerWidth(): number | null {
+  try {
+    const value = Number(localStorage.getItem(DRAWER_STORAGE_KEY));
+    return Number.isFinite(value) && value >= DRAWER_MIN_WIDTH ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function clampDrawerWidth(width: number, viewportWidth: number): number {
+  return Math.max(DRAWER_MIN_WIDTH, Math.min(width, viewportWidth - SIDEBAR_WIDTH - RESIZE_HANDLE_WIDTH - MAIN_MIN_WIDTH));
+}
+
+function persistDrawerWidth(width: number): void {
+  try {
+    localStorage.setItem(DRAWER_STORAGE_KEY, String(width));
+  } catch {
+    // The drawer remains resizable when browser storage is unavailable.
+  }
+}
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
@@ -67,17 +99,78 @@ export function App({ api }: { api: Api }) {
   const [modelOverride, setModelOverride] = useState("");
   const [threadModel, setThreadModel] = useState("");
   const [usage, setUsage] = useState<ThreadUsage | null>(null);
+  const [mode, setMode] = useState<RunMode>("agent");
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [replaceCandidate, setReplaceCandidate] = useState<string | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const [drawerWidth, setDrawerWidth] = useState(() => savedDrawerWidth() ?? Math.round(window.innerWidth * 0.42));
+  const drawerWidthRef = useRef(drawerWidth);
   const abortRef = useRef<AbortController | null>(null);
   const listRef = useRef<VirtuosoHandle | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const currentThreadRef = useRef("");
+  const loadSeqRef = useRef(0);
+  const listSeqRef = useRef(0);
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const setInspectorWidth = useCallback((width: number) => {
+    const next = clampDrawerWidth(width, window.innerWidth);
+    drawerWidthRef.current = next;
+    setDrawerWidth(next);
+  }, []);
+
+  const finishInspectorResize = useCallback(() => persistDrawerWidth(drawerWidthRef.current), []);
+
+  const startInspectorResize = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }, []);
+
+  const moveInspectorResize = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    setInspectorWidth(window.innerWidth - e.clientX - RESIZE_HANDLE_WIDTH / 2);
+  }, [setInspectorWidth]);
+
+  const draft = drafts[threadId] ?? { text: "", literal: false };
+  const updateDraft = useCallback((text: string, literal: boolean) => {
+    setDrafts((prev) => ({ ...prev, [threadId]: { text, literal: !!text && literal } }));
+    setReplaceCandidate(null);
+  }, [threadId]);
+
+  const fillFromHistory = useCallback((text: string) => {
+    setDrafts((prev) => ({ ...prev, [threadId]: { text, literal: true } }));
+    setReplaceCandidate(null);
+    requestAnimationFrame(() => {
+      composerRef.current?.scrollIntoView({ block: "nearest" });
+      composerRef.current?.focus();
+    });
+  }, [threadId]);
+
+  const reuseUserMessage = useCallback((text: string) => {
+    if (view.running || view.interrupts.length > 0 || !text.trim()) return;
+    if (draft.text.trim() && draft.text !== text) {
+      setReplaceCandidate(text);
+      composerRef.current?.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    fillFromHistory(text);
+  }, [draft.text, fillFromHistory, view.running, view.interrupts.length]);
 
   const refreshThreads = useCallback(
     async (cwd: string) => {
+      const seq = ++listSeqRef.current;
       try {
-        setThreads(await api.threads(allDirs ? "" : cwd));
+        const list = await api.threads(allDirs ? "" : cwd);
+        if (seq === listSeqRef.current) setThreads(list);
       } catch (e) {
-        setNotice(`Could not list threads: ${(e as Error).message}`);
+        if (seq === listSeqRef.current) setNotice(`Could not list threads: ${(e as Error).message}`);
       }
     },
     [api, allDirs],
@@ -86,9 +179,23 @@ export function App({ api }: { api: Api }) {
   const refreshUsage = useCallback(
     async (id: string) => {
       try {
-        setUsage(await api.usage(id));
+        const next = await api.usage(id);
+        if (id === currentThreadRef.current) setUsage(next);
       } catch {
-        setUsage(null);
+        if (id === currentThreadRef.current) setUsage(null);
+      }
+    },
+    [api],
+  );
+
+  // refreshPlan picks up the plan a run created or started building.
+  const refreshPlan = useCallback(
+    async (id: string) => {
+      try {
+        const ts = await api.thread(id);
+        if (id === currentThreadRef.current) setView((v) => ({ ...v, plan: ts?.plan ?? null }));
+      } catch {
+        // keep the last known plan
       }
     },
     [api],
@@ -96,21 +203,25 @@ export function App({ api }: { api: Api }) {
 
   const loadThread = useCallback(
     async (id: string) => {
+      const seq = ++loadSeqRef.current;
+      currentThreadRef.current = id;
       abortRef.current?.abort();
       setThreadId(id);
       setExpanded(new Set());
       setSelected("");
       setInspect(null);
+      setReplaceCandidate(null);
       setView(emptyView());
       setThreadModel("");
       setUsage(null);
       void refreshUsage(id);
       try {
         const [ts, trace] = await Promise.all([api.thread(id), api.trace(id)]);
+        if (seq !== loadSeqRef.current) return;
         setThreadModel(ts?.model ?? "");
         setView(fromHistory(ts, trace));
       } catch (e) {
-        setView({ ...emptyView(), error: `Could not load thread ${id}: ${(e as Error).message}` });
+        if (seq === loadSeqRef.current) setView({ ...emptyView(), error: `Could not load thread ${id}: ${(e as Error).message}` });
       }
     },
     [api, refreshUsage],
@@ -140,6 +251,13 @@ export function App({ api }: { api: Api }) {
   }, [info, refreshThreads]);
 
   useEffect(() => {
+    if (!info) return;
+    const onFocus = () => void refreshThreads(info.cwd);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [info, refreshThreads]);
+
+  useEffect(() => {
     api
       .commands()
       .then(setCommands)
@@ -161,14 +279,18 @@ export function App({ api }: { api: Api }) {
   );
 
   const run = useCallback(
-    async (req: { messages?: Message[]; resume?: { decisions: Decision[] } }, userText: string) => {
+    async (
+      req: { messages?: Message[]; resume?: { decisions: Decision[] }; mode?: RunMode; build_plan?: boolean },
+      userText: string,
+    ) => {
       const ctrl = new AbortController();
       abortRef.current = ctrl;
       setView((v) => startRun(v, userText));
       let error = "";
       try {
         const model = modelOverride || undefined;
-        for await (const ev of api.run({ thread_id: threadId, cwd: runCwd, auto_approve: autoApprove, model, ...req }, ctrl.signal)) {
+        const body = { thread_id: threadId, cwd: runCwd, auto_approve: autoApprove, model, mode, ...req };
+        for await (const ev of api.run(body, ctrl.signal)) {
           if (ev.event === "done") break;
           if (ev.event === "error") error = ev.error ?? "run failed";
           setView((v) => applyEvent(v, ev));
@@ -182,16 +304,38 @@ export function App({ api }: { api: Api }) {
         void refreshThreads(info?.cwd ?? "");
         if (modelOverride) setThreadModel(modelOverride);
         void refreshUsage(threadId);
+        void refreshPlan(threadId);
       }
     },
-    [api, threadId, runCwd, autoApprove, modelOverride, refreshThreads, refreshUsage, info],
+    [api, threadId, runCwd, autoApprove, modelOverride, mode, refreshThreads, refreshUsage, refreshPlan, info],
   );
+
+  const build = useCallback(() => {
+    setMode("agent");
+    void run({ messages: [userMessage(BUILD_MESSAGE)], build_plan: true, mode: "agent" }, BUILD_MESSAGE);
+  }, [run]);
+
+  const switchMode = useCallback((m: RunMode) => {
+    setMode(m);
+    setNotice(m === "plan" ? "Plan mode on: dcode researches read-only and writes a plan for you to review; Build implements it." : "Plan mode off.");
+  }, []);
 
   const newThread = useCallback(() => {
     if (!info) return;
     setRunCwd(info.cwd);
     void loadThread(newThreadID());
   }, [info, loadThread]);
+
+  const renameThread = useCallback(async (id: string, title: string): Promise<boolean> => {
+    try {
+      const updated = await api.renameThread(id, title);
+      setThreads((old) => old.map((t) => t.thread_id === id ? { ...t, ...updated } : t));
+      return true;
+    } catch (e) {
+      setNotice(`Could not rename thread: ${(e as Error).message}`);
+      return false;
+    }
+  }, [api]);
 
   // resumeThread switches to an existing thread and adopts its remembered model.
   const resumeThread = useCallback(
@@ -205,7 +349,11 @@ export function App({ api }: { api: Api }) {
   const currentModel = modelOverride || threadModel || info?.model || "";
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, literal = false) => {
+      if (literal) {
+        void run({ messages: [userMessage(text)] }, text);
+        return;
+      }
       const cmd = resolveCommand(text, commands);
       if (cmd.kind === "text") {
         void run({ messages: [userMessage(text)] }, text);
@@ -256,6 +404,11 @@ export function App({ api }: { api: Api }) {
           setAutoApprove(!autoApprove);
           setNotice(autoApprove ? "Auto-approve off." : "Auto-approve on: tool calls run without asking.");
           return;
+        case "/plan":
+          switchMode(mode === "plan" ? "agent" : "plan");
+          return;
+        case "/build":
+          return build();
         case "/help":
           setNotice(helpText(commands));
           return;
@@ -288,7 +441,7 @@ export function App({ api }: { api: Api }) {
           setNotice(`${cmd.name} is not available in the GUI.`);
       }
     },
-    [api, threadId, run, newThread, loadThread, resumeThread, commands, autoApprove, currentModel],
+    [api, threadId, run, newThread, loadThread, resumeThread, commands, autoApprove, currentModel, mode, switchMode, build],
   );
 
   const ui: UI = useMemo(
@@ -387,10 +540,12 @@ export function App({ api }: { api: Api }) {
     error: view.error,
   };
   const blocked = view.interrupts.length > 0;
+  const overlayDrawer = viewportWidth < DRAWER_OVERLAY_WIDTH;
+  const inspectorWidth = clampDrawerWidth(drawerWidth, viewportWidth);
 
   return (
     <UIContext.Provider value={ui}>
-      <div className={`app ${inspect ? "with-drawer" : ""}`}>
+      <div className={`app ${inspect ? "with-drawer" : ""}`} style={{ "--drawer-width": `${inspectorWidth}px` } as CSSProperties}>
         <Sidebar
           threads={threads}
           current={threadId}
@@ -401,11 +556,13 @@ export function App({ api }: { api: Api }) {
             resumeThread(t.thread_id);
           }}
           onNew={newThread}
+          onRename={renameThread}
+          busy={view.running}
           version={info.version}
         />
         <main className="main">
           <header className="header">
-            <span className="pill" title="model">
+            <span className="pill model-pill" title={currentModel}>
               {currentModel}
             </span>
             <span className="cwd" title={runCwd}>
@@ -424,6 +581,11 @@ export function App({ api }: { api: Api }) {
               </span>
             ) : null}
             {view.running && <span className="pill running">running</span>}
+            {mode === "plan" && (
+              <button className="pill plan" onClick={() => switchMode("agent")} title="Plan mode is read-only; click to leave it">
+                plan mode
+              </button>
+            )}
             <button
               className={`pill ${autoApprove ? "on" : ""}`}
               onClick={() => setAutoApprove(!autoApprove)}
@@ -466,7 +628,8 @@ export function App({ api }: { api: Api }) {
               {notice} <span className="muted">(click to dismiss)</span>
             </div>
           )}
-          <Timeline ref={listRef} turns={shownTurns} live={live} threadId={threadId} />
+          <Timeline ref={listRef} turns={shownTurns} live={live} threadId={threadId} onReuseUserMessage={reuseUserMessage} reuseDisabled={view.running || blocked} />
+          {showBuild(view) && view.plan && <PlanBanner plan={view.plan} busy={view.running} onBuild={build} />}
           {blocked && !view.running && (
             <ApprovalCard
               interrupts={view.interrupts}
@@ -479,12 +642,54 @@ export function App({ api }: { api: Api }) {
             running={view.running}
             blocked={blocked}
             commands={commands}
-            onSend={(t) => void send(t)}
+            mode={mode}
+            text={draft.text}
+            literal={draft.literal}
+            replacePending={replaceCandidate !== null}
+            onTextChange={updateDraft}
+            onReplaceConfirm={() => { if (replaceCandidate !== null) fillFromHistory(replaceCandidate); }}
+            onReplaceCancel={() => setReplaceCandidate(null)}
+            onMode={switchMode}
+            onSend={(t, literal) => void send(t, literal)}
             onStop={() => abortRef.current?.abort()}
           />
         </main>
         {inspect && (
-          <LLMInspector api={api} threadId={threadId} seq={inspect.seq} label={inspect.label} onClose={() => setInspect(null)} />
+          <>
+            {!overlayDrawer && (
+              <div
+                className="drawer-resize"
+                role="separator"
+                aria-label="Resize model inspector"
+                aria-orientation="vertical"
+                aria-controls="llm-inspector"
+                aria-valuemin={DRAWER_MIN_WIDTH}
+                aria-valuemax={viewportWidth - SIDEBAR_WIDTH - RESIZE_HANDLE_WIDTH - MAIN_MIN_WIDTH}
+                aria-valuenow={inspectorWidth}
+                tabIndex={0}
+                onPointerDown={startInspectorResize}
+                onPointerMove={moveInspectorResize}
+                onPointerUp={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) { e.currentTarget.releasePointerCapture(e.pointerId); finishInspectorResize(); } }}
+                onPointerCancel={finishInspectorResize}
+                onKeyDown={(e) => {
+                  const step = e.shiftKey ? 64 : 16;
+                  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                    e.preventDefault();
+                    const next = clampDrawerWidth(inspectorWidth + (e.key === "ArrowLeft" ? step : -step), window.innerWidth);
+                    setInspectorWidth(next);
+                    persistDrawerWidth(next);
+                  } else if (e.key === "Home" || e.key === "End") {
+                    e.preventDefault();
+                    const next = e.key === "Home" ? DRAWER_MIN_WIDTH : window.innerWidth - SIDEBAR_WIDTH - RESIZE_HANDLE_WIDTH - MAIN_MIN_WIDTH;
+                    setInspectorWidth(next);
+                    persistDrawerWidth(next);
+                  }
+                }}
+              />
+            )}
+            {overlayDrawer && <button className="drawer-backdrop" aria-label="Close model inspector" onClick={() => setInspect(null)} />}
+            <LLMInspector api={api} threadId={threadId} seq={inspect.seq} label={inspect.label} onClose={() => setInspect(null)} />
+          </>
         )}
       </div>
     </UIContext.Provider>

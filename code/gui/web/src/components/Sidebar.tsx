@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ThreadInfo } from "../types";
 
 function ago(iso?: string): string {
@@ -16,6 +17,8 @@ export function Sidebar({
   onAllDirs,
   onPick,
   onNew,
+  onRename,
+  busy,
   version,
 }: {
   threads: ThreadInfo[];
@@ -24,14 +27,29 @@ export function Sidebar({
   onAllDirs: (v: boolean) => void;
   onPick: (t: ThreadInfo) => void;
   onNew: () => void;
+  onRename: (id: string, title: string) => Promise<boolean>;
+  busy: boolean;
   version: string;
 }) {
-  const listed = threads.some((t) => t.thread_id === current) ? threads : [{ thread_id: current, cwd: "", title: "New thread" }, ...threads];
+  const [editing, setEditing] = useState("");
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const listed: ThreadInfo[] = threads.some((t) => t.thread_id === current) ? threads : [{ thread_id: current, cwd: "", title: "New thread" }, ...threads];
+  const save = async () => {
+    if (!draft.trim() || saving) return;
+    const id = editing;
+    setSaving(true);
+    try {
+      if (await onRename(id, draft.trim())) setEditing((current) => current === id ? "" : current);
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <nav className="sidebar">
       <div className="sidebar-head">
         <span className="brand">dcode</span>
-        <button className="btn" onClick={onNew} title="Start a new thread">
+        <button className="btn" onClick={onNew} disabled={busy} title="Start a new thread">
           + New
         </button>
       </div>
@@ -42,18 +60,43 @@ export function Sidebar({
       </div>
       <div className="thread-list">
         {listed.map((t) => (
-          <button
-            key={t.thread_id}
-            className={`thread-item ${t.thread_id === current ? "active" : ""}`}
-            onClick={() => onPick(t)}
-            title={t.cwd}
-          >
-            <div className="thread-title">{t.title || "(untitled)"}</div>
+          <div key={t.thread_id} className={`thread-item ${t.thread_id === current ? "active" : ""}`} title={t.cwd}>
+            {editing === t.thread_id ? (
+              <form className="thread-rename" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+                <input
+                  autoFocus
+                  aria-label="Thread name"
+                  maxLength={120}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Escape") setEditing(""); }}
+                />
+                <button type="submit" disabled={saving || !draft.trim()} aria-label="Save name" title="Save name">✓</button>
+                <button type="button" onClick={() => setEditing("")} aria-label="Cancel rename" title="Cancel rename">×</button>
+              </form>
+            ) : (
+              <div className="thread-item-top">
+                <button className="thread-pick" onClick={() => onPick(t)} disabled={busy}>
+                  <span className="thread-title" title={t.title || "(untitled)"}>{t.title || "(untitled)"}</span>
+                </button>
+                {t.updated_at && (
+                  <button
+                    className="thread-edit"
+                    aria-label={`Rename ${t.title || "thread"}`}
+                    title="Rename thread"
+                    disabled={busy}
+                    onClick={() => { setEditing(t.thread_id); setDraft(t.title || ""); }}
+                  >
+                    ✎
+                  </button>
+                )}
+              </div>
+            )}
             <div className="thread-meta">
               {t.thread_id} {t.message_count ? `· ${t.message_count} msgs` : ""} {ago(t.updated_at)}
             </div>
             {allDirs && t.cwd && <div className="thread-meta mono">{t.cwd}</div>}
-          </button>
+          </div>
         ))}
       </div>
       <div className="sidebar-foot">dcode (go) {version}</div>
