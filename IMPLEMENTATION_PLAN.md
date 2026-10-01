@@ -311,3 +311,32 @@
 **結果**: `make check` 通過。同一份 NodeBB 工作目錄重測：刷新 index 後 `git status` 0.9 秒、`git diff` 0.4 秒；根目錄 grep 0.6–2 秒且結果正確（原本 11–15 秒、會逾時回傳 0 筆）。`write_todos` 回合數的變化要等下一次 dbench 跑完才有數據。
 **另外確認 summarization**: 觸發門檻已不是 16k。gpt-6-luna 已在 context window 表內（1,050,000），觸發點是 80%（約 840k），保留 10%；沒有 profile 的模型退回 170k 觸發。原本兩個 16k 相關常數之後都已移除：`createSummary` 每塊上限改為 `window/4`（`TrimTokensToSummarize` 預設不設），`contextBudget` 對沒有 profile 的模型假設 200k context window（`assumedContextWindow`）再取 80%。
 - 15d 已修：沒有 profile 的模型一律假設 200k window（與 170k 退回觸發點一致），`contextBudget` 與摘要每塊上限都由同一個 window 推算；每塊上限改為 window / 4，不再封頂 16k（luna 約 262k、未知模型 50k，原本是 16k / 4k）。測試：未知 window 的模型接受 20k tokens 的 system prompt（原本被拒）、約 36k tokens 的歷史在 1M 與未知 window 下都只要 1 次摘要呼叫（原本 3 次與 10 次左右）。
+
+## Stage 16: 修上次失敗題的兩個根因（驗證閘門過濾、summarization 失敗）
+
+**Why**（gpt-6-luna-pro smoke50 前 10 題，`20260930-160724` / `160743`）:
+- NodeBB-bd80d36e 兩次都 regression（P2P 178/179）：agent 只用 `run_tests run="blocking access for unconfirmed emails"` 跑 2 個測試就結束，閘門放行；同檔 `user data export routes` 三個測試被改壞。
+- NodeBB-b398321a、NodeBB-8168c6c4：摘要呼叫回 empty response，整個 attempt 以 `error in node model: summarization: ...` 結束。
+**Goal**: 過濾後的測試不算驗證；摘要模型失敗時 run 繼續。
+**子階段**:
+- 16.0 先 commit Stage 11–15；建表加 `pg_advisory_xact_lock`（平行測試同時 `CREATE TABLE IF NOT EXISTS` 會撞 `pg_type` 唯一鍵而 flaky）
+- 16a `VerifyGate`：最後一次通過的 check 帶測試名稱過濾（`run_tests run=...`、mocha `--grep` / `-g` / `--fgrep`、jest / vitest `-t`、`go test -run`、pytest `-k` 或 `file.py::test`）時擋下，要求不帶過濾把同一批測試檔跑一次；計入 `maxVerifyBlocks`
+- 16b summarization：`createSummary` 非 overflow / 非取消的錯誤改用「摘要不可用，完整歷史已存到 <path>」的訊息，記 log 後繼續
+**Tests**: 過濾後的 `run_tests` / 六種 `execute` 寫法被擋、`-timeout` / `-tags` 不誤判、過濾後接完整 run 放行；摘要模型錯誤時 run 成功且摘要訊息帶 offload 路徑、`context.Canceled` 仍失敗。兩組新測試都先紅後綠。
+**Status**: Complete
+**結果**（`20261001-151704-dcode-failed-20260930`，3 題 × 1 次，concurrency 4，`code/bench/subsets/failed-20260930.txt`）:
+
+| 題目 | 上次（160724 / 160743） | 這次 |
+|------|------|------|
+| 8168c6c4 | resolved（其中一次摘要 empty response 中止） | resolved，無錯誤 |
+| b398321a | P2P 3053 / 3045 of 3057（其中一次摘要中止） | P2P 3056/3057 |
+| bd80d36e | P2P 178/179 兩次 | P2P 178/179 |
+
+- 穩定性：0 個 infra error、沒有 attempt 因 summarization 中止。這次 luna 已在 context window 表內，峰值 280k 沒有觸發摘要，所以 16b 的 fallback 這次沒有被實際走到；它的效果目前只由單元測試證明。
+- 正確性：bd80 的 trace 確認 16a 生效。過濾後通過 → 閘門擋下 → agent 完整跑 `test/controllers.js`（139 過 1 敗），看到 `should export users posts` 失敗。但它判定是「與改動無關的環境問題」就結束，沒有在原始程式碼上確認；這個測試是 P2P，原始程式碼上會過。b398 最後一輪完整跑 `test/messaging.js` 是 75/75，評分時卻有 1 個 messaging 測試失敗，原因未查明（可能與測試順序或 Redis 殘留狀態有關）。
+- 速度：這次三題 agent 時間 25–39 分鐘，上次 4–25 分鐘；`tool_ms` 大幅增加（bd80 146 → 1177 秒），主因是完整跑測試檔（controllers.js 每次數分鐘）以及 3 個容器同時跑。`write_todos` 次數 3–5，與上次相同，看不出 Stage 15 的效果。
+- 新發現：`redis-server --daemonize yes`（閘門提示的指令）會在 `/app` 留下 `dump.rdb`，被收進 bd80 的 patch。
+**下一步候選**:
+- agent 宣稱失敗「與改動無關」時，要求它先用 `git stash` 在原始程式碼上跑同一個測試來證明（bd80 這次就差這一步）
+- 服務提示改成 `redis-server --daemonize yes --save '' --dir /tmp`，不在工作目錄留檔
+- 只對失敗的測試重跑，縮短完整測試檔重跑次數（bd80 完整跑了 6 次）

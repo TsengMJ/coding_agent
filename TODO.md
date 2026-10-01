@@ -390,6 +390,7 @@
 - [ ] inline media（data URL）offload 到 backend
 - [x] summary 訊息帶檔案路徑、過濾舊 summary
 - [x] context overflow 錯誤 → 摘要後重試一次（`_call_with_budget`）
+- [x] 摘要模型失敗（非 overflow / 非取消）時改用指向 offload 檔的訊息繼續，不中止 run（Go 版延伸，Stage 16）
 - [x] `Compact`（手動摘要，供 dcode `/compact`；nothing-to-compact 回 `ErrNothingToCompact`）
 - [ ] `_overflow_clip.py`：overflow 門檻推導
 - [ ] `compact_conversation`：資格判斷、nothing-to-compact、錯誤處理
@@ -722,6 +723,9 @@ Python 版沒有這些工具；它們把凌亂的指令輸出整理成 JSON 再�
 - [x] 其他語言的 run_tests / diagnostics（Stage 12：mocha / jest / vitest / npm test、pytest；tsc / eslint、ruff / 語法檢查）
 - [x] 減少 unsupported：`dir` 參數與子目錄專案自動偵測（`code/codetools/target.go`）、無 tsconfig/ESLint 時 `node --check` 語法檢查、無 pytest 時改用 unittest
 - [x] headless 驗證閘門 `VerifyGate`（Stage 12：改檔後沒有通過的測試 / build 就擋下結束，最多 2 次；ECONNREFUSED 服務啟動提示）
+- [x] 驗證閘門不接受帶測試名稱過濾的 run（Stage 16：`run_tests run=...`、`--grep` / `-g` / `-t` / `-run` / `-k` / `file.py::test`，要求不帶過濾跑同一批測試檔）
+- [ ] agent 宣稱失敗與改動無關時，要求用 `git stash` 在原始程式碼上重跑證明（Stage 16 bd80 trace）
+- [ ] 服務啟動提示不在工作目錄留檔（`redis-server` 的 `dump.rdb` 被收進 patch）
 - [x] `edit_file` 多處相符時列出行號與前一行（與 Python 版不同：Python 只回報次數）；`apply_patch` 對不上時指出最接近的行
 - [ ] 驗證閘門的 `execute` 判斷目前靠指令 regex，不認得的測試指令（例如自訂 script 名稱）不算驗證
 - [ ] symbol 導航（find_symbol / find_definition / find_references，LSP）
