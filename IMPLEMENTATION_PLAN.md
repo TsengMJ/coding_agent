@@ -196,7 +196,7 @@
 **Success Criteria**: oracle 全過、nop 全不過；fake docker 單元測試涵蓋套用失敗、verifier 逾時、缺 output.json。
 **Tests**: F2P / P2P 計數、套用失敗仍跑 verifier、空 patch（nop 仍跑 verifier）、verifier 逾時、reward 與 output.json 矛盾時報錯、runner 續跑 / 跳過已完成 / infra 重試 / 取消、重新評分
 **Notes**: `test.sh` 只在 exit trap 建立 `/logs/verifier`（Harbor 會預先掛載），所以評分前要先 `mkdir -p /logs/verifier`，否則 output.json 靜默遺失。
-**Status**: Complete（實機 gate 前 2 題：oracle 2/2、nop 0/2；完整 50 題要先拉完映像，約 0.5 MB/s、每題約 1 GB）
+**Status**: Complete（實機 gate smoke50：oracle 50/50、nop 0/50、infra error 0；映像共約 198 GB）
 
 ### Stage B3: agent 階段
 **Goal**: `/app` 複製到主機 workspace 並掛回斷網容器；檔案工具走 FilesystemBackend，`execute` 走 `docker exec`；不掛 web 工具、不載入使用者層設定；50 分鐘預算；照官方指令擷取 `git diff`；收集步數、工具、token、成本、時間、定位指標。
