@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"slices"
 	"strings"
 	"time"
@@ -326,7 +327,15 @@ func (m *Middleware) summarize(ctx context.Context, state *runtime.State, event 
 	path := m.offload(backend.WithRunContext(ctx, rc), evicted, session)
 	summary, err := m.createSummary(ctx, evicted, model)
 	if err != nil {
-		return nil, nil, fmt.Errorf("summarization: %w", err)
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, llm.ErrContextOverflow) {
+			return nil, nil, fmt.Errorf("summarization: %w", err)
+		}
+		// The evicted history is already offloaded, so the run can go on
+		// without a model-written summary.
+		log.Printf("summarization: summary model failed, continuing with the offload note: %v", err)
+		summary = fmt.Sprintf("Summary unavailable: the summary model failed (%s). "+
+			"The earlier conversation was moved out of context; read the saved history with read_file if you need details from it.",
+			clipText(err.Error(), 300))
 	}
 	summaryMsg := summaryMessage(summary, path)
 	stateCutoff := cutoff
@@ -447,6 +456,13 @@ func (m *Middleware) offload(ctx context.Context, msgs []llm.Message, session st
 		return ""
 	}
 	return path
+}
+
+func clipText(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "..."
+	}
+	return s
 }
 
 func summaryMessage(summary, path string) llm.Message {

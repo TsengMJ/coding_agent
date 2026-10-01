@@ -194,6 +194,43 @@ func TestContextOverflowSummarizesAndRetriesOnce(t *testing.T) {
 	}
 }
 
+// failingModel rejects every request with err.
+type failingModel struct {
+	*llm.FakeModel
+	err error
+}
+
+func (m *failingModel) Generate(context.Context, llm.ChatRequest) (*llm.Message, error) {
+	return nil, m.err
+}
+
+func TestSummaryModelErrorFallsBackToOffloadNote(t *testing.T) {
+	f := newFixture(t, Options{Trigger: []TriggerClause{{{SizeMessages, 4}}}, Keep: ContextSize{SizeMessages, 2}}, nil)
+	f.mw.opts.Model = &failingModel{FakeModel: llm.NewFakeModel(), err: errors.New("openrouter: model returned an empty response after 3 retries")}
+	st := f.invoke(t, history())
+
+	ev := eventFrom(st)
+	if ev == nil || ev.FilePath == "" {
+		t.Fatalf("event = %+v", ev)
+	}
+	sent := f.main.Requests()[0].Messages
+	if len(sent) != 3 || !strings.Contains(sent[0].Text(), "Summary unavailable") || !strings.Contains(sent[0].Text(), ev.FilePath) {
+		t.Fatalf("sent = %+v", sent)
+	}
+	if got := st.Messages[len(st.Messages)-1].Text(); got != "done" {
+		t.Fatalf("final = %q", got)
+	}
+}
+
+func TestSummaryContextCanceledStillFails(t *testing.T) {
+	f := newFixture(t, Options{Trigger: []TriggerClause{{{SizeMessages, 4}}}, Keep: ContextSize{SizeMessages, 2}}, nil)
+	f.mw.opts.Model = &failingModel{FakeModel: llm.NewFakeModel(), err: context.Canceled}
+	_, err := f.agent.Invoke(context.Background(), agent.Input{Messages: history()}, runtime.RunConfig{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
 func TestSecondSummaryTranslatesCutoffToStateIndex(t *testing.T) {
 	f := newFixture(t, Options{Trigger: []TriggerClause{{{SizeMessages, 4}}}, Keep: ContextSize{SizeMessages, 2}}, nil)
 	first := Event{CutoffIndex: 3, SummaryMessage: summaryMessage("old", "")}
