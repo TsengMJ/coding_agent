@@ -18,6 +18,9 @@ const (
 	// FeatureDiffReview reviews byproducts, changed tests and the task's
 	// requirements once before a headless turn finishes.
 	FeatureDiffReview = "diff_review"
+	// FeatureTestEdits runs the original version of existing tests the
+	// agent changed against its code before a headless turn finishes.
+	FeatureTestEdits = "test_edits"
 	// FeatureProgress refuses an unchanged repeat of a call that failed
 	// the same way twice (ProgressMonitor).
 	FeatureProgress = "progress"
@@ -27,7 +30,7 @@ const (
 )
 
 // Features lists every name Options.Disable accepts.
-var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureProgress, FeatureBudget}
+var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget}
 
 // ParseFeatures splits a comma-separated list of feature names and rejects
 // unknown ones.
@@ -50,8 +53,8 @@ func checkFeatures(names []string) error {
 	return nil
 }
 
-// newVerifyGate builds the headless gate; the baseline and diff review need
-// a workspace that runs commands.
+// newVerifyGate builds the headless gate; the baseline, the test-edit check
+// and the diff review need a workspace that runs commands.
 func newVerifyGate(b backend.Backend, disable []string) VerifyGate {
 	sb, ok := b.(backend.SandboxBackend)
 	if !ok {
@@ -60,5 +63,6 @@ func newVerifyGate(b backend.Backend, disable []string) VerifyGate {
 	g := VerifyGate{Workspace: sb, RunTests: codetools.NewRunTests(sb)}
 	g.NoBaseline = slices.Contains(disable, FeatureBaseline)
 	g.NoDiffReview = slices.Contains(disable, FeatureDiffReview)
+	g.NoTestEdits = slices.Contains(disable, FeatureTestEdits)
 	return g
 }

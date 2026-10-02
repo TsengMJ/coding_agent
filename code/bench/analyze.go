@@ -266,7 +266,7 @@ func AnalyzeMarkdown(run Run, rows []AttemptAnalysis) string {
 
 // triggerColumns orders the component trigger table.
 var triggerColumns = []string{
-	"gate_check", "gate_baseline", "gate_diff", TriggerProgressRefusal, TriggerProgressNote,
+	"gate_check", "gate_baseline", "gate_test_edit", "gate_diff", TriggerProgressRefusal, TriggerProgressNote,
 	TriggerBudget, TriggerDestructive, TriggerVersionGuard,
 	TriggerGrepRegex, TriggerServiceHint, TriggerShellTruncated,
 	"baseline_regression", "baseline_preexisting", "baseline_flaky", "baseline_also_fails", "baseline_unknown",

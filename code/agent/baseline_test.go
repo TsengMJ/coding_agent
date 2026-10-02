@@ -193,6 +193,96 @@ func TestBaselineCanBeDisabled(t *testing.T) {
 	}
 }
 
+// runTestsStep runs run_tests on the repo now and records it as a step.
+func runTestsStep(t *testing.T, g VerifyGate) step {
+	t.Helper()
+	args := map[string]any{"language": "go", "packages": []any{"./..."}}
+	res, err := g.RunTests.Invoke(context.Background(), nil, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return step{name: "run_tests", args: args, result: resultText(res)}
+}
+
+const subTestExpects4 = "package m\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal(\"add\") } }\n\nfunc TestSub(t *testing.T) { if Sub(3, 1) != 4 { t.Fatal(\"sub\") } }\n"
+
+func TestTestEditsCatchesTestRewrittenToMatchBrokenCode(t *testing.T) {
+	dir := goRepo(t, nil)
+	broken := strings.Replace(mathGo, "a - b", "a + b", 1)
+	writeFile(t, filepath.Join(dir, "m.go"), broken)
+	writeFile(t, filepath.Join(dir, "m_test.go"), subTestExpects4)
+	g := gateFor(dir)
+	run := runTestsStep(t, g)
+	if !strings.Contains(run.result, `"passed"`) {
+		t.Fatalf("edited tests should pass: %s", run.result)
+	}
+
+	cmd := runGate(t, g, transcript(editStep, run))
+	if cmd == nil || cmd.Update.Messages[0].Metadata[GateKindKey] != gateKindTestEdit {
+		t.Fatalf("command = %+v", cmd)
+	}
+	if text := cmd.Update.Messages[0].Text(); !strings.Contains(text, "TestSub") || !strings.Contains(text, "`m_test.go`") {
+		t.Fatalf("message = %s", text)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "m.go")); string(got) != broken {
+		t.Fatalf("source changes lost: %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "m_test.go")); string(got) != subTestExpects4 {
+		t.Fatalf("test changes not restored: %q", got)
+	}
+	if list := gitOut(t, dir, "stash", "list"); list != "" {
+		t.Fatalf("stash left behind: %s", list)
+	}
+	if ref := gitOut(t, dir, "rev-parse", "-q", "--verify", testEditsRef); ref != "" {
+		t.Fatalf("backup ref left behind: %s", ref)
+	}
+}
+
+func TestTestEditsIgnoresNewTestFiles(t *testing.T) {
+	dir := goRepo(t, nil)
+	writeFile(t, filepath.Join(dir, "m.go"), mathGo+"\nfunc Mul(a, b int) int { return a * b }\n")
+	writeFile(t, filepath.Join(dir, "mul_test.go"), "package m\n\nimport \"testing\"\n\nfunc TestMul(t *testing.T) { if Mul(2, 3) != 6 { t.Fatal(\"mul\") } }\n")
+	g := gateFor(dir)
+	if cmd := runGate(t, g, transcript(editStep, runTestsStep(t, g))); cmd != nil {
+		t.Fatalf("new tests need no review: %s", cmd.Update.Messages[0].Text())
+	}
+}
+
+func TestTestEditsPassesWhenOriginalTestsStillPass(t *testing.T) {
+	dir := goRepo(t, nil)
+	writeFile(t, filepath.Join(dir, "m_test.go"), strings.Replace(subTestExpects4, "!= 4", "!= 2", 1)+"\nfunc TestMore(t *testing.T) {}\n")
+	g := gateFor(dir)
+	cmd := runGate(t, g, transcript(editStep, runTestsStep(t, g)))
+	if cmd == nil || cmd.Update.Messages[0].Metadata[GateKindKey] != gateKindDiff {
+		t.Fatalf("only the diff review should mention the changed test: %+v", cmd)
+	}
+}
+
+func TestTestEditsCanBeDisabled(t *testing.T) {
+	dir := goRepo(t, nil)
+	writeFile(t, filepath.Join(dir, "m.go"), strings.Replace(mathGo, "a - b", "a + b", 1))
+	writeFile(t, filepath.Join(dir, "m_test.go"), subTestExpects4)
+	g := newVerifyGate(NewBackend(dir), []string{FeatureTestEdits})
+	cmd := runGate(t, g, transcript(editStep, runTestsStep(t, g)))
+	if cmd == nil || cmd.Update.Messages[0].Metadata[GateKindKey] != gateKindDiff {
+		t.Fatalf("disabled check should leave the diff review: %+v", cmd)
+	}
+}
+
+func TestOriginalTestArgs(t *testing.T) {
+	last := llm.ToolCall{Name: "run_tests", Args: map[string]any{"language": "node", "dir": "web", "timeout_seconds": 600, "run": "x"}}
+	got := originalTestArgs([]string{"web/test/a.js", "pkg/a_test.go", "pkg/b_test.go"}, last)
+	if len(got) != 2 {
+		t.Fatalf("args = %v", got)
+	}
+	if p := got[0]["packages"].([]any); len(p) != 1 || p[0] != "./pkg" {
+		t.Fatalf("packages = %v", got[0])
+	}
+	if f := got[1]["files"].([]any); len(f) != 1 || f[0] != "test/a.js" || got[1]["dir"] != "web" || got[1]["run"] != nil {
+		t.Fatalf("files call = %v", got[1])
+	}
+}
+
 func TestDiffReviewFlagsByproductsTestsAndRequirements(t *testing.T) {
 	dir := goRepo(t, nil)
 	writeFile(t, filepath.Join(dir, "dump.rdb"), "REDIS")

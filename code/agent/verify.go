@@ -169,6 +169,12 @@ func (g VerifyGate) AfterAgent(ctx context.Context, state *rt.State, _ *core.Run
 		}
 		return gateCommand(kind, msg), nil
 	}
+	if g.Workspace != nil && !g.NoTestEdits && !t.kinds[gateKindTestEdit] {
+		te := TestEdits{Workspace: g.Workspace, RunTests: g.RunTests}
+		if msg := te.Check(ctx, t.lastCall); msg != "" {
+			return gateCommand(gateKindTestEdit, msg), nil
+		}
+	}
 	if g.Workspace != nil && !g.NoDiffReview && !t.kinds[gateKindDiff] {
 		if msg := reviewDiff(ctx, g.Workspace, t.prompt); msg != "" {
 			return gateCommand(gateKindDiff, msg), nil
@@ -239,7 +245,7 @@ func inspectTurn(msgs []llm.Message) turnFacts {
 		if m.Role == llm.RoleUser && i > start {
 			if kind, _ := m.Metadata[GateKindKey].(string); kind != "" {
 				t.kinds[kind] = true
-				if kind == gateKindDiff {
+				if kind == gateKindDiff || kind == gateKindTestEdit {
 					t.blocks--
 				}
 			}
