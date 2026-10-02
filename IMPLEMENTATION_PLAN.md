@@ -569,7 +569,36 @@
 **Goal**: 相同失敗不再盲目重試；subagent 共用父預算。
 **Success Criteria**: 第 3 次相同失敗呼叫被拒；預算提示；subagent 步數上限與取消傳播。
 **Tests**: FakeModel 重送失敗 patch；指紋正規化；歷史 trace 重播統計觸發次數。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- 先看歷史 trace：R1 記錄的 9 個「同一呼叫重複 ≥5 次」幾乎都是正常的：每次編輯後重跑同一個檢查，或在編輯之間反覆跑 `diagnostics` / `git_status`。
+- `ProgressMonitor`（`code/agent/progress.go`）：
+  - 同一呼叫（名稱加參數）以同樣方式失敗（數字與 hex 正規化後的輸出；測試則看失敗測試名單）：
+    - 第 2 次：結果附註；
+    - 第 3 次：不執行，回錯誤。
+  - 重置條件：使用者訊息、成功的編輯、成功的 shell 指令（例如裝依賴後重試是合理的），或同一呼叫成功。
+  - 完全從對話推導，所以 checkpoint 還原後一樣有效，也能離線重播。
+- 離線重播（`dbench analyze` 新 section），28 個 attempt：
+  - 拒絕 2 次，都在 bd80（20261001 run）：同一個完整 `test/controllers.js` 在沒改任何東西下以同樣失敗跑了 3 次——正是「看到失敗、說無關」的那次。
+  - 附註 5 次。
+- 「3 次編輯後失敗指紋不變就提示換策略」已實作並重播，但 28 個 attempt 中 0 次觸發，依「從未觸發就刪掉」移除。
+  - 原因：b398 的長 debug 每次改用不同指令（`run_tests` 加 filter 和 `mocha --grep` 交替），指紋不同。
+- 預算提示（`code/agent/budget.go`，只用於 headless）：
+  - 用掉 80% 的 deadline 或步數後，每個請求尾端加 request-only 提醒（`lc_source: budget`）：完成手上的修改、跑一次測試、回報未驗證的部分，不再開新調查。
+  - 依據：b398 的 timeout run 最後 70 步都在追一個 export 測試，從沒收斂。
+- 拿掉 explorer 與 web researcher 描述中的「proactively」。explorer 改成「單一定義或用法直接 grep / read_file 比較快」。
+  - `middleware/subagents` 的通用說明保留：它是上游 deepagents 的對應文字，且只在描述要求時生效，現在已沒有描述這樣要求。
+- 開關：`-disable progress,budget`。
+- 偏離計畫：subagent 契約沒有新增程式碼。
+  - 取消已經會傳播：subagent 跑在 tool call 的 context 上。
+  - 成本與時間已經共用：同一個 metered model，同一個 deadline。
+  - 歷史 trace 中只有 1 個 attempt 用了 subagent（b398，4 次、每次 9–15 步、回傳最多 5.3k 字元 ≈ 1.3k tokens），30 步上限與 2k tokens 上限都不會觸發。
+- 測試：
+  - 重複判定 table-driven：一次、兩次、時間不同仍算同一失敗、不同失敗、中間編輯、中間 shell、中間使用者訊息、其他呼叫。
+  - 第 2 次附註。
+  - FakeModel 端到端：同一個失敗 patch 送 3 次，第 3 次被拒。
+  - 預算：時間 78% 不提示、80% 提示；步數 8/11 不提示、8/10 提示；沒有上限不提示。
 
 ### Stage R8: 搜尋、環境與記憶
 **Goal**: grep 支援 regex 與 `.gitignore`、有結果上限；glob 忽略規則一致；Environment Profile。

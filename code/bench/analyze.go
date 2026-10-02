@@ -51,6 +51,8 @@ type AttemptAnalysis struct {
 	MaxUnexplained   int
 	// Masking is the offline estimate of observation masking on the trace.
 	Masking *MaskingReplay
+	// Progress is the offline count of progress monitor interventions.
+	Progress *ProgressReplay
 	// TraceError is set when the trace could not be read; Metrics then
 	// holds the stored values.
 	TraceError string
@@ -83,6 +85,8 @@ func AnalyzeAttempt(a Attempt, task Task, tests []TestResult, calls []trace.LLMC
 		out.UnexplainedJumps, out.MaxUnexplained = inputJumps(calls)
 		replay := ReplayMasking(calls, prices)
 		out.Masking = &replay
+		progress := ReplayProgress(calls)
+		out.Progress = &progress
 	}
 	out.Observed = ObservedFailure(a, task, out.FailingP2P, toolOutputs(calls))
 	return out
@@ -251,7 +255,27 @@ func AnalyzeMarkdown(run Run, rows []AttemptAnalysis) string {
 		fmt.Fprintf(&b, "- %s: %d chars (%.0f%%)\n", name, outChars[k], 100*float64(outChars[k])/float64(max(total, 1)))
 	}
 	writeMaskingReplay(&b, rows)
+	writeProgressReplay(&b, rows)
 	return b.String()
+}
+
+// writeProgressReplay lists the attempts where the progress monitor would
+// have stepped in.
+func writeProgressReplay(b *strings.Builder, rows []AttemptAnalysis) {
+	b.WriteString("\n## Progress monitor replay\n\n")
+	b.WriteString("Times the monitor would have refused an unchanged repeat of a failing call, or noted a repeated failure.\n\n")
+	b.WriteString("| task | t | observed | refusals | repeat notes |\n|---|---|---|---|---|\n")
+	var sum ProgressReplay
+	for _, r := range rows {
+		p := r.Progress
+		if p == nil {
+			continue
+		}
+		sum.Refusals += p.Refusals
+		sum.RepeatNotes += p.RepeatNotes
+		fmt.Fprintf(b, "| %s | %d | %s | %d | %d |\n", shortInstance(r.Attempt.InstanceID), r.Attempt.Trial, r.Observed, p.Refusals, p.RepeatNotes)
+	}
+	fmt.Fprintf(b, "| total | | | %d | %d |\n", sum.Refusals, sum.RepeatNotes)
 }
 
 // writeMaskingReplay renders the offline masking estimate. Both sides use

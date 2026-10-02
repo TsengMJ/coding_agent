@@ -21,10 +21,16 @@ const (
 	// FeatureMasking replaces old read-only tool outputs with placeholders
 	// in model requests (MaskObservations).
 	FeatureMasking = "masking"
+	// FeatureProgress refuses an unchanged repeat of a call that failed
+	// the same way twice (ProgressMonitor).
+	FeatureProgress = "progress"
+	// FeatureBudget warns a headless run to wrap up at 80% of its deadline
+	// or step limit.
+	FeatureBudget = "budget"
 )
 
 // Features lists every name Options.Disable accepts.
-var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureMasking}
+var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureMasking, FeatureProgress, FeatureBudget}
 
 // ParseFeatures splits a comma-separated list of feature names and rejects
 // unknown ones.

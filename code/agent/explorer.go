@@ -14,8 +14,8 @@ import (
 const ExplorerName = "explorer"
 
 const explorerDescription = "Read-only codebase explorer (ls, read_file, glob, grep, git_status, git_diff). " +
-	"Use it proactively to find where something is defined or used, to map how a feature works across files, " +
-	"or to answer a question that needs many files read, so those reads stay out of your context. " +
+	"Use it to map how a feature works across many files or to answer a question that needs many files read, so those reads stay out of your context; " +
+	"for a single definition or usage, grep or read_file directly is faster. " +
 	"It cannot change files or run commands. Say what to find and what the report must contain."
 
 const explorerPrompt = `You explore a codebase for a coding agent and report what you find. You can only read: you cannot change files or run commands.

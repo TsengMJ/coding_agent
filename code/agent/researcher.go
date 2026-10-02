@@ -22,7 +22,7 @@ const (
 )
 
 const webResearcherDescription = "Researches a question on the web and in library docs (web_search, fetch_url, Context7) and returns a short report with cited URLs, " +
-	"the versions the answer applies to, and any conflicts between sources. Use it proactively for any question that needs more than one search or page, " +
+	"the versions the answer applies to, and any conflicts between sources. Use it for a question that needs more than one search or page, " +
 	"so the pages stay out of your context; independent questions can go to several researchers at once. " +
 	"It can read project files but cannot change them. Tell it the versions the project uses."
 
