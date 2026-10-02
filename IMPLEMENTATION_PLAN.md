@@ -706,8 +706,21 @@
 **Goal**: 確認刪除 masking 後步數回到 baseline；讓 HEAD baseline 的放行可被觀察；處理 b398「改既有測試配合實作」。
 **Success Criteria**: 8168、bd80 的步數與重讀率接近歷史 baseline；每次 baseline 判定都記在 attempt；b398 若改了既有測試，gate 會列出原版失敗的測試。
 **Tests**: baseline 回報 pre-existing / flaky / regression；test_edits 擋下「改測試配合壞掉的程式」、不擋新增的測試與原版仍通過的修改、還原工作樹不留 stash / ref、可關閉；run_tests 參數組裝。
-**Status**: In Progress
+**Status**: Complete
 
 **Results**:
-- Baseline 判定紀錄：`VerifyGate.OnBaseline` / `Options.OnBaseline` 回報每次判定；dbench 存進 `Process.BaselineVerdicts`（判定與測試名稱），analyze 的 Component triggers 多了 `baseline_*` 欄位。
+- Baseline 判定紀錄：`VerifyGate.OnBaseline` / `Options.OnBaseline` 回報每次判定；dbench 存進 `Process.BaselineVerdicts`（判定與測試名稱）並寫入 attempt 的 `baseline.log`。analyze 的 Component triggers 多了 `baseline_*` 欄位。
 - `test_edits`（`code/agent/testedits.go`）：檢查通過、diff review 之前，只把改過的既有測試檔 `git stash push -- <files>`，用原版跑 `run_tests`（Go 依 package，其他依檔名；沿用最後一次 run_tests 的 language / dir / timeout），再還原。原版有失敗就列出，請 agent 還原測試修正程式，或在回覆中指出任務的哪一條要求。每個 turn 一次，不佔擋下額度。`-disable test_edits` 可關。
+- 評測 run `20261002-132548-dcode-regress-unstable`：commit `dcf447c`，3 題 × 1 次，concurrency 2，共 $0.26。比較同題歷史 baseline 與 `20261002-092555`（含 masking 的 R0–R9）。
+
+  | 題 | 解出 base / R0–R9 / R10 | 步數 | `read_file` 次數 | $ |
+  |---|---|---|---|---|
+  | 8168 | 4/4 · 1/2 · 0/1 | 36 → 90 → **32** | 53–87 → **16** | 0.08 |
+  | bd80 | 1/4 · 1/2 · **1/1** | 39 → 68 → **18** | 49–72 → **11** | 0.02 |
+  | b398 | 0/4 · 0/2 · **1/1** | 64 → 120 → **48** | 144–204 → **52** | 0.16 |
+
+- **刪除 masking**：三題步數都回到或低於歷史 baseline，`read_file` 約為含 masking 時的 1/4–1/3。Success Criteria 達成。
+- **b398 第一次解出**：patch 沒有改 `test/messaging.js`，所以 `gate_test_edit` 沒觸發（沒有可測的改測試案例）。HEAD baseline 跑了一次，判定 `preexisting`（`test/api.js` 的 OpenAPI schema 測試），寫進 `baseline.log`；評分時 F2P 8/8、P2P 3057/3057。
+- **bd80 解出**：18 步、$0.02；diff review 1 次；沒有 HEAD baseline 判定（最後一次檢查通過）。
+- **8168 未解**：`incomplete_fix`，F2P 3/4，失敗測試 `Groups groups cover should remove cover`。gold_src_recall 1.00（改到了對的檔），差一條 cover 刪除行為。步數 32 已回到 baseline（36），失敗與 masking 無關。
+- 這只有 3 個 attempt，解題率不做統計結論。機制上：masking 移除有效；baseline 放行可觀察；test_edits 這次沒有對應的改測試行為可驗證。
