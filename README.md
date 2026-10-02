@@ -64,7 +64,7 @@ go run ./cmd/dcode summarize README.md
 - 語言依 `language` 參數、`files` 副檔名、根目錄標記檔（`go.mod`、`pyproject.toml` 等 Python 標記、`package.json`）依序決定
 - `edit_file` 的 `old_string` 出現多次時，錯誤訊息會列出前 5 處的行號與前一行（Python 版只回報次數）
 
-`-n` 與 dbench 這類 headless 執行另外掛了驗證閘門（`code/agent/verify.go`）：這一輪改過檔案，之後卻沒有通過的測試或 build（`run_tests` 或 `execute` 跑 `go test`、`npm test`、`pytest` 等），agent 想結束時會被擋回去繼續驗證，最多擋 2 次；測試因 `ECONNREFUSED` 失敗時會附上啟動對應服務（Redis、MongoDB、PostgreSQL、MySQL）的提示。TUI 與 GUI 不掛。
+`-n` 與 dbench 這類 headless 執行另外掛了驗證閘門（`code/agent/verify.go`）：這一輪改過檔案，之後卻沒有通過的測試或 build（`run_tests` 或 `execute` 跑 `go test`、`npm test`、`pytest` 等），agent 想結束時會被擋回去繼續驗證，最多擋 2 次；測試因 `ECONNREFUSED` 失敗時會附上啟動對應服務（Redis、MongoDB、PostgreSQL、MySQL）的提示。檢查失敗時，閘門會先 `git stash`（含未追蹤檔）在原始 HEAD 上重跑同一個檢查再還原：HEAD 上也失敗的測試不擋，HEAD 上通過的明確告訴 agent 是它造成的 regression；重跑又通過的視為 flaky。結束前另外檢查一次 diff：殘留檔（`dump.rdb`、log、`__pycache__` 等）、改到的既有測試，以及任務 `## Requirements` 清單逐項對照。TUI 與 GUI 不掛。
 
 `write_file`、`edit_file`、`apply_patch`、`delete`、`execute`、`run_tests`、`diagnostics` 執行前會先問你（`ls`、`read_file`、`grep`、`glob`、`git_status`、`git_diff` 不問）：
 
@@ -254,4 +254,5 @@ go run ./cmd/dbench compare -ref mini-swe-agent/glm-5.3 <run-id>          # 和�
 - 資料放在 `~/.deepagents/bench/`：task repo、metadata、每次嘗試的 log 與 agent trace（`logs/<run>/<instance>/t<trial>/`）、markdown 報表（`reports/`）。
 - 每題映像約 1 GB（`ghcr.io/scaleapi/swe-bench_pro-v2`，linux/amd64）；磁碟吃緊時加 `-prune-images`，網路慢時建議先跑 `bench-gate` 把映像拉好。
 - `-max-cost`（預設每題 3 美元）與 `-max-steps`（預設 250）是額外上限；`infra_error` 不算分，可用 `-retry-infra` 重跑。
+- `-disable baseline,diff_review` 關掉個別 agent 功能做消融比較，會記在 run 的 config。
 - 比較別的 harness 需要逐題成績：CSV（`instance_id,resolved[,steps,cost_usd]`）或 `{"instance_id": true}` JSON。

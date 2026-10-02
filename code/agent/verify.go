@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	core "github.com/tsengmingchun/deepagents_golang/agent"
+	"github.com/tsengmingchun/deepagents_golang/backend"
 	"github.com/tsengmingchun/deepagents_golang/code/codetools"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	rt "github.com/tsengmingchun/deepagents_golang/runtime"
@@ -22,7 +23,8 @@ const (
 	// verifyMarker starts every message the gate adds, so the gate can count
 	// its own blocks from the transcript (and after a checkpoint restore).
 	verifyMarker = "[verify]"
-	// maxVerifyBlocks bounds how often one turn can be sent back to the model.
+	// maxVerifyBlocks bounds how often one turn can be sent back to the model
+	// for its checks; the diff review adds at most one more.
 	maxVerifyBlocks = 2
 	executeToolName = "execute"
 )
@@ -50,7 +52,7 @@ var (
 // knownServices maps a port to the service usually behind it and a command
 // that starts it inside a test container.
 var knownServices = map[string][2]string{
-	"6379":  {"Redis", "redis-server --daemonize yes"},
+	"6379":  {"Redis", "redis-server --daemonize yes --save '' --dir /tmp"},
 	"27017": {"MongoDB", "mkdir -p /tmp/mongo && mongod --fork --dbpath /tmp/mongo --logpath /tmp/mongod.log"},
 	"5432":  {"PostgreSQL", "service postgresql start (or pg_ctl -D <datadir> start)"},
 	"3306":  {"MySQL", "service mysql start (or mysqld_safe &)"},
@@ -62,7 +64,18 @@ var knownServices = map[string][2]string{
 // message and sends the loop back to the model, at most maxVerifyBlocks times.
 // It also appends start-up hints to command output that shows a refused
 // connection to a local service.
-type VerifyGate struct{}
+//
+// With a Workspace it also compares a failing check against HEAD (see
+// Baseline), letting the turn finish when every failure is pre-existing or
+// flaky, and reviews the diff once before the turn finishes (see
+// reviewDiff).
+type VerifyGate struct {
+	Workspace backend.SandboxBackend
+	// RunTests reruns run_tests checks for the baseline.
+	RunTests tool.Tool
+	// NoBaseline and NoDiffReview turn those checks off.
+	NoBaseline, NoDiffReview bool
+}
 
 func (VerifyGate) Name() string { return VerifyGateName }
 
@@ -115,17 +128,53 @@ func serviceHint(out string) string {
 	return b.String()
 }
 
+// Kinds of gate message, kept in their metadata.
+const (
+	gateKindKey      = "verify_kind"
+	gateKindCheck    = "check"
+	gateKindBaseline = "baseline"
+	gateKindDiff     = "diff"
+)
+
 // AfterAgent sends the loop back to the model when the turn edited files but
-// has no passing check after the last edit.
-func (VerifyGate) AfterAgent(_ context.Context, state *rt.State, _ *core.Runtime) (*rt.Command, error) {
-	msg, ok := verifyMessage(state.Messages)
-	if !ok {
+// has no passing check after the last edit, or once when the diff needs a
+// review.
+func (g VerifyGate) AfterAgent(ctx context.Context, state *rt.State, _ *core.Runtime) (*rt.Command, error) {
+	t := inspectTurn(state.Messages)
+	if t.lastEdit < 0 {
 		return nil, nil
 	}
-	return &rt.Command{
-		Update: &rt.Update{Messages: []llm.Message{llm.NewUserMessage(msg)}},
-		Goto:   core.GotoModel,
-	}, nil
+	if !t.verified() {
+		if t.blocks >= maxVerifyBlocks {
+			return nil, nil
+		}
+		kind, msg := gateKindCheck, checkMessage(t)
+		if g.Workspace != nil && !g.NoBaseline && t.last != nil && !t.last.passed && !t.kinds[gateKindBaseline] {
+			b := Baseline{Workspace: g.Workspace, RunTests: g.RunTests}
+			v := b.Compare(ctx, t.lastCall, t.last)
+			switch v.kind {
+			case verdictPreexisting, verdictFlaky:
+				return nil, nil
+			case verdictRegression:
+				kind, msg = gateKindBaseline, baselineMessage(v, t.last)
+			default:
+				kind, msg = gateKindBaseline, msg+baselineMessage(v, t.last)
+			}
+		}
+		return gateCommand(kind, msg), nil
+	}
+	if g.Workspace != nil && !g.NoDiffReview && !t.kinds[gateKindDiff] {
+		if msg := reviewDiff(ctx, g.Workspace, t.prompt); msg != "" {
+			return gateCommand(gateKindDiff, msg), nil
+		}
+	}
+	return nil, nil
+}
+
+func gateCommand(kind, text string) *rt.Command {
+	m := llm.NewUserMessage(text)
+	m.Metadata = map[string]any{rt.SyntheticSourceKey: VerifyGateName, gateKindKey: kind}
+	return &rt.Command{Update: &rt.Update{Messages: []llm.Message{m}}, Goto: core.GotoModel}
 }
 
 // checkResult is the outcome of one test or build run.
@@ -138,22 +187,57 @@ type checkResult struct {
 	// files the test files it was limited to.
 	filter string
 	files  []string
+	// failedTests names every failing test run_tests reported.
+	failedTests []string
+}
+
+// turnFacts is what the gate reads from the current turn.
+type turnFacts struct {
+	// prompt is the user message that started the turn.
+	prompt string
+	blocks int
+	// kinds counts the gate's earlier messages in the turn by kind.
+	kinds    map[string]bool
+	lastEdit int
+	files    []string
+	// last is the last check after the last edit, run by lastCall.
+	last     *checkResult
+	lastCall llm.ToolCall
+	hints    []string
+}
+
+// verified reports a passing whole-file check after the last edit.
+func (t turnFacts) verified() bool {
+	return t.last != nil && t.last.passed && t.last.filter == ""
 }
 
 // verifyMessage decides whether the current turn must continue and builds the
 // message that tells the model why.
 func verifyMessage(msgs []llm.Message) (string, bool) {
-	start, blocks := turnStart(msgs)
-	if blocks >= maxVerifyBlocks {
+	t := inspectTurn(msgs)
+	if t.blocks >= maxVerifyBlocks || t.lastEdit < 0 || t.verified() {
 		return "", false
 	}
+	return checkMessage(t), true
+}
+
+func inspectTurn(msgs []llm.Message) turnFacts {
+	start, blocks := turnStart(msgs)
+	t := turnFacts{blocks: blocks, kinds: map[string]bool{}, lastEdit: -1}
+	if start < len(msgs) && msgs[start].Role == llm.RoleUser {
+		t.prompt = msgs[start].Text()
+	}
 	calls := map[string]llm.ToolCall{}
-	lastEdit := -1
-	var files []string
-	var last *checkResult
-	var hints []string
 	for i := start; i < len(msgs); i++ {
 		m := msgs[i]
+		if m.Role == llm.RoleUser && i > start {
+			if kind, _ := m.Metadata[gateKindKey].(string); kind != "" {
+				t.kinds[kind] = true
+				if kind == gateKindDiff {
+					t.blocks--
+				}
+			}
+		}
 		for _, c := range m.ToolCalls {
 			calls[c.ID] = c
 		}
@@ -167,29 +251,31 @@ func verifyMessage(msgs []llm.Message) (string, bool) {
 		text := m.Text()
 		if mutatingTools[call.Name] {
 			if m.Status != llm.ToolStatusError && !strings.HasPrefix(text, "Error") {
-				lastEdit, last = i, nil
+				t.lastEdit, t.last = i, nil
 				for _, f := range editedFiles(call) {
-					if !slices.Contains(files, f) {
-						files = append(files, f)
+					if !slices.Contains(t.files, f) {
+						t.files = append(t.files, f)
 					}
 				}
 			}
 			continue
 		}
-		if h := serviceHint(text); h != "" && !slices.Contains(hints, h) {
-			hints = append(hints, h)
+		if h := serviceHint(text); h != "" && !slices.Contains(t.hints, h) {
+			t.hints = append(t.hints, h)
 		}
-		if lastEdit < 0 {
+		if t.lastEdit < 0 {
 			continue
 		}
 		if r := classifyCheck(call, text); r != nil {
-			last = r
+			t.last, t.lastCall = r, call
 		}
 	}
-	if lastEdit < 0 || (last != nil && last.passed && last.filter == "") {
-		return "", false
-	}
+	return t
+}
 
+// checkMessage tells the model why the turn has no valid check yet.
+func checkMessage(t turnFacts) string {
+	last := t.last
 	var b strings.Builder
 	b.WriteString(verifyMarker + " ")
 	switch {
@@ -201,7 +287,7 @@ func verifyMessage(msgs []llm.Message) (string, bool) {
 	case last == nil:
 		fmt.Fprintf(&b, "You changed %s but have not run the tests or a build since the last change. "+
 			"Run the relevant tests (run_tests, or the project's own command through execute) and fix what fails before finishing.",
-			fileList(files))
+			fileList(t.files))
 	default:
 		fmt.Fprintf(&b, "The last check after your changes did not pass: `%s` %s.", clipLine(last.command, 200), last.detail)
 		if len(last.failures) > 0 {
@@ -213,13 +299,13 @@ func verifyMessage(msgs []llm.Message) (string, bool) {
 		b.WriteString("\nFix the cause and rerun the check before finishing.")
 	}
 	b.WriteString("\nIf the tests cannot start because of the environment (a missing service, dependency or database), set the environment up instead of giving up.")
-	for _, h := range hints {
+	for _, h := range t.hints {
 		b.WriteString("\n" + h)
 	}
-	if blocks+1 == maxVerifyBlocks {
+	if t.blocks+1 == maxVerifyBlocks {
 		b.WriteString("\nThis is the last reminder: if you still cannot get a passing check, say plainly in your final answer that the change is unverified or which checks still fail.")
 	}
-	return b.String(), true
+	return b.String()
 }
 
 // turnStart returns the index of the last user message that the gate did not
@@ -258,6 +344,11 @@ func classifyCheck(call llm.ToolCall, text string) *checkResult {
 			return r
 		}
 		r.detail = fmt.Sprintf("reported %s (%d passed, %d failed)", rep.Status, rep.Passed, rep.Failed)
+		for _, f := range rep.Failures {
+			if name := testName(f); name != "" && !slices.Contains(r.failedTests, name) {
+				r.failedTests = append(r.failedTests, name)
+			}
+		}
 		for i, f := range rep.Failures {
 			if i == 5 {
 				r.failures = append(r.failures, fmt.Sprintf("... and %d more", len(rep.Failures)-5))
@@ -290,6 +381,17 @@ func classifyCheck(call llm.ToolCall, text string) *checkResult {
 		return r
 	}
 	return nil
+}
+
+// testName identifies a failing test across runs.
+func testName(f codetools.TestFailure) string {
+	switch {
+	case f.Test != "" && f.File != "":
+		return f.File + " | " + f.Test
+	case f.Test != "":
+		return f.Test
+	}
+	return f.Package
 }
 
 func failureLine(f codetools.TestFailure) string {

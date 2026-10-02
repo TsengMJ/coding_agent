@@ -77,6 +77,8 @@ type Options struct {
 	WorkingDirSection string
 	// Tracer records run trees (see NewLangSmith); nil turns tracing off.
 	Tracer tracing.Tracer
+	// Disable turns features off by name (see Features), for ablation runs.
+	Disable []string
 }
 
 // CreateCLIAgent assembles the coding agent on top of deepagents.CreateDeepAgent.
@@ -86,6 +88,9 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	}
 	if opts.Cwd == "" {
 		return nil, errors.New("code/agent.CreateCLIAgent: Cwd is required")
+	}
+	if err := checkFeatures(opts.Disable); err != nil {
+		return nil, fmt.Errorf("code/agent.CreateCLIAgent: %w", err)
 	}
 	b := opts.Backend
 	if b == nil {
@@ -118,7 +123,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		mws = append(mws, sk)
 	}
 	if !opts.Interactive && !opts.NoVerifyGate {
-		mws = append(mws, VerifyGate{})
+		mws = append(mws, newVerifyGate(b, opts.Disable))
 	}
 	var tools []tool.Tool
 	webModel := opts.WebModel

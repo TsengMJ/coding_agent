@@ -127,6 +127,8 @@ type agentConfig struct {
 	TimeoutSec    float64 `json:"timeout_sec,omitempty"`
 	PruneImages   bool    `json:"prune_images"`
 	KeepWorkspace bool    `json:"keep_workspace"`
+	// Disable turns agent features off for ablation (codeagent.Features).
+	Disable []string `json:"disable,omitempty"`
 }
 
 func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer) error {
@@ -144,7 +146,12 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 	prune := fs.Bool("prune-images", false, "remove each task image after its last attempt")
 	keep := fs.Bool("keep-workspace", false, "keep the agent's copy of each repository")
 	notes := fs.String("notes", "", "free-form notes stored with the run")
+	disable := fs.String("disable", "", "comma-separated agent features to turn off for ablation: "+strings.Join(codeagent.Features, ", "))
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	disabled, err := codeagent.ParseFeatures(*disable)
+	if err != nil {
 		return err
 	}
 	c, err := bench.LoadCatalog(e.dataDir)
@@ -165,7 +172,7 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 
 	var run *bench.Run
 	cfg := agentConfig{Limit: *limit, MaxSteps: *maxSteps, MaxCostUSD: *maxCost, TimeoutSec: timeout.Seconds(),
-		PruneImages: *prune, KeepWorkspace: *keep}
+		PruneImages: *prune, KeepWorkspace: *keep, Disable: disabled}
 	if *resume != "" {
 		if run, err = st.Run(ctx, *resume); err != nil {
 			return err
@@ -200,7 +207,7 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 	solver := &bench.DcodeSolver{
 		Settings: e.settings, Prices: prices, MaxSteps: cfg.MaxSteps, MaxCostUSD: cfg.MaxCostUSD,
 		Timeout: time.Duration(cfg.TimeoutSec * float64(time.Second)), KeepWorkspace: cfg.KeepWorkspace,
-		Traces:   agentStore.Traces,
+		Disable: cfg.Disable, Traces: agentStore.Traces,
 		NewModel: func() (llm.ChatModel, error) { return llm.InitChatModel(spec, modelOptions(e)) },
 	}
 	if _, err := solver.NewModel(); err != nil {

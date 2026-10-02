@@ -54,6 +54,8 @@ type DcodeSolver struct {
 	Traces trace.Log
 	// Tracer also sends run trees to LangSmith; nil is off.
 	Tracer tracing.Tracer
+	// Disable turns agent features off for ablation (codeagent.Features).
+	Disable []string
 }
 
 // TracePrefix starts SolveResult.TracePath; the rest is the trace thread ID.
@@ -159,6 +161,7 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 		ProjectContext:    projectContext(task, repoDir),
 		WorkingDirSection: workingDirSection(repoDir),
 		Tracer:            s.Tracer,
+		Disable:           s.Disable,
 	})
 	if err != nil {
 		res.Category, res.Error = CategoryAgentError, err.Error()

@@ -496,7 +496,38 @@
 **Goal**: agent 不能把自己造成的 regression 當成無關；最終 diff 沒有副產品。
 **Success Criteria**: 失敗測試在 HEAD 上比對並標記；受影響的測試檔列入完成條件；DiffInspector 擋下副產品；prompt 矛盾移除。
 **Tests**: 暫存 git repo 的 regression / pre-existing / flaky；工作樹不遺失；DiffInspector table-driven；FakeModel 重現 bd80。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- 先看歷史 trace：
+  - bd80 最新的失敗：跑了完整的 `test/controllers.js`，看到 export 測試失敗，兩次說是「unrelated」就結束；gate 擋到上限後放行。
+  - 較早兩次只跑過濾後的測試。Stage 16 的「去掉 filter 重跑」規則已經處理這種情況。
+  - b398：改了既有的 `test/messaging.js`（正是壞掉的 P2P 測試所在），patch 裡有 `dump.rdb`。
+- HEAD baseline（`code/agent/baseline.go`，只在 headless gate 用）：
+  - 最後一次檢查失敗時，先 `git stash --include-untracked`（另存 `refs/dcode/baseline`），在 HEAD 上重跑同一個 `run_tests` / `execute`，再 `reset --hard` + `clean -fd` + `stash pop` 還原。還原失敗時保留 ref，並告訴 agent 怎麼取回。
+  - 判定：
+    - HEAD 上也失敗的同名測試 → pre-existing，不擋。
+    - HEAD 上通過、重跑也通過 → flaky，不擋。
+    - HEAD 上通過、重跑仍失敗 → regression，擋下並列出測試。
+    - `execute` 在 HEAD 上也失敗 → 照舊擋，附註「HEAD 上也失敗」。
+  - 每個 turn 只跑一次。
+- Diff review（`code/agent/diffreview.go`）：檢查通過後、結束前看一次 `git status`，提出：
+  - 殘留檔：`dump.rdb`、log、`.orig` / `.rej`、`__pycache__` 等；
+  - 改到的既有測試；
+  - 任務的 `## Requirements` 清單，請 agent 逐項對照。
+  每個 turn 一次，不佔原本 2 次的擋下額度。
+- Gate 訊息帶 `lc_source: verify_gate` 與種類，history 不再把它們當成 user turn。
+- Prompt：刪掉「After working on a file, stop — don't explain」（和「在最終回覆說明未驗證」矛盾）；Redis 提示改為 `--save '' --dir /tmp`。
+- 開關：`Options.Disable` / `dbench run -disable baseline,diff_review`，記在 run config。
+- 偏離計畫：
+  - 沒做 import / require 的 affected-test 偵測。28 個 attempt 中，壞掉的測試檔 agent 都跑過；缺的是「看到失敗後判斷是否自己造成」，由 baseline 處理。
+  - 沒做「改動檔案數過多」。b398 改 49 個語系檔可能是需求本身，沒有證據顯示是錯的。
+  - 互動模式沒有加驗證狀態顯示：使用者在場，也沒有觀察到問題。
+  - 沒把 VerifyGate 改名為 CompletionGate：功能照計畫補齊，改名只會增加 diff。
+- 測試：
+  - 暫存 Go repo：regression（未追蹤檔與修改都還原、沒有遺留 stash / ref）、HEAD 也失敗、run_tests 的 pre-existing、flaky、關閉開關。
+  - diff review：殘留檔、測試、Requirements；每 turn 一次。
+  - `TestHeadlessAgentCannotDismissRegression`：FakeModel 重現 bd80（改壞、說無關、想結束）→ 看到 HEAD 比對 → 修好。
 
 ### Stage R6: Context 與工具輸出
 **Goal**: 舊的可重建 tool 輸出不再留在 context。
