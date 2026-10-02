@@ -9,6 +9,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/backend"
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/middleware/asyncsubagents"
 	"github.com/tsengmingchun/deepagents_golang/middleware/filesystem"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
 	"github.com/tsengmingchun/deepagents_golang/middleware/memory"
@@ -70,13 +71,14 @@ func validateExcluded(p profiles.HarnessProfile) error {
 }
 
 // buildMiddleware assembles the main stack:
-// Skills -> Filesystem -> SubAgent -> Summarization -> PatchToolCalls -> [caller] ->
-// profile extra -> Memory -> HITL -> ToolExclusion.
+// Skills -> Filesystem -> SubAgent -> Summarization -> PatchToolCalls ->
+// AsyncSubAgent -> [caller] -> profile extra -> Memory -> HITL -> ToolExclusion.
 // Filesystem and Summarization need a backend; SubAgent is present when any
-// subagent is configured (including the default general-purpose one).
+// subagent is configured (including the default general-purpose one), and
+// AsyncSubAgent when any async subagent is.
 func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 	o := a.o
-	specs, err := a.subagentSpecs()
+	specs, async, err := a.subagentSpecs()
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +119,13 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 		stack = append(stack, summ)
 	}
 	stack = append(stack, patchtoolcalls.New())
+	if len(async) > 0 {
+		am, err := asyncsubagents.New(async, asyncsubagents.Options{})
+		if err != nil {
+			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+		}
+		stack = append(stack, am)
+	}
 	coreLen := len(stack)
 
 	stack = append(stack, a.profile.Materialize()...)
@@ -178,33 +187,38 @@ func (a *assembly) filesystem(b backend.Backend) (*filesystem.Middleware, error)
 // subagentSpecs resolves the caller's subagents and prepends the default
 // general-purpose subagent unless the profile disables it or the caller
 // supplies one with the same name.
-func (a *assembly) subagentSpecs() ([]subagents.Spec, error) {
+// Async subagents are returned apart; they get their own middleware.
+func (a *assembly) subagentSpecs() ([]subagents.Spec, []asyncsubagents.AsyncSubAgent, error) {
 	var specs []subagents.Spec
+	var async []asyncsubagents.AsyncSubAgent
 	hasGP := false
 	for _, spec := range a.o.SubAgents {
-		hasGP = hasGP || spec.SubAgentName() == subagents.GeneralPurposeName
 		switch s := spec.(type) {
 		case subagents.CompiledSubAgent:
 			specs = append(specs, s)
 		case subagents.SubAgent:
 			resolved, err := a.resolveSubAgent(s)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			specs = append(specs, resolved)
+		case asyncsubagents.AsyncSubAgent:
+			async = append(async, s)
+			continue
 		default:
-			return nil, notimpl.Err(fmt.Sprintf("deepagents.CreateDeepAgent(WithSubAgents: %T %q)", spec, spec.SubAgentName()))
+			return nil, nil, notimpl.Err(fmt.Sprintf("deepagents.CreateDeepAgent(WithSubAgents: %T %q)", spec, spec.SubAgentName()))
 		}
+		hasGP = hasGP || spec.SubAgentName() == subagents.GeneralPurposeName
 	}
 	gp := a.profile.GeneralPurposeSubagent
 	if hasGP || gp != nil && gp.Enabled != nil && !*gp.Enabled {
-		return specs, nil
+		return specs, async, nil
 	}
 	spec, err := a.generalPurpose()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return append([]subagents.Spec{spec}, specs...), nil
+	return append([]subagents.Spec{spec}, specs...), async, nil
 }
 
 // generalPurpose builds the default subagent: the parent's model and tools
@@ -266,9 +280,14 @@ func (a *assembly) generalPurpose() (subagents.SubAgent, error) {
 // parent's), tools (nil inherits the parent's), the base middleware stack
 // for its model's profile, and the profile prompt overlay. Permissions
 // default to the parent's; interrupt rules become deny (see generalPurpose).
+//
+// A fork rebuilds the parent's prompt from the state it inherits: it gets the
+// parent's skills, memory and caller middleware (its own replace them by
+// name), and the parent's system prompt with its own appended.
 func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, error) {
-	var skillSources []string
-	if s.Mode != subagents.ModeFork {
+	fork := s.Mode == subagents.ModeFork
+	skillSources := a.o.Skills
+	if !fork {
 		skillSources, s.Skills = s.Skills, nil
 	}
 	perms := s.Permissions
@@ -299,9 +318,20 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 	}
 	coreLen := len(mw)
 	mw = append(mw, profile.Materialize()...)
+	custom := s.Middleware
+	if fork {
+		if len(a.o.Memory) > 0 && a.o.Backend != nil {
+			mem, err := memory.New(memory.Options{Backend: a.o.Backend, Sources: a.o.Memory})
+			if err != nil {
+				return s, fmt.Errorf("deepagents.CreateDeepAgent: subagent %q: %w", s.Name, err)
+			}
+			mw = append(mw, mem)
+		}
+		custom = overrideByName(a.o.Middleware, s.Middleware)
+	}
 	sub := &assembly{o: a.o, model: model, profile: profile, matched: map[string]bool{}}
 	mw, coreLen = sub.exclude(mw, coreLen)
-	if mw, err = mergeMiddleware(mw, s.Middleware, coreLen); err != nil {
+	if mw, err = mergeMiddleware(mw, custom, coreLen); err != nil {
 		return s, err
 	}
 	mw, _ = sub.exclude(mw, len(mw))
@@ -321,8 +351,41 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 	s.Permissions = nil
 	s.Tools = append([]tool.Tool{}, tool.ApplyDescriptionOverrides(tools, profile.ToolDescriptionOverrides)...)
 	s.Middleware = mw
-	s.SystemPrompt = profiles.ApplyPrompt(profile, s.SystemPrompt)
+	if fork {
+		s.SystemPrompt = a.forkPrompt(s.SystemPrompt)
+	} else {
+		s.SystemPrompt = profiles.ApplyPrompt(profile, s.SystemPrompt)
+	}
 	return s, nil
+}
+
+// forkPrompt is the parent's system prompt with the fork's own appended.
+func (a *assembly) forkPrompt(own string) string {
+	var parent string
+	if msg := resolveSystemMessage(a.o, profiles.ApplyPrompt(a.profile, "")); msg != nil {
+		parent = msg.Text()
+	}
+	switch {
+	case own == "":
+		return parent
+	case parent == "":
+		return own
+	}
+	return parent + "\n\n" + own
+}
+
+// overrideByName is base with each entry of over replacing the one of the
+// same name, or appended.
+func overrideByName(base, over []agent.Middleware) []agent.Middleware {
+	out := slices.Clone(base)
+	for _, m := range over {
+		if i := slices.IndexFunc(out, func(b agent.Middleware) bool { return b.Name() == m.Name() }); i >= 0 {
+			out[i] = m
+		} else {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // subagentBase is the core stack every declarative subagent starts from:

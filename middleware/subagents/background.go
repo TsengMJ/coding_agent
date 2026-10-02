@@ -41,6 +41,7 @@ type bgTask struct {
 	id, thread, subagentType string
 	done                     chan struct{}
 	status, report           string
+	usage                    []ModelUsage
 }
 
 // registry tracks background tasks in process memory; they do not survive a
@@ -61,10 +62,10 @@ func (r *registry) start(t *bgTask) {
 	r.tasks[t.id] = t
 }
 
-func (r *registry) finish(t *bgTask, status, report string) {
+func (r *registry) finish(t *bgTask, status, report string, usage []ModelUsage) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	t.status, t.report = status, report
+	t.status, t.report, t.usage = status, report, usage
 	close(t.done)
 	close(r.changed)
 	r.changed = make(chan struct{})
@@ -126,23 +127,24 @@ func isDone(t *bgTask) bool {
 // startBackground runs the subagent in a goroutine under the run's context,
 // so cancelling the run cancels it. Its events are not forwarded: the parent
 // stream may end before it does.
-func (m *Middleware) startBackground(ctx context.Context, a agent.Agent, in agent.Input, cfg runtime.RunConfig, rt *tool.Runtime, subagentType string) *tool.Result {
+func (m *Middleware) startBackground(ctx context.Context, a agent.Agent, in agent.Input, cfg runtime.RunConfig, rt *tool.Runtime, subagentType, model string) *tool.Result {
 	t := &bgTask{id: rt.ToolCallID, thread: rt.Config.ThreadID, subagentType: subagentType, done: make(chan struct{})}
 	m.bg.start(t)
 	go func() {
 		st, err := a.Invoke(ctx, in, cfg)
+		usage := usageOf(st, model)
 		switch {
 		case ctx.Err() != nil:
-			m.bg.finish(t, TaskCancelled, "The run was cancelled before the task finished.")
+			m.bg.finish(t, TaskCancelled, "The run was cancelled before the task finished.", usage)
 		case err != nil:
-			m.bg.finish(t, TaskFailed, err.Error())
+			m.bg.finish(t, TaskFailed, err.Error(), usage)
 		default:
 			report, rerr := reportText(st)
 			if rerr != nil {
-				m.bg.finish(t, TaskFailed, rerr.Error())
+				m.bg.finish(t, TaskFailed, rerr.Error(), usage)
 				return
 			}
-			m.bg.finish(t, TaskCompleted, report)
+			m.bg.finish(t, TaskCompleted, report, usage)
 		}
 	}()
 	return textResult(fmt.Sprintf("Started background task %s (%s). Continue with other work; a <task-notification> with its report arrives when it finishes. Use %s only if you must wait for it.",
@@ -167,7 +169,7 @@ func (m *Middleware) BeforeModel(_ context.Context, _ *runtime.State, rt *agent.
 	msgs := make([]llm.Message, len(done))
 	for i, t := range done {
 		msgs[i] = llm.NewUserMessage(notification(t))
-		msgs[i].Metadata = map[string]any{"task_notification": t.id}
+		msgs[i].Metadata = withUsage(map[string]any{"task_notification": t.id}, t.usage)
 	}
 	return &runtime.Update{Messages: msgs}, nil
 }
@@ -237,7 +239,13 @@ func (m *Middleware) taskOutput(ctx context.Context, rt *tool.Runtime, args map[
 		return nil, ctx.Err()
 	}
 	m.bg.deliver(id)
-	return textResult(fmt.Sprintf("Task %s %s.\n\n%s", id, t.status, t.report)), nil
+	text := fmt.Sprintf("Task %s %s.\n\n%s", id, t.status, t.report)
+	if len(t.usage) == 0 || rt == nil || rt.ToolCallID == "" {
+		return textResult(text), nil
+	}
+	msg := llm.NewToolMessage(rt.ToolCallID, TaskOutputToolName, text)
+	msg.Metadata = withUsage(msg.Metadata, t.usage)
+	return &tool.Result{Command: &runtime.Command{Update: &runtime.Update{Messages: []llm.Message{msg}}}}, nil
 }
 
 // reportText is the subagent's structured response as JSON, else its last

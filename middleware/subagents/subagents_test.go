@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 )
@@ -77,6 +76,7 @@ func TestValidateSpecs(t *testing.T) {
 		{"duplicate", []Spec{SubAgent{Name: "a"}, CompiledSubAgent{Name: "a"}}, "duplicate subagent name"},
 		{"empty name", []Spec{SubAgent{}}, "needs a name"},
 		{"bad mode", []Spec{SubAgent{Name: "a", Mode: "shared"}}, "invalid mode"},
+		{"fork with skills", []Spec{SubAgent{Name: "a", Mode: ModeFork, Skills: []string{"/s"}}}, "cannot set skills"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,10 +85,7 @@ func TestValidateSpecs(t *testing.T) {
 			}
 		})
 	}
-	if err := ValidateSpecs([]Spec{SubAgent{Name: "a", Mode: ModeFork}}); !errors.Is(err, notimpl.ErrNotImplemented) {
-		t.Fatalf("fork: err = %v", err)
-	}
-	if err := ValidateSpecs([]Spec{SubAgent{Name: "a", Mode: "handoff"}, SubAgent{Name: "b", Mode: ModeIsolated}}); err != nil {
+	if err := ValidateSpecs([]Spec{SubAgent{Name: "a", Mode: "handoff"}, SubAgent{Name: "b", Mode: ModeIsolated}, CompiledSubAgent{Name: "c", Mode: ModeFork}}); err != nil {
 		t.Fatalf("valid specs: %v", err)
 	}
 }

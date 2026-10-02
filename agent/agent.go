@@ -7,6 +7,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/deepagents_golang/tracing"
 )
 
 // Config describes an agent (the arguments of langchain `create_agent`).
@@ -25,6 +26,9 @@ type Config struct {
 	// RecursionLimit caps loop steps; zero means runtime.DefaultRecursionLimit.
 	RecursionLimit int
 	Metadata       map[string]any
+	// Tracer records runs; nil uses the tracer in ctx, if any (so a
+	// subagent joins its parent's trace).
+	Tracer tracing.Tracer
 }
 
 // Input starts or resumes a run.

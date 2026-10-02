@@ -17,6 +17,7 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
@@ -107,12 +108,16 @@ type Options struct {
 	Store Store
 	// ReadOnlyTools defaults to DefaultReadOnlyTools.
 	ReadOnlyTools []string
+	// ReadOnlySubagents may still be started with `task` (and read with
+	// `task_output`) in plan mode; empty hides both.
+	ReadOnlySubagents []string
 }
 
 // Middleware implements plan mode.
 type Middleware struct {
-	store    Store
-	readOnly []string
+	store     Store
+	readOnly  []string
+	subagents []string
 }
 
 // New returns the middleware.
@@ -124,7 +129,10 @@ func New(opts Options) (*Middleware, error) {
 	if len(ro) == 0 {
 		ro = DefaultReadOnlyTools
 	}
-	return &Middleware{store: opts.Store, readOnly: ro}, nil
+	if len(opts.ReadOnlySubagents) > 0 {
+		ro = append(slices.Clone(ro), subagents.TaskToolName, subagents.TaskOutputToolName)
+	}
+	return &Middleware{store: opts.Store, readOnly: ro, subagents: slices.Clone(opts.ReadOnlySubagents)}, nil
 }
 
 func (m *Middleware) Name() string { return "PlanModeMiddleware" }
@@ -148,7 +156,11 @@ func (m *Middleware) WrapModelCall(ctx context.Context, req *agent.ModelRequest,
 	updated := *req
 	if isPlanMode(req.Runtime) {
 		updated.Tools = slices.DeleteFunc(slices.Clone(req.Tools), func(t tool.Tool) bool { return !slices.Contains(m.readOnly, t.Name()) })
-		updated.SystemMessage = agent.AppendToSystemMessage(req.SystemMessage, PlanModePrompt)
+		prompt := PlanModePrompt
+		if len(m.subagents) > 0 {
+			prompt += fmt.Sprintf(planSubagentsNote, quoteNames(m.subagents))
+		}
+		updated.SystemMessage = agent.AppendToSystemMessage(req.SystemMessage, prompt)
 		return next(ctx, &updated)
 	}
 	updated.Tools = slices.DeleteFunc(slices.Clone(req.Tools), func(t tool.Tool) bool { return t.Name() == ToolName })
@@ -167,7 +179,23 @@ func (m *Middleware) WrapToolCall(ctx context.Context, req *agent.ToolCallReques
 			IsError: true,
 		}, nil
 	}
+	if isPlanMode(req.Runtime) && req.ToolCall.Name == subagents.TaskToolName {
+		if name, _ := req.ToolCall.Args["subagent_type"].(string); !slices.Contains(m.subagents, name) {
+			return &tool.Result{
+				Content: []llm.ContentBlock{llm.TextBlock(fmt.Sprintf("Error: subagent `%s` may change files, so it is not available in plan mode. In plan mode `task` accepts only %s.", name, quoteNames(m.subagents)))},
+				IsError: true,
+			}, nil
+		}
+	}
 	return next(ctx, req)
+}
+
+func quoteNames(names []string) string {
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = "`" + n + "`"
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // BeforeAgent starts building: the plan's todos become the todo list (the

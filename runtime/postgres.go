@@ -110,3 +110,67 @@ func (p pgIndex) prune(ctx context.Context, threadID string, keep int) error {
 			ORDER BY version DESC, timestamp DESC LIMIT $2)`, p.table), threadID, keep)
 	return err
 }
+
+// HistoryPage reads only a window of messages from PostgreSQL. The checkpoint
+// remains the source of truth for agent resume; this is solely a read model for
+// the GUI, so opening a long thread does not transfer its whole project state.
+func (c *PostgresCheckpointer) HistoryPage(ctx context.Context, threadID string, before, limit int) (*HistoryPage, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	var messages, values, interrupts []byte
+	var seq int64
+	var start, total int
+	err := c.pool.QueryRow(ctx, fmt.Sprintf(`
+WITH latest AS (
+  SELECT state FROM %s WHERE execution_id = $1
+  ORDER BY version DESC, timestamp DESC LIMIT 1
+), numbered AS (
+  SELECT value AS message, ordinality::int AS pos
+  FROM latest, jsonb_array_elements(COALESCE(latest.state->'state'->'messages', '[]'::jsonb)) WITH ORDINALITY
+), bounds AS (
+  SELECT COALESCE(NULLIF($2, 0), (SELECT COALESCE(MAX(pos), 0) + 1 FROM numbered)) AS upper
+), page_start AS (
+  SELECT COALESCE((SELECT pos FROM numbered, bounds
+    WHERE pos < bounds.upper AND message->>'role' = 'user'
+    ORDER BY pos DESC OFFSET GREATEST($3 - 1, 0) LIMIT 1),
+    GREATEST(1, (SELECT upper FROM bounds) - $3)) AS pos
+)
+SELECT
+  COALESCE((SELECT jsonb_agg(numbered.message ORDER BY numbered.pos) FROM numbered, bounds, page_start
+    WHERE numbered.pos >= page_start.pos AND numbered.pos < bounds.upper), '[]'::jsonb),
+  COALESCE((SELECT jsonb_strip_nulls(jsonb_build_object(
+    'plan', state->'state'->'values'->'plan',
+    'todos', state->'state'->'values'->'todos')) FROM latest), '{}'::jsonb),
+  COALESCE((SELECT state->'pending_interrupts' FROM latest), '[]'::jsonb),
+  COALESCE((SELECT (state->>'seq')::bigint FROM latest), 0),
+  (SELECT pos FROM page_start),
+  (SELECT COALESCE(MAX(pos), 0) FROM numbered)`, postgresCheckpointTable), threadID, before, limit).Scan(&messages, &values, &interrupts, &seq, &start, &total)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("history page %s: %w", threadID, err)
+	}
+	var out HistoryPage
+	out.ThreadID, out.CheckpointSeq = threadID, seq
+	if err := json.Unmarshal(messages, &out.Messages); err != nil {
+		return nil, fmt.Errorf("history messages: %w", err)
+	}
+	if err := json.Unmarshal(interrupts, &out.PendingInterrupts); err != nil {
+		return nil, fmt.Errorf("history interrupts: %w", err)
+	}
+	var allValues map[string]any
+	if err := json.Unmarshal(values, &allValues); err != nil {
+		return nil, fmt.Errorf("history values: %w", err)
+	}
+	out.Values = map[string]any{}
+	for _, key := range []string{"plan", "todos"} {
+		if v, ok := allValues[key]; ok {
+			out.Values[key] = v
+		}
+	}
+	out.HasMore = start > 1 && total > 0
+	out.NextBefore = start
+	return &out, nil
+}

@@ -5,10 +5,11 @@ package deepagents
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+	"github.com/tsengmingchun/deepagents_golang/langsmith"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/filesystem"
 	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
@@ -17,6 +18,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/profiles"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/deepagents_golang/tracing"
 )
 
 // Version is the Go port version.
@@ -55,6 +57,11 @@ type Options struct {
 	Debug          bool
 	// BackgroundTasks lets `task` run subagents in the background.
 	BackgroundTasks bool
+	// Tracer records run trees; subagents join through ctx. Unless
+	// TracerSet, the environment's LangSmith client is used (langsmith.Default),
+	// which is nil — no tracing — unless LANGSMITH_TRACING=true.
+	Tracer    tracing.Tracer
+	TracerSet bool
 }
 
 // Option mutates Options.
@@ -82,6 +89,12 @@ func WithDebug(d bool) Option          { return func(o *Options) { o.Debug = d }
 
 // WithBackgroundTasks adds run_in_background to `task` and the task_output tool.
 func WithBackgroundTasks() Option { return func(o *Options) { o.BackgroundTasks = true } }
+
+// WithTracer records runs with t instead of the environment's LangSmith
+// client; nil turns tracing off.
+func WithTracer(t tracing.Tracer) Option {
+	return func(o *Options) { o.Tracer, o.TracerSet = t, true }
+}
 
 func WithMiddleware(m ...agent.Middleware) Option {
 	return func(o *Options) { o.Middleware = append(o.Middleware, m...) }
@@ -127,9 +140,6 @@ func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	if err := rejectUnsupported(o); err != nil {
-		return nil, err
-	}
 	if o.Backend == nil {
 		o.Backend = backend.NewStateBackend()
 	}
@@ -145,7 +155,12 @@ func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	tracer, err := resolveTracer(o)
+	if err != nil {
+		return nil, err
+	}
 	return agent.CreateAgent(agent.Config{
+		Tracer:         tracer,
 		Model:          model,
 		SystemMessage:  resolveSystemMessage(o, profiles.ApplyPrompt(a.profile, "")),
 		Tools:          a.tools,
@@ -156,22 +171,22 @@ func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
 		Name:           o.Name,
 		Debug:          o.Debug,
 		RecursionLimit: runtime.DefaultRecursionLimit,
+		ResponseFormat: o.ResponseFormat,
 	})
 }
 
-func rejectUnsupported(o Options) error {
-	unsupported := []struct {
-		option string
-		set    bool
-	}{
-		{"WithResponseFormat", o.ResponseFormat != nil},
+func resolveTracer(o Options) (tracing.Tracer, error) {
+	if o.TracerSet {
+		return o.Tracer, nil
 	}
-	for _, u := range unsupported {
-		if u.set {
-			return notimpl.Err("deepagents.CreateDeepAgent(" + u.option + ")")
-		}
+	c, err := langsmith.Default()
+	if err != nil {
+		return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
 	}
-	return nil
+	if c == nil {
+		return nil, nil
+	}
+	return c, nil
 }
 
 func resolveModel(o Options) (llm.ChatModel, error) {

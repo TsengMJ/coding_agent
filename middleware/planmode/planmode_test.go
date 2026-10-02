@@ -8,6 +8,7 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
@@ -120,6 +121,65 @@ func TestPlanModeBlocksWriteCalls(t *testing.T) {
 	}
 	if msg := st.Messages[2]; msg.Status != llm.ToolStatusError || !strings.Contains(msg.Text(), "not available in plan mode") {
 		t.Fatalf("tool message = %+v", msg)
+	}
+}
+
+func newSubagentHarness(t *testing.T, script ...llm.Message) (agent.Agent, *llm.FakeModel, *[]string) {
+	t.Helper()
+	mw, err := New(Options{Store: NewMemoryStore(), ReadOnlySubagents: []string{"explorer"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started []string
+	task := &tool.Func{ToolName: subagents.TaskToolName, ToolSchema: tool.Schema{"type": "object"}, Fn: func(_ context.Context, _ *tool.Runtime, args map[string]any) (*tool.Result, error) {
+		started = append(started, args["subagent_type"].(string))
+		return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("report")}}, nil
+	}}
+	output := &tool.Func{ToolName: subagents.TaskOutputToolName, ToolSchema: tool.Schema{"type": "object"}, Fn: func(context.Context, *tool.Runtime, map[string]any) (*tool.Result, error) {
+		return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("done")}}, nil
+	}}
+	model := llm.NewFakeModel(script...)
+	a, err := agent.CreateAgent(agent.Config{Model: model, Tools: []tool.Tool{task, output}, Middleware: []agent.Middleware{mw}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a, model, &started
+}
+
+func TestPlanModeAllowsOnlyReadOnlySubagents(t *testing.T) {
+	a, model, started := newSubagentHarness(t,
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+			{ID: "t1", Name: subagents.TaskToolName, Args: map[string]any{"subagent_type": "explorer", "description": "look"}},
+			{ID: "t2", Name: subagents.TaskToolName, Args: map[string]any{"subagent_type": "general-purpose", "description": "edit"}},
+		}},
+		llm.NewAssistantMessage("ok"),
+	)
+	st, err := a.Invoke(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage("plan")}}, planCfg())
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := toolNames(model.Requests()[0])
+	if !slices.Contains(names, subagents.TaskToolName) || !slices.Contains(names, subagents.TaskOutputToolName) {
+		t.Fatalf("plan mode tools = %v", names)
+	}
+	if !strings.Contains(model.Requests()[0].Messages[0].Text(), "`explorer`") {
+		t.Fatal("plan mode prompt does not list the read-only subagents")
+	}
+	if !slices.Equal(*started, []string{"explorer"}) {
+		t.Fatalf("started = %v", *started)
+	}
+	for _, m := range st.Messages {
+		if m.ToolCallID == "t2" && (m.Status != llm.ToolStatusError || !strings.Contains(m.Text(), "not available in plan mode")) {
+			t.Fatalf("general-purpose result = %+v", m)
+		}
+	}
+}
+
+func TestPlanModeHidesTaskWithoutReadOnlySubagents(t *testing.T) {
+	h := newHarness(t, llm.NewAssistantMessage("ok"))
+	h.run(t, planCfg(), "plan it")
+	if names := toolNames(h.model.Requests()[0]); slices.Contains(names, subagents.TaskToolName) {
+		t.Fatalf("plan mode tools = %v", names)
 	}
 }
 

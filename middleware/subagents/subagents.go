@@ -47,7 +47,7 @@ Specify subagent_type to select the agent. Usage notes:
 
 // ExcludedStateKeys are never passed to a subagent nor copied back from it:
 // messages are handled explicitly, and the rest have no meaning across agents.
-var ExcludedStateKeys = []string{"messages", "todos", "structured_response", "skills_metadata"}
+var ExcludedStateKeys = []string{"messages", "todos", "structured_response", "skills_metadata", ForkedContextKey}
 
 // Mode controls how much parent context a subagent sees.
 type Mode string
@@ -124,8 +124,11 @@ type Options struct {
 
 // Middleware provides the `task` tool.
 type Middleware struct {
-	opts        Options
-	agents      map[string]agent.Agent
+	opts   Options
+	agents map[string]agent.Agent
+	// models names each subagent's model for its untagged replies.
+	models      map[string]string
+	specs       map[string]Spec
 	names       []string
 	description string
 	prompt      string
@@ -142,17 +145,14 @@ func New(opts Options) (*Middleware, error) {
 	if err := ValidateSpecs(opts.SubAgents); err != nil {
 		return nil, err
 	}
-	m := &Middleware{opts: opts, agents: map[string]agent.Agent{}}
+	m := &Middleware{opts: opts, agents: map[string]agent.Agent{}, models: map[string]string{}, specs: map[string]Spec{}}
 	var lines []string
 	for _, spec := range opts.SubAgents {
-		a, desc, err := compile(spec, opts.StateSchema)
-		if err != nil {
-			return nil, err
+		note := ""
+		if isFork(spec) {
+			note = forkedToolNote
 		}
-		name := spec.SubAgentName()
-		m.agents[name] = a
-		m.names = append(m.names, name)
-		lines = append(lines, fmt.Sprintf("- %s: %s", name, desc))
+		lines = append(lines, fmt.Sprintf("- %s: %s%s", spec.SubAgentName(), specDescription(spec), note))
 	}
 	available := strings.Join(lines, "\n")
 	m.description = strings.ReplaceAll(TaskToolDescription, "{available_agents}", available)
@@ -166,7 +166,32 @@ func New(opts Options) (*Middleware, error) {
 	if opts.SystemPrompt != "" {
 		m.prompt = opts.SystemPrompt + "\n\nAvailable subagent types:\n\n" + available
 	}
+	for _, spec := range opts.SubAgents {
+		if s, ok := spec.(SubAgent); ok && s.Mode == ModeFork {
+			s.Middleware = withForkTaskTool(s.Middleware, m.taskTool())
+			spec = s
+		}
+		a, err := compile(spec, opts.StateSchema)
+		if err != nil {
+			return nil, err
+		}
+		name := spec.SubAgentName()
+		m.agents[name] = a
+		m.models[name] = modelName(spec)
+		m.specs[name] = spec
+		m.names = append(m.names, name)
+	}
 	return m, nil
+}
+
+func specDescription(spec Spec) string {
+	switch s := spec.(type) {
+	case SubAgent:
+		return s.Description
+	case CompiledSubAgent:
+		return s.Description
+	}
+	return ""
 }
 
 func (m *Middleware) Name() string { return "SubAgentMiddleware" }
@@ -184,6 +209,13 @@ func (m *Middleware) AddPrivateStateKeys(keys ...string) {
 }
 
 func (m *Middleware) Tools() []tool.Tool {
+	if m.bg == nil {
+		return []tool.Tool{m.taskTool()}
+	}
+	return []tool.Tool{m.taskTool(), m.taskOutputTool()}
+}
+
+func (m *Middleware) taskTool() tool.Tool {
 	props := map[string]any{
 		"description": map[string]any{
 			"type":        "string",
@@ -200,7 +232,7 @@ func (m *Middleware) Tools() []tool.Tool {
 			"description": "Start the agent in the background and return its task id at once; its report arrives later in a <task-notification>.",
 		}
 	}
-	task := &tool.Func{
+	return &tool.Func{
 		ToolName:        TaskToolName,
 		ToolDescription: m.description,
 		ToolSchema: tool.Schema{
@@ -211,10 +243,6 @@ func (m *Middleware) Tools() []tool.Tool {
 		},
 		Fn: m.task,
 	}
-	if m.bg == nil {
-		return []tool.Tool{task}
-	}
-	return []tool.Tool{task, m.taskOutputTool()}
 }
 
 // WrapModelCall appends the subagent system prompt, if configured.
@@ -225,8 +253,7 @@ func (m *Middleware) WrapModelCall(ctx context.Context, req *agent.ModelRequest,
 	return next(ctx, req)
 }
 
-// ValidateSpecs rejects empty or duplicate names and invalid modes. Fork mode
-// is not implemented yet.
+// ValidateSpecs rejects empty or duplicate names and invalid modes.
 func ValidateSpecs(specs []Spec) error {
 	seen := map[string]bool{}
 	for _, spec := range specs {
@@ -249,9 +276,7 @@ func ValidateSpecs(specs []Spec) error {
 			mode = s.Mode
 		}
 		switch mode {
-		case "", ModeIsolated, modeHandoff:
-		case ModeFork:
-			return notimpl.Err("subagents: mode=fork (subagent " + name + ")")
+		case "", ModeIsolated, modeHandoff, ModeFork:
 		default:
 			return fmt.Errorf("subagents: subagent %q has invalid mode %q; expected %q or %q", name, mode, ModeIsolated, ModeFork)
 		}
@@ -259,19 +284,18 @@ func ValidateSpecs(specs []Spec) error {
 	return nil
 }
 
-// compile turns a spec into a runnable agent and its listing description.
-func compile(spec Spec, schema runtime.Schema) (agent.Agent, string, error) {
+// compile turns a spec into a runnable agent.
+func compile(spec Spec, schema runtime.Schema) (agent.Agent, error) {
 	switch s := spec.(type) {
 	case CompiledSubAgent:
 		if s.Runnable == nil {
-			return nil, "", fmt.Errorf("subagents: compiled subagent %q has no Runnable", s.Name)
+			return nil, fmt.Errorf("subagents: compiled subagent %q has no Runnable", s.Name)
 		}
-		return s.Runnable, s.Description, nil
+		return s.Runnable, nil
 	case SubAgent:
-		a, err := compileDeclarative(s, schema)
-		return a, s.Description, err
+		return compileDeclarative(s, schema)
 	default:
-		return nil, "", fmt.Errorf("subagents: %q is a %T, which the task tool cannot run", spec.SubAgentName(), spec)
+		return nil, fmt.Errorf("subagents: %q is a %T, which the task tool cannot run", spec.SubAgentName(), spec)
 	}
 }
 
@@ -318,6 +342,11 @@ func compileDeclarative(s SubAgent, schema runtime.Schema) (agent.Agent, error) 
 }
 
 func (m *Middleware) task(ctx context.Context, rt *tool.Runtime, args map[string]any) (*tool.Result, error) {
+	if rt != nil && rt.State != nil {
+		if forked, _ := rt.State.Values[ForkedContextKey].(bool); forked {
+			return textResult(forkRecursionRefusal), nil
+		}
+	}
 	for _, key := range slices.Sorted(maps.Keys(args)) {
 		if key != "description" && key != "subagent_type" && (key != "run_in_background" || m.bg == nil) {
 			return nil, fmt.Errorf("unexpected argument %q; put all instructions for the subagent in `description`", key)
@@ -341,21 +370,14 @@ func (m *Middleware) task(ctx context.Context, rt *tool.Runtime, args map[string
 	if rt == nil || rt.ToolCallID == "" {
 		return nil, errors.New("tool call ID is required for subagent invocation")
 	}
-	var parent map[string]any
-	if rt.State != nil {
-		parent = rt.State.Values
-	}
-	in := agent.Input{
-		Messages: []llm.Message{llm.NewUserMessage(description)},
-		Values:   m.filterValues(parent),
-	}
+	in := m.input(m.specs[subagentType], description, rt.State)
 	cfg := runtime.RunConfig{Configurable: maps.Clone(rt.Config.Configurable)}
 	if cfg.Configurable == nil {
 		cfg.Configurable = map[string]any{}
 	}
 	cfg.Configurable["ls_agent_type"] = "subagent"
 	if background {
-		return m.startBackground(ctx, a, in, cfg, rt, subagentType), nil
+		return m.startBackground(ctx, a, in, cfg, rt, subagentType, m.models[subagentType]), nil
 	}
 	st, err := run(ctx, a, in, cfg, rt)
 	if err != nil {
@@ -365,7 +387,19 @@ func (m *Middleware) task(ctx context.Context, rt *tool.Runtime, args map[string
 		}
 		return nil, fmt.Errorf("subagent %s failed: %w", subagentType, err)
 	}
-	return m.result(st, rt.ToolCallID)
+	return m.result(st, rt.ToolCallID, m.models[subagentType])
+}
+
+// modelName is the spec's model as "provider:model", or "" when unknown.
+func modelName(spec Spec) string {
+	s, ok := spec.(SubAgent)
+	switch {
+	case !ok:
+		return ""
+	case s.Model != nil:
+		return specOf(s.Model)
+	}
+	return s.ModelSpec
 }
 
 // NamespacePrefix starts the namespace of events forwarded from a subagent;
@@ -407,13 +441,15 @@ func (m *Middleware) filterValues(values map[string]any) map[string]any {
 }
 
 // result turns the subagent's final state into a Command carrying its
-// shareable state and one tool message with its report.
-func (m *Middleware) result(st *runtime.State, toolCallID string) (*tool.Result, error) {
+// shareable state and one tool message with its report and token usage.
+func (m *Middleware) result(st *runtime.State, toolCallID, model string) (*tool.Result, error) {
 	content, err := reportText(st)
 	if err != nil {
 		return nil, err
 	}
-	upd := &runtime.Update{Messages: []llm.Message{llm.NewToolMessage(toolCallID, TaskToolName, content)}}
+	msg := llm.NewToolMessage(toolCallID, TaskToolName, content)
+	msg.Metadata = withUsage(msg.Metadata, usageOf(st, model))
+	upd := &runtime.Update{Messages: []llm.Message{msg}}
 	if values := m.filterValues(st.Values); len(values) > 0 {
 		upd.Values = values
 	}

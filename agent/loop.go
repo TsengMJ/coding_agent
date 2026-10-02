@@ -79,6 +79,8 @@ type loopAgent struct {
 	modelChain ModelHandler
 	toolChain  ToolHandler
 	runnable   *graph.Runnable
+	// structured is the ToolStrategy tool; nil without a ResponseFormat.
+	structured *structuredTool
 }
 
 func newLoopAgent(cfg Config) (*loopAgent, error) {
@@ -92,7 +94,14 @@ func newLoopAgent(cfg Config) (*loopAgent, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &loopAgent{cfg: cfg, tools: tools, toolByName: byName, schema: collectSchema(cfg)}
+	structured, err := newStructuredTool(cfg.ResponseFormat)
+	if err != nil {
+		return nil, err
+	}
+	if structured != nil && byName[structured.Name()] != nil {
+		return nil, fmt.Errorf("agent.CreateAgent: tool %q clashes with the structured output tool; give the schema another title", structured.Name())
+	}
+	a := &loopAgent{cfg: cfg, tools: tools, toolByName: byName, schema: collectSchema(cfg), structured: structured}
 	a.modelChain = chainModel(cfg.Middleware, a.callModel)
 	a.toolChain = chainTool(cfg.Middleware, a.callTool)
 	if err := a.compile(); err != nil {
@@ -196,6 +205,13 @@ func (a *loopAgent) Invoke(ctx context.Context, in Input, cfg runtime.RunConfig)
 }
 
 func (a *loopAgent) invoke(ctx context.Context, in Input, cfg runtime.RunConfig, emit func(runtime.Event) bool) (*execState, error) {
+	ctx, run := a.startAgentRun(ctx, in, cfg)
+	st, err := a.invokeGraph(ctx, in, cfg, emit)
+	endAgentRun(run, st, err)
+	return st, err
+}
+
+func (a *loopAgent) invokeGraph(ctx context.Context, in Input, cfg runtime.RunConfig, emit func(runtime.Event) bool) (*execState, error) {
 	st, resumeFrom, resumeValue, err := a.prepare(ctx, in, cfg)
 	if err != nil {
 		return nil, err
@@ -378,6 +394,12 @@ func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 	timings := make([]llm.Timing, len(calls))
 	errs := make([]error, len(calls))
 	sem := make(chan struct{}, maxParallelTools)
+	structuredCalls := 0
+	for _, call := range calls {
+		if a.isStructuredCall(call) {
+			structuredCalls++
+		}
+	}
 	var wg sync.WaitGroup
 	for i, call := range calls {
 		wg.Add(1)
@@ -392,6 +414,10 @@ func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 					errs[i] = panicError("tool "+call.Name, r)
 				}
 			}()
+			if a.isStructuredCall(call) {
+				results[i], errs[i] = a.callStructured(call, structuredCalls)
+				return
+			}
 			results[i], errs[i] = a.toolChain(ctx, &ToolCallRequest{
 				ToolCall: call,
 				Tool:     a.toolByName[call.Name],
@@ -401,6 +427,7 @@ func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 		}()
 	}
 	wg.Wait()
+	done := false
 	for i, call := range calls {
 		if errs[i] != nil {
 			return nil, errs[i]
@@ -408,8 +435,25 @@ func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 		if err := a.applyToolResult(st.State, call, results[i], timings[i]); err != nil {
 			return nil, err
 		}
+		done = done || (a.isStructuredCall(call) && !results[i].IsError)
+	}
+	if done {
+		return &graph.Command{Goto: "after_agent", Update: st}, nil
 	}
 	return st, nil
+}
+
+func (a *loopAgent) isStructuredCall(call llm.ToolCall) bool {
+	return a.structured != nil && call.Name == a.structured.Name()
+}
+
+// callStructured runs the structured output tool; of several calls in one
+// turn none is accepted, so the model sends a single one.
+func (a *loopAgent) callStructured(call llm.ToolCall, calls int) (*tool.Result, error) {
+	if calls > 1 {
+		return errorResult(fmt.Sprintf("Error: `%s` was called %d times in one turn; call it exactly once with the final answer.", call.Name, calls)), nil
+	}
+	return a.structured.Invoke(context.Background(), nil, call.Args)
 }
 
 func (a *loopAgent) nodeAfterAgent(ctx context.Context, state any) (any, error) {
@@ -541,9 +585,12 @@ func (a *loopAgent) callModel(ctx context.Context, req *ModelRequest) (*ModelRes
 		msgs = append(msgs, *req.SystemMessage)
 	}
 	msgs = append(msgs, req.Messages...)
-	specs := make([]llm.ToolSpec, len(req.Tools))
+	specs := make([]llm.ToolSpec, len(req.Tools), len(req.Tools)+1)
 	for i, t := range req.Tools {
 		specs[i] = tool.Spec(t)
+	}
+	if a.structured != nil && req.ResponseFormat != nil {
+		specs = append(specs, tool.Spec(a.structured))
 	}
 	chatReq := llm.ChatRequest{
 		Messages:   msgs,
@@ -554,11 +601,13 @@ func (a *loopAgent) callModel(ctx context.Context, req *ModelRequest) (*ModelRes
 	var reply *llm.Message
 	var err error
 	start := time.Now()
+	ctx, run := startModelRun(ctx, req.Model, chatReq)
 	if emit, ok := ctx.Value(chunkEmitKey{}).(func(runtime.Event) bool); ok {
 		reply, err = streamModel(ctx, req.Model, chatReq, emit)
 	} else {
 		reply, err = req.Model.Generate(ctx, chatReq)
 	}
+	endModelRun(run, reply, err)
 	if err != nil {
 		return nil, fmt.Errorf("model call: %w", err)
 	}
@@ -682,10 +731,12 @@ func (a *loopAgent) applyToolResult(state *runtime.State, call llm.ToolCall, res
 // callTool is the innermost tool handler. Unknown tools, tool failures, and
 // tool panics become error results so the model can correct itself.
 func (a *loopAgent) callTool(ctx context.Context, req *ToolCallRequest) (res *tool.Result, err error) {
+	ctx, run := startToolRun(ctx, req.ToolCall)
 	defer func() {
 		if r := recover(); r != nil {
 			res, err = errorResult(fmt.Sprintf("Error: tool %s panicked: %v", req.ToolCall.Name, r)), nil
 		}
+		endToolRun(run, res, err)
 	}()
 	if req.Tool == nil {
 		return errorResult(fmt.Sprintf("Error: %s is not a valid tool, try one of [%s].",

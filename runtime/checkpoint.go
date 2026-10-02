@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/smallnest/langgraphgo/graph"
+	"github.com/tsengmingchun/deepagents_golang/llm"
 )
 
 // Checkpoint is a persisted snapshot of one thread's state.
@@ -41,6 +42,73 @@ type Checkpointer interface {
 	Put(ctx context.Context, cp Checkpoint) error
 	List(ctx context.Context, threadID string, limit int) ([]Checkpoint, error)
 	DeleteThread(ctx context.Context, threadID string) error
+}
+
+// HistoryPage is the UI-safe subset of the latest checkpoint.  It keeps the
+// agent checkpoint format intact while allowing callers to read a window of
+// conversation messages instead of materialising the whole state.
+type HistoryPage struct {
+	ThreadID          string
+	CheckpointSeq     int64
+	Messages          []llm.Message
+	PendingInterrupts []Interrupt
+	// Values contains only values requested by the history reader (currently
+	// the plan and todo state). It deliberately excludes large project state.
+	Values     map[string]any
+	HasMore    bool
+	NextBefore int
+}
+
+// HistoryPager is implemented by checkpointers that can page messages at the
+// storage layer. before is a one-based exclusive message position; zero asks
+// for the newest page. limit is measured in user turns.
+type HistoryPager interface {
+	HistoryPage(ctx context.Context, threadID string, before, limit int) (*HistoryPage, error)
+}
+
+// LoadHistoryPage uses storage pagination where available. Memory and custom
+// checkpointers retain the same API by slicing their latest checkpoint.
+func LoadHistoryPage(ctx context.Context, c Checkpointer, threadID string, before, limit int) (*HistoryPage, error) {
+	if p, ok := c.(HistoryPager); ok {
+		return p.HistoryPage(ctx, threadID, before, limit)
+	}
+	cp, err := c.Latest(ctx, threadID)
+	if err != nil || cp == nil {
+		return nil, err
+	}
+	return pageCheckpoint(cp, before, limit), nil
+}
+
+func pageCheckpoint(cp *Checkpoint, before, limit int) *HistoryPage {
+	msgs := cp.State.Messages
+	upper := before
+	if upper <= 0 || upper > len(msgs)+1 {
+		upper = len(msgs) + 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	start := 0
+	seen := 0
+	for i := upper - 2; i >= 0; i-- {
+		if msgs[i].Role == llm.RoleUser {
+			seen++
+			if seen == limit {
+				start = i
+				break
+			}
+		}
+	}
+	page := slices.Clone(msgs[start : upper-1])
+	values := map[string]any{}
+	for _, key := range []string{"plan", "todos"} {
+		if v, ok := cp.State.Values[key]; ok {
+			values[key] = v
+		}
+	}
+	return &HistoryPage{ThreadID: cp.ThreadID, CheckpointSeq: cp.Seq, Messages: page,
+		PendingInterrupts: slices.Clone(cp.PendingInterrupts), Values: values,
+		HasMore: start > 0, NextBefore: start + 1}
 }
 
 // DefaultCheckpointsPerThread is how many checkpoints Put keeps per thread.

@@ -11,7 +11,6 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/middleware/asyncsubagents"
 	"github.com/tsengmingchun/deepagents_golang/middleware/filesystem"
@@ -138,10 +137,65 @@ func TestCancelledToolCallIsPatchedOnNextTurn(t *testing.T) {
 	}
 }
 
-func TestCreateDeepAgentRejectsAsyncSubAgents(t *testing.T) {
-	_, err := CreateDeepAgent(WithModel(llm.NewFakeModel()), WithSubAgents(asyncsubagents.AsyncSubAgent{Name: "remote"}))
-	if !errors.Is(err, notimpl.ErrNotImplemented) {
-		t.Fatalf("want ErrNotImplemented, got %v", err)
+func TestWithResponseFormatReturnsStructuredResponse(t *testing.T) {
+	args := map[string]any{"answer": "3"}
+	model := llm.NewFakeModel(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "s", Name: "Answer", Args: args}}})
+	schema := tool.Schema{"title": "Answer", "type": "object", "properties": map[string]any{"answer": map[string]any{"type": "string"}}}
+	a, err := CreateDeepAgent(WithModel(model), WithResponseFormat(agent.ToolStrategy{Schema: schema}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := a.Invoke(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage("1+2")}}, runtime.RunConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := state.StructuredResponse.(map[string]any); !ok || got["answer"] != "3" {
+		t.Fatalf("structured response = %#v", state.StructuredResponse)
+	}
+}
+
+func TestForkSubagentInheritsParentPrompt(t *testing.T) {
+	sub := llm.NewFakeModel(llm.NewAssistantMessage("forked"))
+	model := llm.NewFakeModel(
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "task",
+			Args: map[string]any{"subagent_type": "f", "description": "go on"}}}},
+		llm.NewAssistantMessage("done"),
+	)
+	a, err := CreateDeepAgent(WithModel(model), WithSystemPrompt("parent rules"),
+		WithSubAgents(subagents.SubAgent{Name: "f", Description: "Fork", Mode: subagents.ModeFork, SystemPrompt: "fork extra", Model: sub}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage("hi")}}, runtime.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	sys := sub.Requests()[0].Messages[0].Text()
+	if i, j := strings.Index(sys, "parent rules"), strings.Index(sys, "fork extra"); i < 0 || j < i {
+		t.Fatalf("fork system prompt:\n%s", sys)
+	}
+}
+
+func TestCreateDeepAgentOffersAsyncSubAgentTools(t *testing.T) {
+	model := llm.NewFakeModel(llm.NewAssistantMessage("ok"))
+	a, err := CreateDeepAgent(WithModel(model), WithSubAgents(asyncsubagents.AsyncSubAgent{
+		Name: "remote", Description: "Remote", GraphID: "g", URL: "http://127.0.0.1:1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(context.Background(), agent.Input{Messages: []llm.Message{llm.NewUserMessage("hi")}}, runtime.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, spec := range model.Requests()[0].Tools {
+		names = append(names, spec.Name)
+	}
+	for _, want := range []string{subagents.TaskToolName, asyncsubagents.ToolStart, asyncsubagents.ToolCheck, asyncsubagents.ToolUpdate, asyncsubagents.ToolCancel, asyncsubagents.ToolList} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("tools = %v, missing %s", names, want)
+		}
+	}
+	if _, err := CreateDeepAgent(WithModel(llm.NewFakeModel()), WithSubAgents(asyncsubagents.AsyncSubAgent{Name: "remote", GraphID: "g"})); err == nil {
+		t.Fatal("an async subagent without a url must be rejected")
 	}
 }
 

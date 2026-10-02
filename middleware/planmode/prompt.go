@@ -25,6 +25,11 @@ const PlanModePrompt = "# Plan Mode\n\n" +
 	"- Keep it proportional: a small change gets a short plan. Be concise and specific, no filler.\n" +
 	"- The todos are the ordered implementation steps. Each one is concrete and verifiable and names the files involved, and the list covers the whole plan, tests included."
 
+// planSubagentsNote is added when read-only subagents stay available; %s
+// lists them.
+const planSubagentsNote = "\n\n## Subagents\n\n" +
+	"`task` accepts only the read-only subagents %s in plan mode. Delegate broad code exploration and multi-step lookups to them, several at once when independent, and keep your own context for the plan."
+
 const createPlanDescription = "Save the implementation plan for the user to review. Only available in plan mode. Call it once research is finished and open questions are resolved; call it again to revise (it overwrites the thread's plan). " +
 	"`plan` is the markdown body: goal and findings with file paths, step-by-step approach, verification, risks. `todos` are the ordered, concrete implementation steps; they become the todo list when the user starts building. After calling it, summarize the plan briefly and end your turn."
 

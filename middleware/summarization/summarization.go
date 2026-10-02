@@ -536,6 +536,12 @@ func eventFrom(state *runtime.State) *Event {
 	}
 }
 
+// EffectiveMessages is msgs as the model sees them under state's
+// summarization event: the summary, then the messages after the cutoff.
+func EffectiveMessages(msgs []llm.Message, state *runtime.State) []llm.Message {
+	return applyEvent(msgs, eventFrom(state))
+}
+
 // applyEvent returns the summary followed by messages after the cutoff.
 func applyEvent(msgs []llm.Message, event *Event) []llm.Message {
 	if event == nil {
