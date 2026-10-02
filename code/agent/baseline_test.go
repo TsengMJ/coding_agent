@@ -145,16 +145,41 @@ func TestBaselineLetsPreexistingRunTestsFailuresFinish(t *testing.T) {
 	if !strings.Contains(run.result, "TestOld") {
 		t.Fatalf("run_tests did not report the failure: %s", run.result)
 	}
+	var got []string
+	g.OnBaseline = func(v string, tests []string) { got = append(got, v+":"+strings.Join(tests, ",")) }
 	if cmd := runGate(t, g, transcript(editStep, run)); cmd != nil {
 		t.Fatalf("pre-existing failures should not block: %s", cmd.Update.Messages[0].Text())
+	}
+	if len(got) != 1 || !strings.HasPrefix(got[0], "preexisting:") || !strings.Contains(got[0], "TestOld") {
+		t.Fatalf("reported verdicts = %v", got)
 	}
 }
 
 func TestBaselineTreatsPassingRerunAsFlaky(t *testing.T) {
 	dir := goRepo(t, nil)
 	writeFile(t, filepath.Join(dir, "new.go"), "package m\n\nfunc Mul(a, b int) int { return a * b }\n")
-	if cmd := runGate(t, gateFor(dir), transcript(editStep, goTestFailed)); cmd != nil {
+	g := gateFor(dir)
+	var got []string
+	g.OnBaseline = func(v string, _ []string) { got = append(got, v) }
+	if cmd := runGate(t, g, transcript(editStep, goTestFailed)); cmd != nil {
 		t.Fatalf("a failure that passes on HEAD and on rerun is flaky: %s", cmd.Update.Messages[0].Text())
+	}
+	if strings.Join(got, ",") != "flaky" {
+		t.Fatalf("reported verdicts = %v", got)
+	}
+}
+
+func TestBaselineReportsRegression(t *testing.T) {
+	dir := goRepo(t, nil)
+	writeFile(t, filepath.Join(dir, "m.go"), strings.Replace(mathGo, "a - b", "a + b", 1))
+	g := gateFor(dir)
+	var got []string
+	g.OnBaseline = func(v string, _ []string) { got = append(got, v) }
+	if cmd := runGate(t, g, transcript(editStep, goTestFailed)); cmd == nil {
+		t.Fatal("a regression must block")
+	}
+	if strings.Join(got, ",") != "regression" {
+		t.Fatalf("reported verdicts = %v", got)
 	}
 }
 

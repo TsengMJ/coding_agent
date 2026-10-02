@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
+	"github.com/tsengmingchun/deepagents_golang/code/cost"
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	rt "github.com/tsengmingchun/deepagents_golang/runtime"
@@ -25,6 +26,19 @@ func synthetic(source, kind, text string) llm.Message {
 
 func detail(msgs ...llm.Message) trace.LLMCallDetail {
 	return trace.LLMCallDetail{LLMCall: trace.LLMCall{MessageCount: len(msgs)}, Messages: msgs}
+}
+
+func TestAnalyzeKeepsRecordedBaselineVerdicts(t *testing.T) {
+	a := Attempt{InstanceID: "instance_x", Process: &Process{BaselineVerdicts: []BaselineVerdict{
+		{Verdict: "preexisting", Tests: []string{"export posts"}}, {Verdict: "flaky"},
+	}}}
+	got := AnalyzeAttempt(a, Task{}, nil, []trace.LLMCallDetail{detail(llm.NewSystemMessage("sys"))}, nil, cost.Table{})
+	if got.Triggers["baseline_preexisting"] != 1 || got.Triggers["baseline_flaky"] != 1 {
+		t.Fatalf("triggers = %v", got.Triggers)
+	}
+	if v := got.Metrics.Process.BaselineVerdicts; len(v) != 2 || v[0].Tests[0] != "export posts" {
+		t.Fatalf("verdicts = %+v", v)
+	}
 }
 
 func TestTriggersCountsEachMarkerOnce(t *testing.T) {

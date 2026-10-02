@@ -37,6 +37,16 @@ type Process struct {
 	GoldSrcRecall *float64 `json:"gold_src_recall,omitempty"`
 	// ToolsHash fingerprints the tool schemas the main agent was offered.
 	ToolsHash string `json:"tools_hash,omitempty"`
+	// BaselineVerdicts are the verify gate's HEAD baseline results, in
+	// order; set by the solver, since verdicts that let the turn finish
+	// leave nothing in the trace.
+	BaselineVerdicts []BaselineVerdict `json:"baseline_verdicts,omitempty"`
+}
+
+// BaselineVerdict is one HEAD baseline result and the tests it was about.
+type BaselineVerdict struct {
+	Verdict string   `json:"verdict"`
+	Tests   []string `json:"tests,omitempty"`
 }
 
 var patchFileLine = regexp.MustCompile(`(?m)^\*\*\* (?:Add|Update|Delete) File:\s*(.+?)\s*$`)

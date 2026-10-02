@@ -38,6 +38,20 @@ const (
 	verdictFlaky
 )
 
+func (k verdictKind) String() string {
+	switch k {
+	case verdictRegression:
+		return "regression"
+	case verdictPreexisting:
+		return "preexisting"
+	case verdictAlsoFails:
+		return "also_fails"
+	case verdictFlaky:
+		return "flaky"
+	}
+	return "unknown"
+}
+
 type verdict struct {
 	kind verdictKind
 	// tests lists the failing tests the verdict is about, when known.

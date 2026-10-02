@@ -73,8 +73,11 @@ type VerifyGate struct {
 	Workspace backend.SandboxBackend
 	// RunTests reruns run_tests checks for the baseline.
 	RunTests tool.Tool
-	// NoBaseline and NoDiffReview turn those checks off.
-	NoBaseline, NoDiffReview bool
+	// NoBaseline, NoDiffReview and NoTestEdits turn those checks off.
+	NoBaseline, NoDiffReview, NoTestEdits bool
+	// OnBaseline, when set, receives every baseline verdict, including the
+	// ones that let the turn finish without a message.
+	OnBaseline func(verdict string, tests []string)
 }
 
 func (VerifyGate) Name() string { return VerifyGateName }
@@ -152,6 +155,9 @@ func (g VerifyGate) AfterAgent(ctx context.Context, state *rt.State, _ *core.Run
 		if g.Workspace != nil && !g.NoBaseline && t.last != nil && !t.last.passed && !t.kinds[gateKindBaseline] {
 			b := Baseline{Workspace: g.Workspace, RunTests: g.RunTests}
 			v := b.Compare(ctx, t.lastCall, t.last)
+			if g.OnBaseline != nil {
+				g.OnBaseline(v.kind.String(), v.tests)
+			}
 			switch v.kind {
 			case verdictPreexisting, verdictFlaky:
 				return nil, nil

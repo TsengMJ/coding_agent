@@ -79,6 +79,9 @@ type Options struct {
 	Tracer tracing.Tracer
 	// Disable turns features off by name (see Features), for ablation runs.
 	Disable []string
+	// OnBaseline receives every verdict of the headless gate's HEAD
+	// baseline, so a benchmark can record why a failing turn finished.
+	OnBaseline func(verdict string, tests []string)
 }
 
 // CreateCLIAgent assembles the coding agent on top of deepagents.CreateDeepAgent.
@@ -130,7 +133,9 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		mws = append(mws, sk)
 	}
 	if !opts.Interactive && !opts.NoVerifyGate {
-		mws = append(mws, newVerifyGate(b, opts.Disable))
+		g := newVerifyGate(b, opts.Disable)
+		g.OnBaseline = opts.OnBaseline
+		mws = append(mws, g)
 	}
 	var tools []tool.Tool
 	webModel := opts.WebModel

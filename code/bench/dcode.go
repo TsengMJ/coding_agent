@@ -155,6 +155,8 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 		FilesystemOptions: backend.FilesystemOptions{RootDir: ws, VirtualMode: true, RespectGitignore: true},
 		Container:         container, Workdir: repoDir, Binary: s.DockerBinary,
 	})
+	var verdicts []BaselineVerdict
+	var verdictsMu sync.Mutex
 	a, err := codeagent.CreateCLIAgent(ctx, codeagent.Options{
 		Settings: s.Settings, Model: trace.WrapModel(model), Cwd: ws, Backend: b,
 		Checkpointer: rt.NewMemoryCheckpointer(), AutoApprove: true, NoWebTools: true,
@@ -162,6 +164,11 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 		WorkingDirSection: workingDirSection(repoDir),
 		Tracer:            s.Tracer,
 		Disable:           s.Disable,
+		OnBaseline: func(verdict string, tests []string) {
+			verdictsMu.Lock()
+			defer verdictsMu.Unlock()
+			verdicts = append(verdicts, BaselineVerdict{Verdict: verdict, Tests: tests})
+		},
 	})
 	if err != nil {
 		res.Category, res.Error = CategoryAgentError, err.Error()
@@ -186,6 +193,12 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 		res.Metrics = MetricsFromTrace(calls, s.Prices)
 		res.Metrics.Process = ProcessFromTrace(calls, task.GoldPaths)
 	}
+	if res.Metrics.Process == nil {
+		res.Metrics.Process = &Process{}
+	}
+	verdictsMu.Lock()
+	res.Metrics.Process.BaselineVerdicts = verdicts
+	verdictsMu.Unlock()
 	res.Metrics.AgentMS = agentMS
 	return res
 }

@@ -86,6 +86,12 @@ func AnalyzeAttempt(a Attempt, task Task, tests []TestResult, calls []trace.LLMC
 		progress := ReplayProgress(calls)
 		out.Progress = &progress
 		out.Triggers = TriggersFromTrace(calls)
+		if a.Process != nil {
+			out.Metrics.Process.BaselineVerdicts = a.Process.BaselineVerdicts
+			for _, v := range a.Process.BaselineVerdicts {
+				out.Triggers["baseline_"+v.Verdict]++
+			}
+		}
 	}
 	out.Observed = ObservedFailure(a, task, out.FailingP2P, toolOutputs(calls))
 	return out
@@ -263,13 +269,14 @@ var triggerColumns = []string{
 	"gate_check", "gate_baseline", "gate_diff", TriggerProgressRefusal, TriggerProgressNote,
 	TriggerBudget, TriggerDestructive, TriggerVersionGuard,
 	TriggerGrepRegex, TriggerServiceHint, TriggerShellTruncated,
+	"baseline_regression", "baseline_preexisting", "baseline_flaky", "baseline_also_fails", "baseline_unknown",
 }
 
 // writeTriggers lists what each component did in the recorded run, for
 // finding components that never fire.
 func writeTriggers(b *strings.Builder, rows []AttemptAnalysis) {
 	b.WriteString("\n## Component triggers\n\n")
-	b.WriteString("What the agent's components did in the recorded trace: tool results and gate messages are counted once, budget notices per request.\n\n")
+	b.WriteString("What the agent's components did in the recorded trace: tool results and gate messages are counted once, budget notices per request; `baseline_*` are the gate's HEAD baseline verdicts the run recorded (none for runs before they were recorded).\n\n")
 	b.WriteString("| task | t | observed | " + strings.Join(triggerColumns, " | ") + " |\n")
 	b.WriteString("|---|---|---|" + strings.Repeat("---|", len(triggerColumns)) + "\n")
 	sum := Triggers{}
