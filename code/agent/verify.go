@@ -128,9 +128,9 @@ func serviceHint(out string) string {
 	return b.String()
 }
 
-// Kinds of gate message, kept in their metadata.
+// Kinds of gate message, kept in their metadata under GateKindKey.
 const (
-	gateKindKey      = "verify_kind"
+	GateKindKey      = "verify_kind"
 	gateKindCheck    = "check"
 	gateKindBaseline = "baseline"
 	gateKindDiff     = "diff"
@@ -173,7 +173,7 @@ func (g VerifyGate) AfterAgent(ctx context.Context, state *rt.State, _ *core.Run
 
 func gateCommand(kind, text string) *rt.Command {
 	m := llm.NewUserMessage(text)
-	m.Metadata = map[string]any{rt.SyntheticSourceKey: VerifyGateName, gateKindKey: kind}
+	m.Metadata = map[string]any{rt.SyntheticSourceKey: VerifyGateName, GateKindKey: kind}
 	return &rt.Command{Update: &rt.Update{Messages: []llm.Message{m}}, Goto: core.GotoModel}
 }
 
@@ -231,7 +231,7 @@ func inspectTurn(msgs []llm.Message) turnFacts {
 	for i := start; i < len(msgs); i++ {
 		m := msgs[i]
 		if m.Role == llm.RoleUser && i > start {
-			if kind, _ := m.Metadata[gateKindKey].(string); kind != "" {
+			if kind, _ := m.Metadata[GateKindKey].(string); kind != "" {
 				t.kinds[kind] = true
 				if kind == gateKindDiff {
 					t.blocks--

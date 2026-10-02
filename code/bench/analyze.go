@@ -53,6 +53,8 @@ type AttemptAnalysis struct {
 	Masking *MaskingReplay
 	// Progress is the offline count of progress monitor interventions.
 	Progress *ProgressReplay
+	// Triggers counts what the agent's components actually did in the trace.
+	Triggers Triggers
 	// TraceError is set when the trace could not be read; Metrics then
 	// holds the stored values.
 	TraceError string
@@ -87,6 +89,7 @@ func AnalyzeAttempt(a Attempt, task Task, tests []TestResult, calls []trace.LLMC
 		out.Masking = &replay
 		progress := ReplayProgress(calls)
 		out.Progress = &progress
+		out.Triggers = TriggersFromTrace(calls)
 	}
 	out.Observed = ObservedFailure(a, task, out.FailingP2P, toolOutputs(calls))
 	return out
@@ -256,7 +259,41 @@ func AnalyzeMarkdown(run Run, rows []AttemptAnalysis) string {
 	}
 	writeMaskingReplay(&b, rows)
 	writeProgressReplay(&b, rows)
+	writeTriggers(&b, rows)
 	return b.String()
+}
+
+// triggerColumns orders the component trigger table.
+var triggerColumns = []string{
+	"gate_check", "gate_baseline", "gate_diff", TriggerProgressRefusal, TriggerProgressNote,
+	TriggerBudget, TriggerMaskedRequests, TriggerDestructive, TriggerVersionGuard,
+	TriggerGrepRegex, TriggerServiceHint, TriggerShellTruncated,
+}
+
+// writeTriggers lists what each component did in the recorded run, for
+// finding components that never fire.
+func writeTriggers(b *strings.Builder, rows []AttemptAnalysis) {
+	b.WriteString("\n## Component triggers\n\n")
+	b.WriteString("What the agent's components did in the recorded trace: tool results and gate messages are counted once, budget notices and masked requests per request.\n\n")
+	b.WriteString("| task | t | observed | " + strings.Join(triggerColumns, " | ") + " |\n")
+	b.WriteString("|---|---|---|" + strings.Repeat("---|", len(triggerColumns)) + "\n")
+	sum := Triggers{}
+	for _, r := range rows {
+		if r.Triggers == nil {
+			continue
+		}
+		fmt.Fprintf(b, "| %s | %d | %s |", shortInstance(r.Attempt.InstanceID), r.Attempt.Trial, r.Observed)
+		for _, c := range triggerColumns {
+			sum[c] += r.Triggers[c]
+			fmt.Fprintf(b, " %d |", r.Triggers[c])
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("| total | | |")
+	for _, c := range triggerColumns {
+		fmt.Fprintf(b, " %d |", sum[c])
+	}
+	b.WriteString("\n")
 }
 
 // writeProgressReplay lists the attempts where the progress monitor would

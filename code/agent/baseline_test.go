@@ -89,7 +89,7 @@ func TestBaselineProvesRegressionAndRestoresWorkingTree(t *testing.T) {
 		t.Fatal("a regression must block")
 	}
 	msg := cmd.Update.Messages[0]
-	if !strings.Contains(msg.Text(), "passes on the unchanged HEAD") || msg.Metadata[gateKindKey] != gateKindBaseline {
+	if !strings.Contains(msg.Text(), "passes on the unchanged HEAD") || msg.Metadata[GateKindKey] != gateKindBaseline {
 		t.Fatalf("message = %q (%v)", msg.Text(), msg.Metadata)
 	}
 	if got, _ := os.ReadFile(filepath.Join(dir, "m.go")); string(got) != broken {
@@ -114,7 +114,7 @@ func TestBaselineSecondFailureDoesNotRerun(t *testing.T) {
 	msgs = append(msgs, cmd.Update.Messages...)
 	msgs = append(msgs, transcript(editStep, goTestFailed)[1:]...)
 	second := runGate(t, gateFor(dir), msgs)
-	if second == nil || second.Update.Messages[0].Metadata[gateKindKey] != gateKindCheck {
+	if second == nil || second.Update.Messages[0].Metadata[GateKindKey] != gateKindCheck {
 		t.Fatalf("second block should be a plain check message: %+v", second)
 	}
 }
@@ -163,7 +163,7 @@ func TestBaselineCanBeDisabled(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "new.go"), "package m\n\nfunc Mul(a, b int) int { return a * b }\n")
 	g := newVerifyGate(NewBackend(dir), []string{FeatureBaseline})
 	cmd := runGate(t, g, transcript(editStep, goTestFailed))
-	if cmd == nil || cmd.Update.Messages[0].Metadata[gateKindKey] != gateKindCheck {
+	if cmd == nil || cmd.Update.Messages[0].Metadata[GateKindKey] != gateKindCheck {
 		t.Fatalf("disabled baseline should leave the plain check block: %+v", cmd)
 	}
 }

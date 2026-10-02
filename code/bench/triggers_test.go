@@ -1,0 +1,55 @@
+package bench
+
+import (
+	"maps"
+	"testing"
+
+	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
+	"github.com/tsengmingchun/deepagents_golang/code/trace"
+	"github.com/tsengmingchun/deepagents_golang/llm"
+	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+)
+
+func toolMsg(id, text string) llm.Message {
+	return llm.Message{Role: llm.RoleTool, ToolCallID: id, Content: []llm.ContentBlock{llm.TextBlock(text)}}
+}
+
+func synthetic(source, kind, text string) llm.Message {
+	m := llm.NewUserMessage(text)
+	m.Metadata = map[string]any{rt.SyntheticSourceKey: source}
+	if kind != "" {
+		m.Metadata[codeagent.GateKindKey] = kind
+	}
+	return m
+}
+
+func detail(msgs ...llm.Message) trace.LLMCallDetail {
+	return trace.LLMCallDetail{LLMCall: trace.LLMCall{MessageCount: len(msgs)}, Messages: msgs}
+}
+
+func TestTriggersCountsEachMarkerOnce(t *testing.T) {
+	sys := llm.NewSystemMessage("sys")
+	refusal := toolMsg("c1", "[progress] Not run: this exact run_tests call failed twice")
+	note := toolMsg("c2", "FAIL x\n\n[progress] This failed the same way as before.")
+	guard := toolMsg("c3", "Not run: deletes the project, and tool calls are auto-approved, so nobody confirmed it.")
+	version := toolMsg("c4", "Error: /a.go changed since you last read it (by a command, the user or another editor). Read it again before changing it.")
+	regex := toolMsg("c5", "a.go:1: x\n\nNote: the pattern matched nothing as literal text, so these are its matches as an RE2 regular expression.")
+	hint := toolMsg("c6", "Error: connect ECONNREFUSED\n\n[hint] Connection refused on port 6379 (redis): the service is not running.")
+	cut := toolMsg("c7", "head\n\n... Output truncated at 100000 bytes: 5 bytes were omitted")
+	gate := synthetic(codeagent.VerifyGateName, "baseline", "These tests pass on HEAD")
+	budget := synthetic(codeagent.BudgetSource, "", "80% of the time is used")
+	masked := toolMsg("c0", "[Old read_file output (900 characters) removed to save context. Call read_file again with the same arguments if you need it.]")
+
+	first := []llm.Message{sys, refusal, note, guard, version, regex, hint, cut, gate}
+	later := append(append([]llm.Message{sys, masked}, first[2:]...), budget)
+	calls := []trace.LLMCallDetail{detail(first...), detail(later...), detail(later...)}
+	got := TriggersFromTrace(calls)
+	want := Triggers{
+		TriggerProgressRefusal: 1, TriggerProgressNote: 1, TriggerDestructive: 1, TriggerVersionGuard: 1,
+		TriggerGrepRegex: 1, TriggerServiceHint: 1, TriggerShellTruncated: 1, "gate_baseline": 1,
+		TriggerBudget: 2, TriggerMaskedRequests: 2,
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("triggers = %v\nwant       %v", got, want)
+	}
+}
