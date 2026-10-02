@@ -30,6 +30,7 @@ commands:
   run       run dcode on a subset and grade every patch
   grade     re-grade a run's captured patches
   report    summarize a run
+  analyze   recompute process metrics from traces and classify failures
   compare   compare two runs, or a run with a reference harness/model
   history   list runs over time
   refs      import or list reference per-task grades
@@ -68,6 +69,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runGrade(ctx, e, rest, stdout, stderr)
 	case "report":
 		return runReport(ctx, e, rest, stdout, stderr)
+	case "analyze":
+		return runAnalyze(ctx, e, rest, stdout, stderr)
 	case "compare":
 		return runCompare(ctx, e, rest, stdout, stderr)
 	case "history":

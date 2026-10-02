@@ -1,10 +1,12 @@
 package trace
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -46,6 +48,33 @@ func (m *MemoryLog) Lines(threadID string) [][]byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([][]byte(nil), m.lines[threadID]...)
+}
+
+// FileLog reads a trace.jsonl written by earlier dcode versions, which kept
+// one file per thread. It is read-only and ignores the thread ID.
+type FileLog struct{ Path string }
+
+func (FileLog) Append(context.Context, string, [][]byte) error {
+	return errors.New("trace: FileLog is read-only")
+}
+
+func (f FileLog) Each(_ context.Context, _ string, fn func([]byte) bool) error {
+	file, err := os.Open(f.Path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	sc := bufio.NewScanner(file)
+	sc.Buffer(make([]byte, 0, 1<<20), 256<<20)
+	for sc.Scan() {
+		if len(sc.Bytes()) == 0 {
+			continue
+		}
+		if !fn(append([]byte(nil), sc.Bytes()...)) {
+			return nil
+		}
+	}
+	return sc.Err()
 }
 
 // Lines are BYTEA rather than JSONB: tool output may hold NUL characters,

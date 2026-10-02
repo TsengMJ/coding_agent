@@ -181,6 +181,7 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 	}
 	if calls, err := traces.Details(threadID); err == nil {
 		res.Metrics = MetricsFromTrace(calls, s.Prices)
+		res.Metrics.Process = ProcessFromTrace(calls, task.GoldPaths)
 	}
 	res.Metrics.AgentMS = agentMS
 	return res

@@ -5,7 +5,9 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"runtime"
@@ -234,6 +236,13 @@ func InterruptOn(s *config.Settings) map[string]hitl.InterruptOnConfig {
 		}
 	}
 	return cfg
+}
+
+// PromptTemplateHash fingerprints the system prompt template, so bench runs
+// built from a dirty tree record which prompt they used.
+func PromptTemplateHash() string {
+	sum := sha256.Sum256([]byte(systemPromptTemplate))
+	return hex.EncodeToString(sum[:])
 }
 
 // SystemPrompt renders the CLI system prompt (mode, model identity, cwd,

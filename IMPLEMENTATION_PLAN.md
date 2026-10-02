@@ -427,7 +427,21 @@
 **Goal**: 修正與補齊 dbench 指標，讓最終評測能和歷史 baseline 正確比較。不改 agent 行為。
 **Success Criteria**: 歷史 run 重算的指標與文件 §3.1 一致（定義修正的部分說明差異）；舊資料缺的欄位標成 unknown。
 **Tests**: metrics table-driven（`run_tests` 計入、重複呼叫、各工具輸出字元、gold_src 過濾、first_gold_src_touch_step）；analyze 對固定 trace fixture 的 golden 輸出；失敗分類規則。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- `TestRuns` 現在計入 `run_tests`；新增 `Process`（JSONB `bench_attempts.process`，舊資料為 NULL＝unknown）：重複呼叫、最大重複次數、各工具輸出字元、verify 次數、只寫 todo 的回合、tool wall time（每回合取最慢）、first_gold_src_touch_step、gold_src_recall、tools hash。`bench_runs.meta` 記 dirty diff hash 與 prompt template hash。
+- `dbench analyze <run>...`：從 trace（Postgres 或舊的 trace.jsonl）重算，輸出 `reports/analyze-<run>.md`。28 個歷史 attempt 共 1.4 秒。
+- 新增 `subsets/regress-v1.txt`（7 題）。
+- 歷史 baseline（4 個 run、28 attempts，連線用 README 的 `dbench` 資料庫）：
+  - 失敗 7：regression_unnoticed 4（bd80 ×3、b398 ×1）、regression_dismissed 1（b398）、model_error 1（b398）、budget 1（b398 timeout，48M input tokens、peak 576k）。bd80 三次都沒在任何工具輸出中看到壞掉的 `test/controllers.js` export 測試 → R5 affected tests 的直接目標。
+  - 舊 `test_runs` 低估：20260930-160743 全為 0，重算 2–8（run_tests 未計入）。
+  - 重複呼叫：28 中 9 個 attempt 同一呼叫重複 ≥5 次（loop 旗標），集中在 NodeBB 長 run → R7。
+  - 工具輸出佔比：read_file 36–56%、grep 16–32%、git_diff 14–19%、glob ≤13%，execute ≤6% → R6 遮蔽與精簡 git_diff 的目標是讀檔 / 搜尋結果，不是 shell。
+  - 定位不是瓶頸：first_gold_src_touch_step 在第 1–4 步。
+  - cache 命中 73–96%；長 NodeBB run 有 1–8 次無法由新訊息解釋的 >10k input token 跳升 → R4 probe 驗證。
+  - tool wall / tool sum ≈ 0.7–0.9：同回合並行已有效果，R2 排程不能讓它變差。
+  - first token latency：headless 不 streaming，記為 unknown。
 
 ### Stage R2: 寫入安全與工具執行正確性
 **Goal**: 同批次工具依副作用排程；寫入前核對內容版本；shell 完整輸出可找回。

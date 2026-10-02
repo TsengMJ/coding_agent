@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,7 +51,12 @@ func newRun(ctx context.Context, e env, c *bench.Catalog, d bench.CLIDocker, sol
 		}
 	}
 	hostJSON, _ := json.Marshal(host)
+	meta, _ := json.Marshal(map[string]string{
+		"git_diff_sha256":        gitDiffHash(ctx, e.cwd),
+		"prompt_template_sha256": codeagent.PromptTemplateHash(),
+	})
 	return &bench.Run{
+		Meta:            meta,
 		ID:              fmt.Sprintf("%s-%s-%s", now.Format("20060102-150405"), solver, subsetLabel(subset)),
 		Benchmark:       bench.Benchmark,
 		Subset:          subset,
@@ -80,6 +87,18 @@ func gitState(ctx context.Context, dir string) (commit string, dirty bool) {
 	}
 	status, _ := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain", "--untracked-files=no").Output()
 	return strings.TrimSpace(string(out)), len(strings.TrimSpace(string(status))) > 0
+}
+
+// gitDiffHash fingerprints the uncommitted changes, including the names of
+// untracked files, so two dirty runs of one commit can be told apart.
+func gitDiffHash(ctx context.Context, dir string) string {
+	diff, err := exec.CommandContext(ctx, "git", "-C", dir, "diff", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	untracked, _ := exec.CommandContext(ctx, "git", "-C", dir, "ls-files", "--others", "--exclude-standard").Output()
+	sum := sha256.Sum256(append(diff, untracked...))
+	return hex.EncodeToString(sum[:])
 }
 
 // executeRun runs r over ids and records the final run status; an

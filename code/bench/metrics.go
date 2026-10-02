@@ -76,6 +76,8 @@ func MetricsFromTrace(calls []trace.LLMCallDetail, prices cost.Table) Metrics {
 				if cmd, _ := call.Args["command"].(string); testCommand.MatchString(cmd) {
 					m.TestRuns++
 				}
+			case "run_tests":
+				m.TestRuns++
 			case "read_file":
 				if p, _ := call.Args["file_path"].(string); p != "" {
 					filesRead[p] = true

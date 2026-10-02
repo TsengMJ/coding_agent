@@ -298,6 +298,12 @@ func applyPatchStats(a *Attempt, task Task) {
 	if p, rc, ok := FileOverlap(st.Files, task.GoldPaths); ok {
 		a.GoldPrecision, a.GoldRecall = &p, &rc
 	}
+	if a.Process != nil {
+		a.Process.GoldSrcRecall = nil
+		if rc, ok := SourceRecall(st.Files, task.GoldPaths); ok {
+			a.Process.GoldSrcRecall = &rc
+		}
+	}
 }
 
 func describeAttempt(a *Attempt) string {

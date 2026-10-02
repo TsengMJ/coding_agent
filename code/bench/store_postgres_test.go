@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,13 +54,14 @@ func TestStoresRoundTrip(t *testing.T) {
 			now := time.Now().UTC().Truncate(time.Millisecond)
 			if err := st.CreateRun(ctx, &Run{ID: runID, Benchmark: Benchmark, Subset: SubsetSmoke, Solver: SolverDcode,
 				Model: "m", Trials: 1, Concurrency: 1, TasksRepoCommit: TasksRepoCommit, Status: RunRunning,
-				StartedAt: now}); err != nil {
+				StartedAt: now, Meta: []byte(`{"prompt_template_sha256": "abc"}`)}); err != nil {
 				t.Fatal(err)
 			}
 			prec, cost, first := 0.5, 1.25, 3
 			a := &Attempt{RunID: runID, InstanceID: task.InstanceID, Trial: 0, Phase: PhaseDone, Resolved: true,
 				F2PPassed: 1, F2PTotal: 1, FailureCategory: CategoryResolved, Patch: "diff", GoldPrecision: &prec,
-				Metrics:   Metrics{Steps: 7, ToolCalls: map[string]int{"execute": 2}, CostUSD: &cost, FirstEditStep: &first},
+				Metrics: Metrics{Steps: 7, ToolCalls: map[string]int{"execute": 2}, CostUSD: &cost, FirstEditStep: &first,
+					Process: &Process{DuplicateToolCalls: 4, ToolOutputChars: map[string]int{"grep": 10}, FirstGoldSrcTouchStep: &first}},
 				StartedAt: now}
 			if err := st.SaveAttempt(ctx, a); err != nil {
 				t.Fatal(err)
@@ -76,6 +78,10 @@ func TestStoresRoundTrip(t *testing.T) {
 				*got[0].GoldPrecision != prec || got[0].GoldRecall != nil || *got[0].FirstEditStep != 3 {
 				t.Fatalf("attempts %+v", got)
 			}
+			if p := got[0].Process; p == nil || p.DuplicateToolCalls != 4 || p.ToolOutputChars["grep"] != 10 ||
+				*p.FirstGoldSrcTouchStep != 3 || p.GoldSrcRecall != nil {
+				t.Fatalf("process %+v", got[0].Process)
+			}
 			results := []TestResult{{Name: "t1", Kind: "f2p", Status: "PASSED"}, {Name: "t2", Kind: "p2p", Status: "MISSING"}}
 			if err := st.SaveTestResults(ctx, runID, task.InstanceID, 0, results); err != nil {
 				t.Fatal(err)
@@ -91,7 +97,7 @@ func TestStoresRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			r, err := st.Run(ctx, runID)
-			if err != nil || r.Status != RunCompleted || r.FinishedAt == nil {
+			if err != nil || r.Status != RunCompleted || r.FinishedAt == nil || !strings.Contains(string(r.Meta), `"abc"`) {
 				t.Fatalf("run %+v %v", r, err)
 			}
 			if _, err := st.Run(ctx, runID+"-missing"); err != ErrRunNotFound {

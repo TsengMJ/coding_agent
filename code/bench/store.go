@@ -52,6 +52,9 @@ type Run struct {
 	StartedAt       time.Time
 	FinishedAt      *time.Time
 	Notes           string
+	// Meta fingerprints what the commit alone does not pin down: the
+	// uncommitted diff and the prompt template.
+	Meta json.RawMessage
 }
 
 // Attempt is one trial of one task within a run.
@@ -108,6 +111,8 @@ type Metrics struct {
 	ToolMS    int64
 	ExecuteMS int64
 	GradeMS   int64
+	// Process is nil for attempts recorded before process metrics existed.
+	Process *Process
 }
 
 // TestResult is one required test's status after grading.

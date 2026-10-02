@@ -267,6 +267,9 @@ func (s *Store) LLMCall(threadID string, seq int) (*LLMCallDetail, error) {
 // one pass over the trace (LLMCall rescans the file for each seq).
 func (s *Store) Details(threadID string) ([]LLMCallDetail, error) {
 	blobs := map[string]json.RawMessage{}
+	// Long runs resend the same messages on every call; decoding each blob
+	// once keeps memory proportional to the unique messages.
+	decoded := map[string]llm.Message{}
 	var out []LLMCallDetail
 	var decodeErr error
 	err := s.each(threadID, func(rec record) bool {
@@ -277,9 +280,12 @@ func (s *Store) Details(threadID string) ([]LLMCallDetail, error) {
 			d := LLMCallDetail{LLMCall: rec.LLM.LLMCall, ToolChoice: rec.LLM.ToolChoice, Settings: rec.LLM.Settings,
 				Response: rec.LLM.Response, Messages: make([]llm.Message, 0, len(rec.LLM.MessageRefs))}
 			for _, h := range rec.LLM.MessageRefs {
-				var m llm.Message
-				if decodeErr = decodeBlob(blobs, h, &m); decodeErr != nil {
-					return false
+				m, ok := decoded[h]
+				if !ok {
+					if decodeErr = decodeBlob(blobs, h, &m); decodeErr != nil {
+						return false
+					}
+					decoded[h] = m
 				}
 				d.Messages = append(d.Messages, m)
 			}

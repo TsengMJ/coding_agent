@@ -87,6 +87,29 @@ func TestDetailsReturnsEveryCallInOrder(t *testing.T) {
 	}
 }
 
+func TestFileLogReadsLegacyTraceFile(t *testing.T) {
+	mem := NewMemoryLog()
+	_, r := newRecorderOn(t, mem)
+	if _, err := r.RecordLLMCall(call(llm.NewUserMessage("hi"))); err != nil {
+		t.Fatal(err)
+	}
+	var data []byte
+	for _, l := range mem.Lines("thread-1") {
+		data = append(append(data, l...), '\n')
+	}
+	path := filepath.Join(t.TempDir(), "trace.jsonl")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := NewStore(FileLog{Path: path}).Details("")
+	if err != nil || len(ds) != 1 || ds[0].Messages[0].Text() != "hi" {
+		t.Fatalf("details = %+v, %v", ds, err)
+	}
+	if err := (FileLog{Path: path}).Append(context.Background(), "", nil); err == nil {
+		t.Fatal("FileLog should be read-only")
+	}
+}
+
 func TestLoadSummarizesCallsWithoutBodies(t *testing.T) {
 	s, r := newRecorder(t)
 	if _, err := r.RecordLLMCall(call(llm.NewUserMessage("hi"))); err != nil {
