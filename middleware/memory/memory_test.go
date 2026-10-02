@@ -86,6 +86,38 @@ func TestMemoryLoadsOncePerThread(t *testing.T) {
 	}
 }
 
+func TestMemoryReloadSeesEditsBetweenRuns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "AGENTS.md")
+	if err := os.WriteFile(path, []byte("first"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := New(Options{Backend: backend.NewFilesystemBackend(backend.FilesystemOptions{}), Sources: []string{path}, Reload: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := &runtime.State{Values: map[string]any{}}
+	apply := func() *runtime.Update {
+		upd, err := m.BeforeAgent(context.Background(), st, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if upd != nil {
+			st.Values[ContentsStateKey] = upd.Values[ContentsStateKey]
+		}
+		return upd
+	}
+	apply()
+	if upd := apply(); upd != nil {
+		t.Fatalf("unchanged memory produced an update: %+v", upd)
+	}
+	if err := os.WriteFile(path, []byte("second"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if apply() == nil || contentsFrom(st.Values[ContentsStateKey])[path] != "second" {
+		t.Fatalf("edit not reloaded: %v", st.Values[ContentsStateKey])
+	}
+}
+
 func TestNoMemoryPlaceholder(t *testing.T) {
 	m := newMiddleware(t, filepath.Join(t.TempDir(), "absent.md"))
 	if got := m.format(nil); !strings.Contains(got, "(No memory loaded)") {

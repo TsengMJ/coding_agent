@@ -154,6 +154,9 @@ type GrepOptions struct {
 	MaxCount int
 	// ContextLines requests surrounding lines (supported by some backends).
 	ContextLines int
+	// Regexp treats the pattern as an RE2 regular expression instead of
+	// literal text (supported by FilesystemBackend; others search literally).
+	Regexp bool
 }
 
 // Backend is the unified file-storage protocol (`BackendProtocol`).

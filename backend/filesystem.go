@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	pathpkg "path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -28,6 +30,10 @@ type FilesystemOptions struct {
 	VirtualMode bool
 	// MaxFileSizeMB caps searchable and readable file size (default 10).
 	MaxFileSizeMB int
+	// RespectGitignore makes Grep and Glob search only the files git does
+	// not ignore when the search root is in a git work tree, and makes Glob
+	// skip dependency directories like Grep does.
+	RespectGitignore bool
 }
 
 // FilesystemBackend reads and writes the local disk. Grep is a literal
@@ -329,6 +335,14 @@ func (b *FilesystemBackend) Grep(ctx context.Context, pattern string, opts GrepO
 	if st, err := os.Stat(base); err == nil && !st.IsDir() {
 		root = filepath.Dir(base)
 	}
+	matchLine := func(line string) bool { return strings.Contains(line, pattern) }
+	if opts.Regexp {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return GrepResult{Error: fmt.Sprintf("Invalid regular expression %q: %v", pattern, err)}
+		}
+		matchLine = re.MatchString
+	}
 	maxSize := int64(b.opts.MaxFileSizeMB) * 1024 * 1024
 	var matches []GrepMatch
 	truncated := false
@@ -348,7 +362,7 @@ func (b *FilesystemBackend) Grep(ctx context.Context, pattern string, opts GrepO
 			return nil
 		}
 		for i, line := range strings.Split(string(raw), "\n") {
-			if !strings.Contains(line, pattern) {
+			if !matchLine(line) {
 				continue
 			}
 			if opts.MaxCount > 0 && len(matches) >= opts.MaxCount {
@@ -388,8 +402,9 @@ func (b *FilesystemBackend) Glob(ctx context.Context, pattern, path string) Glob
 	ctx, cancel := context.WithTimeout(ctx, defaultGlobTimeout)
 	defer cancel()
 
+	skipDeps := b.opts.RespectGitignore && !mentionsSkippedDir(pattern)
 	var infos []FileInfo
-	walkErr := b.walkFiles(ctx, base, false, func(p string, st fs.FileInfo) error {
+	walkErr := b.walkFiles(ctx, base, skipDeps, func(p string, st fs.FileInfo) error {
 		rel, _ := filepath.Rel(base, p)
 		if match(filepath.ToSlash(rel)) {
 			infos = append(infos, fileInfo(b.display(p), st))
@@ -408,9 +423,15 @@ func (b *FilesystemBackend) Glob(ctx context.Context, pattern, path string) Glob
 
 // walkFiles calls fn for every regular file under base (or base itself when
 // it is a file), skipping ".git", dependency directories below base when
-// skipDeps is set, and, in virtual mode, entries that resolve outside the
-// root. Unreadable entries are skipped.
+// skipDeps is set, files git ignores when RespectGitignore is set, and, in
+// virtual mode, entries that resolve outside the root. Unreadable entries
+// are skipped.
 func (b *FilesystemBackend) walkFiles(ctx context.Context, base string, skipDeps bool, fn func(string, fs.FileInfo) error) error {
+	if b.opts.RespectGitignore {
+		if files := gitFiles(ctx, base); len(files) > 0 {
+			return b.eachListed(ctx, base, files, skipDeps, fn)
+		}
+	}
 	return filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -438,6 +459,72 @@ func (b *FilesystemBackend) walkFiles(ctx context.Context, base string, skipDeps
 		}
 		return fn(p, st)
 	})
+}
+
+// gitFiles lists the tracked and untracked, not ignored files under the
+// directory base, relative to it and sorted. It returns nil when base is
+// not a directory in a git work tree or git is unavailable, and also when
+// git lists nothing (base itself ignored), so the caller walks instead.
+func gitFiles(ctx context.Context, base string) []string {
+	if st, err := os.Stat(base); err != nil || !st.IsDir() {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", base, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, f := range strings.Split(string(out), "\x00") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	slices.Sort(files)
+	return slices.Compact(files)
+}
+
+// eachListed calls fn for the listed files under base that exist, applying
+// the same dependency and symlink rules as the walk.
+func (b *FilesystemBackend) eachListed(ctx context.Context, base string, files []string, skipDeps bool, fn func(string, fs.FileInfo) error) error {
+	for _, rel := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if skipDeps && slices.ContainsFunc(strings.Split(rel, "/"), func(dir string) bool { return GrepSkippedDirs[dir] }) {
+			continue
+		}
+		p := filepath.Join(base, filepath.FromSlash(rel))
+		lst, err := os.Lstat(p)
+		if err != nil {
+			continue
+		}
+		st, err := os.Stat(p)
+		if err != nil || !st.Mode().IsRegular() {
+			continue
+		}
+		if b.opts.VirtualMode && lst.Mode()&fs.ModeSymlink != 0 {
+			if real, err := filepath.EvalSymlinks(p); err != nil || !within(b.root, real) {
+				continue
+			}
+		}
+		if err := fn(p, st); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mentionsSkippedDir reports whether a glob pattern names a dependency
+// directory, in which case the caller wants to search inside it.
+func mentionsSkippedDir(pattern string) bool {
+	for dir := range GrepSkippedDirs {
+		if strings.Contains(pattern, dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // UploadFiles writes raw bytes to each path.

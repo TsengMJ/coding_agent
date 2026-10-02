@@ -137,6 +137,22 @@ func TestCodingRoundTrip(t *testing.T) {
 	}
 }
 
+func TestGrepRetriesRegexLikePatternAsRegexp(t *testing.T) {
+	b, _ := newShellBackend(t)
+	b.Write(context.Background(), "/a.js", "exports.posts = 1\n")
+	m, _ := New(Options{Backend: b})
+	msgs, _ := runAgent(t, m,
+		call("re", "grep", map[string]any{"pattern": "export.*posts", "output_mode": "content"}),
+		call("none", "grep", map[string]any{"pattern": "missing.*text"}),
+	)
+	if got := msgs["re"].Text(); !strings.HasPrefix(got, "/a.js:\n  1: exports.posts = 1") || !strings.Contains(got, "RE2 regular expression") {
+		t.Fatalf("regexp retry = %q", got)
+	}
+	if got := msgs["none"].Text(); !strings.Contains(got, "grep matches literal text") {
+		t.Fatalf("no-match hint = %q", got)
+	}
+}
+
 func TestReadFilePagination(t *testing.T) {
 	b, _ := newShellBackend(t)
 	b.Write(context.Background(), "/f.txt", "a\nb\nc\n")

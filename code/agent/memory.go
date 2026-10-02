@@ -61,6 +61,7 @@ func newMemory(project backend.Backend, userDir string, sources []string, intera
 		Backend:      memoryBackend{Backend: project, host: backend.NewFilesystemBackend(backend.FilesystemOptions{}), userDir: userDir},
 		Sources:      sources,
 		SystemPrompt: prompt,
+		Reload:       true,
 	})
 }
 

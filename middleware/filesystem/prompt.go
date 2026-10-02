@@ -81,6 +81,8 @@ const (
 	noLinesRequestedWarning = "System reminder: no lines were read because `limit` was %d. The file was " +
 		"not inspected and may have contents; retry with `limit` >= 1 to read it."
 
+	grepRegexpNote = "Note: the pattern matched nothing as literal text, so these are its matches as an RE2 regular expression."
+
 	grepTruncationNote = "Note: the search stopped early (it hit its time limit or the maximum match count). " +
 		"The matches above are valid but incomplete. Narrow the search (a more specific pattern or a " +
 		"narrower path), or raise max_count, to see the rest."

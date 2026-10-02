@@ -54,6 +54,10 @@ go run ./cmd/dcode summarize README.md
 
 `dcode` 以目前目錄為專案根目錄。檔案工具（`ls`、`read_file`、`write_file`、`edit_file`、`glob`、`grep`）把它當成 `/`，不能讀寫根目錄以外的路徑；`execute` 在根目錄下用 `sh -c` 執行指令，執行過的工具會列在 stderr（`[tool] write_file /main.go`）。
 
+- 在 git 專案裡，`grep` 與 `glob` 只搜尋 git 沒有忽略的檔案（依 `.gitignore`）；兩者也都跳過 `node_modules`、`.venv`、`__pycache__`。若明確搜尋被忽略的目錄（`path` 指向它，或 glob pattern 寫出 `node_modules`），照常搜尋。
+- `grep` 以字面比對；字面沒有結果、而 pattern 看起來是 regex（例如 `export.*posts`）時，自動改用 RE2 regex 再搜一次，並在結果附註。
+- `AGENTS.md` 每個 turn 開始時重新讀取：同一個 thread 中途改了記憶（你或 agent 改的），下一個 turn 就看得到。
+
 另外有幾個把指令輸出整理成 JSON 的 coding 工具（`code/codetools`，Python 版沒有）：
 
 - `git_status` / `git_diff`：改了哪些檔案、每個檔案的增刪行數與 diff（唯讀，不需核准）

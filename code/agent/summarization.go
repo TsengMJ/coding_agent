@@ -16,7 +16,7 @@ const HistoryPathPrefix = "/.deepagents/conversation_history"
 // cwd in virtual mode.
 func NewBackend(cwd string) backend.Backend {
 	return backend.NewLocalShellBackend(backend.LocalShellOptions{
-		FilesystemOptions: backend.FilesystemOptions{RootDir: cwd, VirtualMode: true},
+		FilesystemOptions: backend.FilesystemOptions{RootDir: cwd, VirtualMode: true, RespectGitignore: true},
 		InheritEnv:        true,
 	})
 }

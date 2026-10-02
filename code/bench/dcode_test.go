@@ -17,9 +17,14 @@ import (
 
 // hostDocker is a fake docker binary that runs `docker exec` commands on
 // the host in the -w directory, so the agent's execute calls work.
+// hostDocker is a docker binary that runs "exec" commands on the host. It
+// ignores the container workdir and runs them in an empty directory, so
+// git commands cannot see the repository the test runs in.
 func hostDocker(t *testing.T) string {
 	t.Helper()
+	dir := t.TempDir()
 	script := `#!/bin/sh
+cd '` + dir + `' || exit 1
 shift
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -31,7 +36,7 @@ done
 shift
 exec "$@"
 `
-	path := filepath.Join(t.TempDir(), "docker")
+	path := filepath.Join(dir, "docker")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

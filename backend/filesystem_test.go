@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -262,6 +263,82 @@ func TestFilesystemGlob(t *testing.T) {
 	sub := b.Glob(ctx, "*.go", "/internal")
 	if len(sub.Matches) != 1 || sub.Matches[0].Path != "/internal/x/y.go" {
 		t.Fatalf("unexpected sub glob: %+v", sub)
+	}
+}
+
+// newGitFS is a git work tree with a tracked file, an untracked file and
+// an ignored build directory, searched with RespectGitignore.
+func newGitFS(t *testing.T) *FilesystemBackend {
+	t.Helper()
+	dir := t.TempDir()
+	b := NewFilesystemBackend(FilesystemOptions{RootDir: dir, VirtualMode: true, RespectGitignore: true})
+	ctx := context.Background()
+	b.Write(ctx, "/.gitignore", "build/\n")
+	b.Write(ctx, "/src/a.js", "needle\n")
+	b.Write(ctx, "/src/new.js", "needle\n")
+	b.Write(ctx, "/build/a.js", "needle\n")
+	b.Write(ctx, "/node_modules/lib/index.js", "needle\n")
+	for _, args := range [][]string{{"init", "-q"}, {"add", ".gitignore", "src/a.js"}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return b
+}
+
+func pathsOf[T any](items []T, path func(T) string) []string {
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = path(it)
+	}
+	return out
+}
+
+func TestFilesystemSearchRespectsGitignore(t *testing.T) {
+	b := newGitFS(t)
+	ctx := context.Background()
+	grep := b.Grep(ctx, "needle", GrepOptions{})
+	if got := strings.Join(pathsOf(grep.Matches, func(m GrepMatch) string { return m.Path }), " "); got != "/src/a.js /src/new.js" {
+		t.Fatalf("grep matched %s", got)
+	}
+	glob := b.Glob(ctx, "**/*.js", "/")
+	if got := strings.Join(pathsOf(glob.Matches, func(f FileInfo) string { return f.Path }), " "); got != "/src/a.js /src/new.js" {
+		t.Fatalf("glob matched %s", got)
+	}
+}
+
+func TestFilesystemSearchInsideIgnoredDir(t *testing.T) {
+	b := newGitFS(t)
+	ctx := context.Background()
+	if res := b.Grep(ctx, "needle", GrepOptions{Path: "/build"}); len(res.Matches) != 1 {
+		t.Fatalf("grep in ignored dir: %+v", res)
+	}
+	if res := b.Glob(ctx, "node_modules/**/*.js", "/"); len(res.Matches) != 1 {
+		t.Fatalf("glob naming a dependency dir: %+v", res)
+	}
+}
+
+func TestFilesystemGlobSkipsDependencyDirsOutsideGit(t *testing.T) {
+	dir := t.TempDir()
+	b := NewFilesystemBackend(FilesystemOptions{RootDir: dir, VirtualMode: true, RespectGitignore: true})
+	ctx := context.Background()
+	b.Write(ctx, "/src/a.js", "")
+	b.Write(ctx, "/node_modules/lib/index.js", "")
+	if res := b.Glob(ctx, "**/*.js", "/"); len(res.Matches) != 1 || res.Matches[0].Path != "/src/a.js" {
+		t.Fatalf("glob: %+v", res)
+	}
+}
+
+func TestFilesystemGrepRegexp(t *testing.T) {
+	b, _ := newVirtualFS(t)
+	ctx := context.Background()
+	b.Write(ctx, "/a.js", "exports.posts = 1\nexport default x\n")
+	res := b.Grep(ctx, "export.*posts", GrepOptions{Regexp: true})
+	if len(res.Matches) != 1 || res.Matches[0].Line != 1 {
+		t.Fatalf("regexp grep: %+v", res)
+	}
+	if res := b.Grep(ctx, "export(", GrepOptions{Regexp: true}); res.Error == "" {
+		t.Fatal("invalid regexp was accepted")
 	}
 }
 

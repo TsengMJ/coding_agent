@@ -152,7 +152,7 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 	res.TracePath = TracePrefix + threadID
 
 	b := backend.NewDockerExecBackend(backend.DockerExecOptions{
-		FilesystemOptions: backend.FilesystemOptions{RootDir: ws, VirtualMode: true},
+		FilesystemOptions: backend.FilesystemOptions{RootDir: ws, VirtualMode: true, RespectGitignore: true},
 		Container:         container, Workdir: repoDir, Binary: s.DockerBinary,
 	})
 	a, err := codeagent.CreateCLIAgent(ctx, codeagent.Options{

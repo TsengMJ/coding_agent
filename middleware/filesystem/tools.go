@@ -426,9 +426,17 @@ func (m *Middleware) grep(ctx context.Context, a args) *tool.Result {
 	if err != nil || maxCount <= 0 {
 		return errorResult("Error: max_count must be a positive integer")
 	}
-	res := m.opts.Backend.Grep(ctx, pattern, backend.GrepOptions{Path: searchPath, Glob: glob, MaxCount: maxCount})
+	opts := backend.GrepOptions{Path: searchPath, Glob: glob, MaxCount: maxCount}
+	res := m.opts.Backend.Grep(ctx, pattern, opts)
 	if res.Error != "" && len(res.Matches) == 0 {
 		return errorResult("%s", res.Error)
+	}
+	asRegexp := false
+	if len(res.Matches) == 0 && backend.RegexLiteralHint(pattern) != "" {
+		opts.Regexp = true
+		if re := m.opts.Backend.Grep(ctx, pattern, opts); re.Error == "" && len(re.Matches) > 0 {
+			res, asRegexp = re, true
+		}
 	}
 	matches := res.Matches
 	if len(m.opts.Permissions) > 0 {
@@ -445,6 +453,9 @@ func (m *Middleware) grep(ctx context.Context, a args) *tool.Result {
 		return errorResult("%s\n\nPartial matches:\n%s", res.Error, out)
 	}
 	var notes []string
+	if asRegexp {
+		notes = append(notes, grepRegexpNote)
+	}
 	if res.Truncated {
 		notes = append(notes, grepTruncationNote)
 	}

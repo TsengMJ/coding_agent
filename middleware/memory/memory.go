@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 
@@ -30,9 +31,14 @@ type Options struct {
 	// SystemPrompt is the template; empty uses the default MEMORY_SYSTEM_PROMPT.
 	// It must contain Slot.
 	SystemPrompt string
+	// Reload reads the sources again at the start of every invocation and
+	// replaces the stored contents when they changed, so edits made since
+	// the thread started (by the user or the agent) are seen.
+	Reload bool
 }
 
-// Middleware loads memory once per thread and injects it on every model call.
+// Middleware loads memory once per thread (or per invocation with Reload)
+// and injects it on every model call.
 type Middleware struct {
 	opts Options
 }
@@ -57,10 +63,11 @@ func (m *Middleware) StateSchema() runtime.Schema {
 	return runtime.Schema{ContentsStateKey: {Name: ContentsStateKey, Private: true}}
 }
 
-// BeforeAgent loads every source once per thread. Missing files are skipped;
-// other read errors fail the run.
+// BeforeAgent loads every source once per thread, or on every invocation
+// with Reload. Missing files are skipped; other read errors fail the run.
 func (m *Middleware) BeforeAgent(ctx context.Context, state *runtime.State, _ *agent.Runtime) (*runtime.Update, error) {
-	if _, ok := state.Values[ContentsStateKey]; ok {
+	stored, loaded := state.Values[ContentsStateKey]
+	if loaded && !m.opts.Reload {
 		return nil, nil
 	}
 	contents := map[string]string{}
@@ -74,6 +81,9 @@ func (m *Middleware) BeforeAgent(ctx context.Context, state *runtime.State, _ *a
 		default:
 			contents[path] = string(res.Content)
 		}
+	}
+	if loaded && maps.Equal(contentsFrom(stored), contents) {
+		return nil, nil
 	}
 	return &runtime.Update{Values: map[string]any{ContentsStateKey: contents}}, nil
 }

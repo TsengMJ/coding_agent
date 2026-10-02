@@ -604,7 +604,34 @@
 **Goal**: grep 支援 regex 與 `.gitignore`、有結果上限；glob 忽略規則一致；Environment Profile。
 **Success Criteria**: rg 不存在時退回；明確搜尋依賴目錄時照常回傳。
 **Tests**: rg 參數組裝、gitignore 生效、上限訊息、退回路徑。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- 先看歷史 trace（28 個 attempt）：
+  - glob：59 次呼叫中 12 次的結果含被忽略的路徑，共 2,526 / 3,663 行（69%）：
+    - NodeBB 被 `.gitignore` 忽略的 `build/`：1,897 行；
+    - `node_modules`：629 行（glob 原本不像 grep 那樣跳過依賴目錄）。
+  - grep：413 次中 11 次是 regex 寫法（`export.*posts`、`HAS_PEXPECT|pexpect`），以字面比對找不到，要多花一步改寫。
+  - 搜尋速度：沒看到問題。用 shell 搜尋只有 1 次（還是誤判）。
+- `.gitignore`：`FilesystemOptions.RespectGitignore`（dcode 與 bench 開啟；函式庫預設關閉，保持上游行為）。
+  - 搜尋根目錄在 git work tree 裡時，候選檔案由 `git ls-files --cached --others --exclude-standard` 列出，忽略規則完全照 git。
+  - 不是 git、git 不可用，或 git 什麼都沒列出（根目錄本身被忽略，例如 `path=/build`）時，退回原本的 walk。
+  - glob 也跳過依賴目錄，除非 pattern 明確寫出該目錄。
+- Regex：`GrepOptions.Regexp`（FilesystemBackend 支援）。grep 工具先照舊以字面比對；沒有結果且 pattern 看起來是 regex 時，以 RE2 再搜一次，有結果才採用，並附註。
+  - 字面比對有結果時行為不變，所以原本「字面」的語意與工具說明不必改。
+- 記憶：`memory.Options.Reload`（dcode 開啟）。
+  - 原本 `AGENTS.md` 每個 thread 只讀一次存在 state 裡；之後 agent 依記憶指引寫進 `AGENTS.md` 的內容，或使用者的修改，整個 thread（包含之後 resume）都看不到。
+  - 現在每次 invocation 開始時重讀，內容不同才更新 state，所以沒改時 system message 與 cached prefix 不變。
+- 偏離計畫：
+  - 沒有引入 ripgrep：觀察到的問題（ignore 規則、regex）不需要它，速度也沒有問題；而且要多一個外部依賴，還得處理「有 rg / 沒 rg」兩種結果不一致。
+  - Environment Profile 沒做。每個 NodeBB attempt 第一次跑測試都遇到 Redis 未啟動（ECONNREFUSED），但：
+    - 既有的 service hint 會在第一次失敗後給出確切的 port 與啟動指令，代價約 1 步（< 3%）；
+    - NodeBB 的 CI 以 matrix 同時列出 postgres / redis / mongo，從 CI 推導的 profile 反而會誤導。
+  - `outline` 實驗沒做：預設關閉的工具要靠付費 A/B 才能評估，依「不另跑付費評測」不先做。
+- 測試：
+  - backend：gitignore 對 grep / glob 生效（含未追蹤但未忽略的檔案）；明確搜尋被忽略目錄與依賴目錄照常回傳；非 git 時 glob 跳過依賴目錄；regex 模式與無效 regex。
+  - grep 工具：regex 寫法自動重試並附註；仍無結果時保留原本的字面比對提示。
+  - memory：Reload 在內容不變時不更新，改了才更新。
 
 ### Stage R9: 安全
 **Goal**: 子程序最小環境、trace 遮蔽 secret、sandbox adapter、危險指令分級。
