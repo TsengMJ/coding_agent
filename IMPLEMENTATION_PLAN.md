@@ -340,3 +340,74 @@
 - agent 宣稱失敗「與改動無關」時，要求它先用 `git stash` 在原始程式碼上跑同一個測試來證明（bd80 這次就差這一步）
 - 服務提示改成 `redis-server --daemonize yes --save '' --dir /tmp`，不在工作目錄留檔
 - 只對失敗的測試重跑，縮短完整測試檔重跑次數（bd80 完整跑了 6 次）
+
+## Stage 17: 讓主 agent 真的委派（prompt、explorer、量測）
+
+**Why**: thread `bbddda1eceab` 與之前所有 dbench trace 裡 `task` 呼叫數都是 0。subagent 的接線沒問題（FakeModel 測試與手動呼叫都能跑），是 prompt 沒有告訴模型何時該委派，而且唯一適合讀程式碼的是權限過大的 general-purpose。
+**Goal**: system prompt 有明確的委派規則；新增唯讀的 `explorer`；dbench 量得到委派程度。
+**子階段**:
+- 17a `code/agent/delegation.go` 產生 `## Subagents` 段落（何時委派 / 何時自己做 / 完整交代任務 / 委派後不要自己重做）
+- 17b `explorer` subagent：只有 `ls/read_file/glob/grep/git_status/git_diff`，用 `researchLimits` 擋其他工具；`web-researcher` 描述改成「proactively」
+- 17c 查資料段落：有 web-researcher 時先委派，只有單次查詢才自己做
+- 17d dbench：`Metrics.SubagentLLMCalls`（namespace `task:` 開頭的 model call）、`bench_attempts.subagent_llm_calls` 欄位、報表加「attempts using subagents / mean task calls / mean subagent model calls」
+**Success Criteria**: 測試通過；真實模型重跑時 `task` 呼叫數 > 0。
+**Tests**: prompt 含委派規則、有 web key 時才提 web-researcher、explorer 只拿到唯讀工具、`MetricsFromTrace` 算得出 subagent 呼叫、報表含委派指標。
+**Status**: Complete
+**結果**: smoke50 前 5 題（`20261002-032626-dcode-smoke50`，含 Stage 18–23 的程式碼）：4/5 resolved（80%，失敗那題是 OpenRouter 逾時造成的 agent_timeout），20% 的 attempt 有用 subagent，平均 task 呼叫 0.8 次、subagent model 呼叫 8.6 次；baseline `20260930-160724` / `160743` 都是 8/10、subagent 0%。中位成本 $0.063（baseline $0.042–0.047），樣本太小，還看不出對解題率的影響。手動重跑同一題：`task` 呼叫 0 → 1（背景 web-researcher + `task_output`），但主 agent 仍自己重複搜尋，所以再加「委派後不要自己重做」。dbench 加欄位時發現 `bench_scored_attempts` view 用 `a.*`，新欄位插在 `repo` 前面，`CREATE OR REPLACE VIEW` 失敗；改成先 `DROP VIEW ... CASCADE` 再重建（相依的 view 都在同一份 schema 內重建）。
+
+## Stage 18: LangSmith tracing（預設關閉）
+
+**Goal**: SDK 核心能把 run tree（chain / llm / tool，subagent 巢狀在 tool 底下）送到 LangSmith；沒有明確打開時完全不送。
+**子階段**:
+- 18a `tracing` 套件：`Tracer` / `Run` 介面、`WithTracer` / `FromContext`；agent loop 在 invoke、model call、tool call 開 run，subagent 從 ctx 接上 parent
+- 18b `langsmith` 套件：背景批次送 `POST /runs/batch`（UUIDv7、dotted_order、8MB 分批、429/5xx 重試 3 次、送不出去只記 log 不影響 run），`FromEnv` 讀 `LANGSMITH_TRACING` + `LANGSMITH_API_KEY`（也接受 `LANGCHAIN_*` 舊名）
+- 18c `deepagents.WithTracer`；沒設定時用 `langsmith.Default()`（env 沒開就是 nil）
+- 18d dcode：`config.toml` 的 `[tracing] langsmith = true / project = "..."`；`codeagent.NewLangSmith`（project 優先序：config → env → `dcode`）；server、dbench 都接上並在結束時 flush；resume 的 run 加 `dcode:resume` tag
+- 18e 專案 `.env` 不能設 `LANGSMITH_*` / `LANGCHAIN_*`（避免 clone 下來的 repo 偷開 tracing 把對話送走），只能放在 shell 或 `~/.deepagents/.env`
+**Tests**: run tree 結構與 subagent 巢狀、送失敗不影響 run、flush 後才結束的 run 變成 patch、env 預設關 / 沒 key 報錯 / 舊名、agent loop 的 chain/llm/tool run 與 metadata（`ls_agent_type`、`thread_id`、tags）、`NewLangSmith` 開關與 project 優先序、專案 `.env` 被擋。
+**Status**: Complete
+
+## Stage 19: plan mode 的唯讀委派與 subagent 用量
+
+**子階段**:
+- 19a `planmode.Options.ReadOnlySubagents`：plan mode 保留 `task` / `task_output`，但 `task` 只接受 `explorer`、`web-researcher`（其他回錯誤並說明原因），plan mode prompt 列出可用的 subagent
+- 19b subagent 用量：`task` 結果、`task_output` 結果、`<task-notification>` 的 Metadata 帶 `subagent_usage`（依 `model_name` 加總，含巢狀 subagent；沒標記的回覆算在該 subagent 的 model）
+- 19c `computeUsage`：`models` 含 subagent 的 token 與成本，另外回傳 `subagents` 小計
+**Tests**: plan mode 呼叫 explorer 可以、general-purpose 被拒、沒有唯讀 subagent 時不出現 `task`；同步 / 背景 / `task_output` 三條路徑都帶用量、巢狀加總、JSON round trip；thread usage 算進 subagent 並分出小計。
+**Status**: Complete
+
+## Stage 20: 自訂 subagent（AGENTS.md）
+
+**子階段**:
+- 20a `code/subagents.List`：讀 `~/.deepagents/<agent>/agents/<name>/AGENTS.md` 與 `<project>/.deepagents/agents/<name>/AGENTS.md`（同名時專案優先），frontmatter `name`（預設資料夾名）/ `description`（必填）/ `model`；格式錯、放錯位置、同目錄撞名都報錯並附路徑（Python 是警告後略過）
+- 20b `CreateCLIAgent`：轉成 `SubAgent`，繼承主 agent 的工具，沒寫 model 就用主 model；跟內建 subagent 撞名報錯
+**Tests**: 解析、frontmatter name、專案覆寫使用者、目錄不存在、五種格式錯誤、放錯位置、撞名；組裝後 `task` 描述列出自訂 subagent、system prompt 與工具正確、不能蓋掉 explorer。
+**Status**: Complete
+
+## Stage 21: Structured output（ToolStrategy）
+
+**子階段**:
+- 21a agent loop：`ToolStrategy` / `AutoStrategy` 加一個合成工具（名稱取 schema 的 `title`，否則 `structured_output`），在最內層 model call 加入，middleware 篩工具時不會被拿掉；合法呼叫寫進 `structured_response` 並結束 run，不合 schema（type / enum / required / additionalProperties / items）回錯誤讓模型重試，同回合呼叫多次也要求重送一次；`ProviderStrategy` 回 `ErrNotImplemented`
+- 21b 移除 `rejectUnsupported`，`WithResponseFormat` 傳進 agent
+**Tests**: 合法呼叫後只呼叫一次 model 就結束、不合 schema 重試、同回合多次被拒、沒有 title 用預設名、ProviderStrategy 未實作；`WithResponseFormat` 端到端；宣告式 subagent 的 `ResponseFormat` 讓 `task` 回傳 JSON。
+**Status**: Complete
+
+## Stage 22: fork mode
+
+**子階段**:
+- 22a fork 的輸入：parent 的對話拿掉最後一則帶 tool_calls 的 AI 訊息、套用 summarization event，再接 preamble + 任務；宣告式 fork 承接 parent 的 state（不含 messages / structured_response / summarization keys），compiled fork 只拿可分享的 state
+- 22b 防遞迴：宣告式 fork 也有 `task` 工具（讓工具清單和 parent 一致），但 state 有 `_deepagents_forked_context`，呼叫時回拒絕訊息；這個 key 不會回傳給 parent
+- 22c `task` 清單在 fork 後面加註「inherits your full conversation...」；`ValidateSpecs` 接受 fork
+- 22d assembly：宣告式 fork 沿用 parent 的 system prompt（自己的接在後面）、skills、memory 與 caller middleware（自己的同名覆蓋）
+**Tests**: fork 收到的訊息順序、清單加註、遞迴被拒且 key 沒外洩、summarization 後只收到壓縮過的歷史、fork 的 system prompt 先 parent 後自己。
+**Status**: Complete
+
+## Stage 23: AsyncSubAgent（遠端 agent server）
+
+**子階段**:
+- 23a `asyncsubagents.Client`：`POST /threads`、`POST /threads/{id}/runs`（`assistant_id=graph_id`，update 用 `multitask_strategy=interrupt`）、`GET .../runs/{run}`、`POST .../runs/{run}/cancel`、`GET /threads/{id}`；預設帶 `x-auth-scheme: langsmith`，沒設 `x-api-key` 時從 `LANGGRAPH_API_KEY` / `LANGSMITH_API_KEY` / `LANGCHAIN_API_KEY` 取；依 url + headers 快取 client
+- 23b 五個工具 `start/check/update/cancel_async_task`、`list_async_tasks`，`async_tasks` state 用 reducer 依 task_id 合併；描述照 Python
+- 23c assembly：`AsyncSubAgent` 送到 AsyncSubAgentMiddleware（PatchToolCalls 之後、caller middleware 之前）；URL 必填（Go 沒有 Python 的 in-process ASGI transport）
+- 23d dcode：`code/subagents.LoadAsync` 讀 `config.toml` 的 `[async_subagents.<name>]`（`description/url/graph_id/headers`），缺欄位報錯；名字不能和其他 subagent 重複
+**Tests**: httptest 假 server 跑完 start → check（success 帶結果）→ update → cancel → list、headers、system prompt 與工具順序；未知類型、server 錯誤、未知 task_id、空清單；New 驗證；checkpoint JSON 的 reducer；組裝後拿得到五個工具、沒有 URL 被拒；LoadAsync 讀取 / 缺檔 / 缺欄位。
+**Status**: Complete

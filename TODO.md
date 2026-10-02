@@ -143,7 +143,7 @@
 - [~] `StreamMode`（values / updates / messages / custom）、`Event`、`Emitter`
 - [-] values 事件串流 — 由 langgraphgo `OnGraphStep` 轉成 `runtime.Event`，不自寫 event loop。updates / custom 尚未接
 - [x] messages 串流：`Stream(..., StreamMessages)` 時 model 節點改用 `ChatModel.Stream`，每個片段送出 `llm.Chunk` 事件；沒實作 Stream 的 model 退回 Generate
-- [ ] subgraph（subagent）事件 namespace 傳遞
+- [x] subgraph（subagent）事件 namespace 傳遞（`task:<tool call id>`）
 
 ### 1.9 Agent loop `agent/`（langchain `create_agent` + `AgentMiddleware`）
 
@@ -164,9 +164,9 @@
   - [x] middleware 名稱重複檢查（含工具名稱重複檢查）
   - [x] AfterAgent 回傳 `Command{Goto:"model"}` 重新進入迴圈 — langgraphgo `Command`
 - [~] Structured output：`ToolStrategy` / `ProviderStrategy` / `AutoStrategy` — go: `agent/response_format.go`
-  - [ ] ToolStrategy 實作（合成工具 + 解析）
-  - [ ] ProviderStrategy 實作
-  - [ ] AutoStrategy 選擇邏輯
+  - [x] ToolStrategy 實作（合成工具 + schema 驗證，go: `agent/structured.go`）
+  - [ ] ProviderStrategy 實作（回 `ErrNotImplemented`）
+  - [~] AutoStrategy 選擇邏輯（目前一律用 ToolStrategy）
 - [ ] `context_schema`（不可變 run context）
 - [ ] `cache`（節點快取）
 - [ ] debug 模式輸出
@@ -176,20 +176,20 @@
 ## 2. graph.py：`create_deep_agent` — go: `deepagents.go`
 
 - [x] `CreateDeepAgent(opts ...Option)` 入口（預設 middleware stack、profiles、general-purpose subagent）
-  - 備註：response_format / async subagents 仍回 `ErrNotImplemented`；未給 backend 時用 StateBackend
+  - 備註：response_format 只支援 ToolStrategy；AsyncSubAgent 需要 URL；未給 backend 時用 StateBackend
 - [~] 參數（functional options）
   - [x] `model`（`WithModel` 優先，否則 `WithModelSpec` 經 `InitChatModel` 解析）
   - [ ] `model=None` 預設 `claude-sonnet-4-6`（Python 已 deprecated）
   - [x] `tools`（`WithTools`）
   - [x] `system_prompt`（`WithSystemMessage` 優先，否則 `WithSystemPrompt`）
   - [x] `middleware`（`WithMiddleware`：同名取代 base stack 原位置，其餘插在 base 之後；重複名稱報錯）
-  - [x] `subagents`（`WithSubAgents`：SubAgent / CompiledSubAgent；AsyncSubAgent 回 `ErrNotImplemented`）
+  - [x] `subagents`（`WithSubAgents`：SubAgent / CompiledSubAgent；AsyncSubAgent 分流到 AsyncSubAgentMiddleware）
   - [x] `skills`（`WithSkills`：主 agent stack 最前面；general-purpose subagent 繼承；宣告式 subagent 用自己的 `Skills`）
   - [x] `memory`（`WithMemory`：以主 backend 讀取，放在 caller middleware 之後、HITL 之前）
   - [x] `permissions`（`WithPermissions`：傳給主 agent 與 subagent 的 Filesystem；interrupt 規則經 `BuildInterruptOn` 併入 HITL；不能搭配有 execute 的 backend）
   - [x] `backend`（`WithBackend`；未給時預設 `StateBackend`，Filesystem 與 Summarization 一律加入）
   - [x] `interrupt_on`（`WithInterruptOn`：HITL middleware 放在 stack 最後）
-  - [~] `response_format`（`WithResponseFormat`）
+  - [x] `response_format`（`WithResponseFormat`，ToolStrategy）
   - [~] `state_schema`（`WithStateSchema`）
   - [ ] `context_schema`
   - [~] `checkpointer` / `store`（`WithCheckpointer` 已轉給 `agent.CreateAgent`；`WithStore` 仍只保存參照）
@@ -202,8 +202,8 @@
 - [x] Required middleware 保護（Filesystem / SubAgent 不可被排除）— go: `RequiredMiddleware`
 - [x] `_excluded_middleware.py`：`_validate_excluded_middleware_config` / `_apply_excluded_middleware` / `_verify_excluded_middleware_coverage`（Go 只有名稱形式，無類別衝突檢查）
 - [x] 預設 general-purpose subagent（可被 profile 關閉、可被同名 spec 取代、繼承同名 middleware；不繼承 interrupt_on，因 subagent 尚不能暫停 parent run）
-- [~] 宣告式 SubAgent 處理（已完成 model 解析、subagent profile、tools 繼承、permissions 繼承（自己的 Permissions 優先；interrupt 規則轉成 deny，因 subagent 不能暫停 parent run）、skills（subagent 自己的 `Skills`，放在 stack 最後）；fork / interrupt_on 繼承未做）：model 解析、subagent profile、permissions 繼承、interrupt_on 繼承與合併、tools 繼承、skills、fork 模式（鏡射 parent prompt middleware、system prompt addendum）
-- [ ] AsyncSubAgent 分流到 AsyncSubAgentMiddleware
+- [~] 宣告式 SubAgent 處理（已完成 model 解析、subagent profile、tools 繼承、permissions 繼承（自己的 Permissions 優先；interrupt 規則轉成 deny，因 subagent 不能暫停 parent run）、skills（subagent 自己的 `Skills`，放在 stack 最後）、fork（parent system prompt + 自己的、parent skills / memory / caller middleware）；interrupt_on 繼承未做）：model 解析、subagent profile、permissions 繼承、interrupt_on 繼承與合併、tools 繼承、skills、fork 模式（鏡射 parent prompt middleware、system prompt addendum）
+- [x] AsyncSubAgent 分流到 AsyncSubAgentMiddleware
 - [x] permissions → interrupt_on 合併（`_merge_fs_interrupt_on`）— go: `hitl.Merge(permissions.BuildInterruptOn(...), WithInterruptOn)`，使用者設定優先
 - [x] private state keys 注入 SubAgentMiddleware
 - [ ] `with_config`：recursion_limit=9999、metadata（ls_integration / lc_versions / lc_agent_name）
@@ -347,32 +347,33 @@
 - [x] `Mode`（isolated / fork；legacy `handoff` = isolated）
 - [x] `Spec` 介面、`SubAgent`、`CompiledSubAgent`（宣告式 spec 由 `New` 編譯；Skills / Permissions 由 CreateDeepAgent 套到 subagent 的 middleware stack）
 - [x] `Options` / `Middleware` / `AddPrivateStateKeys`
-- [x] `ValidateSpecs`（名稱唯一、mode 合法、fork 不可有 skills；fork 回 `ErrNotImplemented`）
+- [x] `ValidateSpecs`（名稱唯一、mode 合法、fork 不可有 skills）
 - [x] `task` 工具（同一輪多個 task 平行執行）
   - [x] `TaskToolSchema`（description / subagent_type，拒絕未知欄位）
   - [x] `TASK_TOOL_DESCRIPTION` + `{available_agents}` 清單
   - [x] isolated：只傳 task 描述，排除 `_EXCLUDED_STATE_KEYS` 與 private keys
-  - [ ] fork：傳 parent 有效訊息、`_FORK_TASK_PREAMBLE`、防止遞迴 fork
+  - [x] fork：傳 parent 有效訊息、`_FORK_TASK_PREAMBLE`、防止遞迴 fork（go: `middleware/subagents/fork.go`）
   - [x] 結果回傳：structured_response JSON 或最後一則非空 AI 訊息
   - [x] subagent 的 state update 回寫 parent（files 等）
-  - [ ] response_format（per-subagent）
+  - [x] response_format（per-subagent）
+  - [x] subagent 用量：`subagent_usage` 寫進 task / task_output / notification 的 Metadata（依 model 加總，含巢狀）
   - [x] 未知 subagent_type 錯誤
   - [x] 背景執行（Go 版延伸，參考 Claude Code）：`Options.Background` 加 `run_in_background` 與 `task_output`；完成時 BeforeModel 注入一次 `<task-notification>`；AfterAgent 等待未完成的 task；取消 run 連帶取消；registry 只在記憶體、不轉發事件
-- [~] 事件 namespace / tracing metadata（`ls_agent_type`）— 串流時 subagent 的 values 事件以 `task:<tool call id>` namespace 轉發給 parent；tracing metadata 未做
+- [x] 事件 namespace / tracing metadata（`ls_agent_type`）— 串流時 subagent 的 values 事件以 `task:<tool call id>` namespace 轉發給 parent；tracing 見 Stage 18（subagent run 巢狀在 task tool run 底下，`ls_agent_type`）
 
 ### 4.4 AsyncSubAgents `middleware/asyncsubagents`（py: `middleware/async_subagents.py`）
 
-- [~] `AsyncSubAgent`（name / description / graph_id / url / headers）
-- [~] `Task`、`TasksStateKey`
-- [~] `Client` 介面（LangGraph SDK threads / runs 子集）
-- [~] `Middleware`（Tools / StateSchema / WrapModelCall）
-- [ ] `start_async_task`
-- [ ] `check_async_task`
-- [ ] `update_async_task`
-- [ ] `cancel_async_task`
-- [ ] `list_async_tasks`
-- [ ] client 快取（依 url + headers）
-- [ ] system prompt 注入
+- [x] `AsyncSubAgent`（name / description / graph_id / url / headers；url 必填，沒有 in-process transport）
+- [x] `Task`、`TasksStateKey`（reducer 依 task_id 合併）
+- [x] `Client`（LangGraph agent-server threads / runs HTTP 子集，go: `client.go`）
+- [x] `Middleware`（Tools / StateSchema / WrapModelCall）
+- [x] `start_async_task`
+- [x] `check_async_task`
+- [x] `update_async_task`
+- [x] `cancel_async_task`
+- [x] `list_async_tasks`
+- [x] client 快取（依 url + headers）
+- [x] system prompt 注入
 
 ### 4.5 Summarization `middleware/summarization`（py: `middleware/summarization.py`）
 
@@ -550,7 +551,7 @@
 - [x] config.toml 解析（`github.com/BurntSushi/toml`）：`models.default`、`startup.mode`（manual / yolo，預設 yolo）、`shell.allow_list`（陣列、逗號字串、`recommended`、`all`）、`retries.max_retries`、`server.url`；其餘 key 放 `Raw`；錯誤帶行號
 - [~] 分層合併：flag > env（`DCODE_MODEL`、`DCODE_SERVER`、`DEEPAGENTS_CODE_SHELL_ALLOW_LIST`、`BRAVE_API_KEY` → `WebSearchAPIKey`、`CONTEXT7_API_KEY` → `Context7APIKey`；config.toml 另有 `models.web`、`storage.results_ttl`）> 使用者 config.toml > 預設；managed / project / session 層未做
 - [x] .env 載入（shell > 最近的專案 `.env` > `~/.deepagents/.env`）— go: `code/config/dotenv.go`
-  - [ ] 拒絕危險 key（`_DOTENV_DENIED_ENV_KEYS`、專案 `.env` 不可設定的 LangSmith key）
+  - [~] 拒絕危險 key（專案 `.env` 不可設定 `LANGSMITH_*` / `LANGCHAIN_*`；其他 `_DOTENV_DENIED_ENV_KEYS` 未做）
   - [ ] 變數內插（`${VAR}`）、`/reload` 時移除先前注入的值
 - [ ] `/reload` 產生新 generation
 - [ ] 環境變數對照表
@@ -667,8 +668,9 @@
 - [~] `code/skills`：`Location`、`Skill`、`Discover`、`InvocationPrompt`
   - [ ] built-in skills（skill-creator、thread-inspector）
   - [ ] skill trust、slash command 化
-- [~] `code/subagents`：`Metadata`、`List`、`LoadAsync`
-  - [ ] markdown + frontmatter 解析
+- [x] `code/subagents`：`Metadata`、`List`（`~/.deepagents/<agent>/agents/<name>/AGENTS.md` 與 `/.deepagents/agents/<name>/AGENTS.md`，專案優先；格式錯誤會報錯）、`LoadAsync`（`config.toml` 的 `[async_subagents.<name>]`）
+  - [x] markdown + frontmatter 解析
+  - [x] 接進 `CreateCLIAgent`（`code/agent/custom.go`；不能跟內建 subagent 撞名）
 
 ### 6.11 Sandbox `code/sandbox`（code: `integrations/sandbox_*.py`）
 
@@ -683,7 +685,7 @@
   - [ ] goal rubric、state limits、notice
 - [~] Offload `code/offload`（`Result`、`Run`）— code: `offload*.py`
 - [x] Cost `code/cost`（`Price`、`Table`、`LoadTable`（內嵌 `prices.json` + `~/.deepagents/prices.json` 覆寫）、`Lookup`（spec → 模型名 → `-` 邊界前綴）、`Estimate`（cache read / write 分開計價，查不到回 `ErrUnpriced`））— code: `cost_tracking.py`
-- [x] `GET /threads/{id}/usage` / `Server.GetUsage`：由 checkpoint 訊息依 `model_name` 分模型加總（只含主 agent；subagent 呼叫不在 thread state）
+- [x] `GET /threads/{id}/usage` / `Server.GetUsage`：由 checkpoint 訊息依 `model_name` 分模型加總（含 subagent：從 tool message 的 `subagent_usage` 加總，另回傳 `subagents` 小計）
 - [~] Plugins `code/plugins`（`Manifest`、`Store`、`OpenStore`）— code: `plugins/*`
   - [ ] marketplace、discovery、substitution
 - [~] Extensions `code/extensions`（`Extension`、`Register`、`Loaded`）— code: `extensions/*`
@@ -702,7 +704,7 @@
 - [ ] doctor 命令 — code: `doctor.py`
 - [ ] update check / 自動更新 — code: `update_check.py`
 - [ ] tool catalog / managed tools — code: `tool_catalog.py`, `managed_tools.py`
-- [ ] tracing（LangSmith）— code: `_tracing.py`
+- [x] tracing（LangSmith）— code: `_tracing.py`；go: `tracing/`、`langsmith/`、`code/agent/tracing.go`（預設關；`LANGSMITH_TRACING=true` + `LANGSMITH_API_KEY` 或 `config.toml` `[tracing] langsmith = true`）
 - [ ] notifications — code: `notifications.py`
 - [ ] clipboard / editor / 主題 — code: `clipboard.py`, `editor.py`, `theme.py`
 - [ ] unicode 安全檢查、terminal escape — code: `unicode_security.py`, `terminal_escape.py`
