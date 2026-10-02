@@ -193,6 +193,37 @@ func TestApplyPatchRollsBackOnWriteFailure(t *testing.T) {
 	}
 }
 
+// meddlingWriter changes another file just before its failing write, as
+// an editor saving while the patch runs would.
+type meddlingWriter struct {
+	failingWriter
+	dir string
+}
+
+func (m meddlingWriter) Write(ctx context.Context, p, content string) backend.WriteResult {
+	if p == m.fail {
+		_ = os.WriteFile(filepath.Join(m.dir, "a.go"), []byte("ONE\nsaved by the user\n"), 0o644)
+	}
+	return m.failingWriter.Write(ctx, p, content)
+}
+
+func TestApplyPatchRollbackKeepsFilesChangedMeanwhile(t *testing.T) {
+	dir, fs := newFS(t)
+	writeFile(t, dir, "a.go", "one\n")
+	writeFile(t, dir, "b.go", "two\n")
+	patch := "*** Begin Patch\n*** Update File: /a.go\n-one\n+ONE\n*** Add File: /n.go\n+n\n*** Update File: /b.go\n-two\n+TWO\n*** End Patch"
+	res := invoke(t, NewApplyPatch(meddlingWriter{failingWriter{fs, "/b.go"}, dir}), patchArgs(patch))
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "could not be fully rolled back: /a.go") {
+		t.Fatalf("got %q", res.Content[0].Text)
+	}
+	if got := readFile(t, dir, "a.go"); got != "ONE\nsaved by the user\n" {
+		t.Errorf("rollback overwrote the user's change: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "n.go")); !os.IsNotExist(err) {
+		t.Error("n.go was unchanged and should still be removed")
+	}
+}
+
 func TestPatchedFileUnifiedDiff(t *testing.T) {
 	f := PatchedFile{Op: OpUpdate, Path: "/a.go", Before: "a\nb\n", After: "a\nc\n"}
 	if d := f.UnifiedDiff(); !strings.Contains(d, "-b") || !strings.Contains(d, "+c") {

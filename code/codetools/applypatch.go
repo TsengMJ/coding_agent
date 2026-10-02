@@ -166,6 +166,7 @@ type PatchFileResult struct {
 func NewApplyPatch(b backend.Backend) tool.Tool {
 	return &tool.Func{
 		ToolName:        ApplyPatchName,
+		ToolEffect:      patchEffect,
 		ToolDescription: applyPatchDescription,
 		ToolSchema: objectSchema(map[string]any{
 			"patch": map[string]any{"type": "string", "description": "The full patch text, from '*** Begin Patch' to '*** End Patch'."},
@@ -235,15 +236,45 @@ func backendReader(ctx context.Context, b backend.Backend) ReadFunc {
 	}
 }
 
+// undoStep reverts one write of a patch. wrote is what the patch left at
+// path ("" with gone for a deleted path); the step only runs while path
+// still holds it, so a change made meanwhile by someone else is kept.
+type undoStep struct {
+	path  string
+	wrote string
+	gone  bool
+	run   func() string
+}
+
 // writePlanned writes every planned file. When a write fails, files already
-// written are restored so the patch stays all-or-nothing.
+// written are restored so the patch stays all-or-nothing, except files that
+// changed after the patch wrote them: those are kept and reported.
 func writePlanned(ctx context.Context, b backend.Backend, d backend.Deleter, planned []PatchedFile) error {
-	var undo []func()
+	var undo []undoStep
 	rollback := func(cause error) error {
+		var kept []string
 		for i := len(undo) - 1; i >= 0; i-- {
-			undo[i]()
+			u := undo[i]
+			content, exists, err := backendReader(ctx, b)(u.path)
+			if err != nil || exists == u.gone || (exists && content != u.wrote) {
+				kept = append(kept, u.path)
+				continue
+			}
+			if msg := u.run(); msg != "" {
+				kept = append(kept, u.path)
+			}
+		}
+		if len(kept) > 0 {
+			return fmt.Errorf("patch failed part way (%w) and could not be fully rolled back: %s changed after the patch wrote it "+
+				"or could not be restored, and was left as is; check it before retrying", cause, strings.Join(kept, ", "))
 		}
 		return fmt.Errorf("patch not applied, changes were rolled back: %w", cause)
+	}
+	write := func(p, content string) func() string {
+		return func() string { return b.Write(ctx, p, content).Error }
+	}
+	del := func(p string) func() string {
+		return func() string { return d.Delete(ctx, p).Error }
 	}
 	for _, f := range planned {
 		switch f.Op {
@@ -252,26 +283,26 @@ func writePlanned(ctx context.Context, b backend.Backend, d backend.Deleter, pla
 				return rollback(errors.New(r.Error))
 			}
 			if d != nil {
-				undo = append(undo, func() { d.Delete(ctx, f.Path) })
+				undo = append(undo, undoStep{path: f.Path, wrote: f.After, run: del(f.Path)})
 			}
 		case OpDelete:
 			if r := d.Delete(ctx, f.Path); r.Error != "" {
 				return rollback(errors.New(r.Error))
 			}
-			undo = append(undo, func() { b.Write(ctx, f.Path, f.Before) })
+			undo = append(undo, undoStep{path: f.Path, gone: true, run: write(f.Path, f.Before)})
 		case OpUpdate:
 			if r := b.Write(ctx, f.Target(), f.After); r.Error != "" {
 				return rollback(errors.New(r.Error))
 			}
 			if f.MoveTo == "" {
-				undo = append(undo, func() { b.Write(ctx, f.Path, f.Before) })
+				undo = append(undo, undoStep{path: f.Path, wrote: f.After, run: write(f.Path, f.Before)})
 				continue
 			}
-			undo = append(undo, func() { d.Delete(ctx, f.MoveTo) })
+			undo = append(undo, undoStep{path: f.MoveTo, wrote: f.After, run: del(f.MoveTo)})
 			if r := d.Delete(ctx, f.Path); r.Error != "" {
 				return rollback(errors.New(r.Error))
 			}
-			undo = append(undo, func() { b.Write(ctx, f.Path, f.Before) })
+			undo = append(undo, undoStep{path: f.Path, gone: true, run: write(f.Path, f.Before)})
 		}
 	}
 	return nil
@@ -309,6 +340,16 @@ func parallelPatchConflict(rt *tool.Runtime, planned []PatchedFile) (string, boo
 		return "", false
 	}
 	return "", false
+}
+
+// patchEffect writes the files the patch names; an unparsable patch is
+// rejected without touching anything, but is scheduled as writing everything.
+func patchEffect(args map[string]any) tool.Effect {
+	paths := mutatedPaths(llm.ToolCall{Name: ApplyPatchName, Args: args})
+	if len(paths) == 0 {
+		paths = nil
+	}
+	return tool.Effect{Kind: tool.EffectWrite, Paths: paths}
 }
 
 // mutatedPaths lists the files a tool call changes.

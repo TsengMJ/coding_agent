@@ -323,10 +323,44 @@ func TestLocalShellExecuteTruncates(t *testing.T) {
 	}
 }
 
+func TestLocalShellExecuteKeepsOutputTail(t *testing.T) {
+	b := newShell(t, LocalShellOptions{MaxOutputBytes: 200})
+	res := b.Execute(context.Background(), "seq 1 5000; echo '3 failing'; echo 'AssertionError: boom' >&2; exit 1", nil)
+	for _, want := range []string{"1\n2\n3\n", "3 failing", "[stderr] AssertionError: boom", "bytes were omitted", "Exit code: 1"} {
+		if !strings.Contains(res.Output, want) {
+			t.Errorf("missing %q in:\n%s", want, res.Output)
+		}
+	}
+	if !res.Truncated || len(res.Output) > 600 {
+		t.Fatalf("truncated=%v len=%d", res.Truncated, len(res.Output))
+	}
+}
+
+func TestCappedBufferKeepsHeadAndTailOnRuneBoundaries(t *testing.T) {
+	c := &cappedBuffer{limit: 10}
+	for range 100 {
+		_, _ = c.Write([]byte("é"))
+	}
+	_, _ = c.Write([]byte("END"))
+	s, omitted := c.render()
+	head, tail, ok := strings.Cut(s, omittedGap)
+	if !ok || !utf8.ValidString(head) || !utf8.ValidString(tail) || !strings.HasSuffix(tail, "END") || !strings.HasPrefix(head, "éé") {
+		t.Fatalf("head %q tail %q", head, tail)
+	}
+	if int64(len(head)+len(tail))+omitted != 203 {
+		t.Fatalf("kept %d + omitted %d != written 203", len(head)+len(tail), omitted)
+	}
+	small := &cappedBuffer{limit: 100}
+	_, _ = small.Write([]byte("short"))
+	if s, n := small.render(); s != "short" || n != 0 {
+		t.Fatalf("small output changed: %q", s)
+	}
+}
+
 func TestLocalShellExecuteCapsBufferedOutput(t *testing.T) {
 	b := newShell(t, LocalShellOptions{MaxOutputBytes: 1000})
 	res := b.Execute(context.Background(), "head -c 5000000 /dev/zero | tr '\\0' 'x'", nil)
-	if !res.Truncated || len(res.Output) > 1100 {
+	if !res.Truncated || len(res.Output) > 1250 {
 		t.Fatalf("truncated=%v len=%d", res.Truncated, len(res.Output))
 	}
 }
@@ -334,7 +368,8 @@ func TestLocalShellExecuteCapsBufferedOutput(t *testing.T) {
 func TestLocalShellExecuteTruncatesOnRuneBoundary(t *testing.T) {
 	b := newShell(t, LocalShellOptions{MaxOutputBytes: 10})
 	res := b.Execute(context.Background(), "printf '中文中文中文中文'", nil)
-	if !res.Truncated || !utf8.ValidString(res.Output) || !strings.HasPrefix(res.Output, "中文中") {
+	head, rest, _ := strings.Cut(res.Output, omittedGap)
+	if !res.Truncated || !utf8.ValidString(res.Output) || head != "中" || !strings.HasPrefix(rest, "文\n") {
 		t.Fatalf("output = %q", res.Output)
 	}
 }

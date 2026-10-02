@@ -19,7 +19,7 @@ type execResult struct {
 	Truncated bool
 }
 
-var truncationNote = regexp.MustCompile(`\n\n\.\.\. Output truncated at \d+ bytes\.$`)
+var truncationNote = regexp.MustCompile(`\n\n\.\.\. Output truncated at \d+ bytes[^\n]*$`)
 
 // run executes command through sb and undoes the LocalShellBackend output
 // format (stdout, "[stderr] " lines, truncation note, "Exit code: N").

@@ -355,7 +355,8 @@ func barrierTool(n int) tool.Tool {
 	started := 0
 	all := make(chan struct{})
 	return &tool.Func{
-		ToolName: "wait",
+		ToolName:   "wait",
+		ToolEffect: tool.ReadOnly,
 		Fn: func(ctx context.Context, _ *tool.Runtime, args map[string]any) (*tool.Result, error) {
 			mu.Lock()
 			started++
@@ -397,7 +398,8 @@ func TestLoopRunsToolCallsInParallel(t *testing.T) {
 
 func TestLoopParallelCommandUpdatesApplyInCallOrder(t *testing.T) {
 	setter := &tool.Func{
-		ToolName: "set",
+		ToolName:   "set",
+		ToolEffect: tool.ReadOnly,
 		Fn: func(_ context.Context, rt *tool.Runtime, args map[string]any) (*tool.Result, error) {
 			v, _ := args["v"].(string)
 			if v == "first" {
@@ -530,9 +532,75 @@ func TestLoopNestedInvokeDoesNotStreamIntoParent(t *testing.T) {
 	}
 }
 
+// spanTool records when each call ran; effect declares what it touches.
+func spanTool(name string, effect func(map[string]any) tool.Effect, spans *sync.Map) tool.Tool {
+	return &tool.Func{
+		ToolName:   name,
+		ToolEffect: effect,
+		Fn: func(_ context.Context, rt *tool.Runtime, _ map[string]any) (*tool.Result, error) {
+			start := time.Now()
+			time.Sleep(30 * time.Millisecond)
+			spans.Store(rt.ToolCallID, [2]time.Time{start, time.Now()})
+			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("ok")}}, nil
+		},
+	}
+}
+
+func overlaps(spans *sync.Map, a, b string) bool {
+	x, _ := spans.Load(a)
+	y, _ := spans.Load(b)
+	sa, sb := x.([2]time.Time), y.([2]time.Time)
+	return sa[0].Before(sb[1]) && sb[0].Before(sa[1])
+}
+
+func TestLoopSchedulesToolCallsByEffect(t *testing.T) {
+	writeTo := func(args map[string]any) tool.Effect {
+		p, _ := args["path"].(string)
+		return tool.Effect{Kind: tool.EffectWrite, Paths: []string{p}}
+	}
+	readOf := func(args map[string]any) tool.Effect {
+		p, _ := args["path"].(string)
+		return tool.Effect{Kind: tool.EffectRead, Paths: []string{p}}
+	}
+	var spans sync.Map
+	model := llm.NewFakeModel(
+		toolCallReply(
+			llm.ToolCall{ID: "w1", Name: "write", Args: map[string]any{"path": "/a.go"}},
+			llm.ToolCall{ID: "w2", Name: "write", Args: map[string]any{"path": "/b.go"}},
+			llm.ToolCall{ID: "r1", Name: "read", Args: map[string]any{"path": "/a.go"}},
+			llm.ToolCall{ID: "r2", Name: "read", Args: map[string]any{"path": "/c.go"}},
+			llm.ToolCall{ID: "x1", Name: "exec"},
+			llm.ToolCall{ID: "r3", Name: "read", Args: map[string]any{"path": "/c.go"}},
+		),
+		llm.NewAssistantMessage("ok"),
+	)
+	tools := []tool.Tool{spanTool("write", writeTo, &spans), spanTool("read", readOf, &spans), spanTool("exec", nil, &spans)}
+	if _, err := invoke(t, Config{Model: model, Tools: tools}, "go"); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		a, b    string
+		overlap bool
+		why     string
+	}{
+		{"w1", "w2", true, "writes to different files run together"},
+		{"w1", "r2", true, "a read of another file does not wait"},
+		{"w1", "r1", false, "a read of a file waits for its earlier write"},
+		{"w2", "x1", false, "an undeclared tool waits for everything before it"},
+		{"r2", "x1", false, "an undeclared tool waits for earlier reads"},
+		{"x1", "r3", false, "calls after an undeclared tool wait for it"},
+	}
+	for _, c := range cases {
+		if got := overlaps(&spans, c.a, c.b); got != c.overlap {
+			t.Errorf("%s/%s overlap = %v: %s", c.a, c.b, got, c.why)
+		}
+	}
+}
+
 func TestLoopRecordsModelAndToolTiming(t *testing.T) {
 	sleeper := &tool.Func{
-		ToolName: "sleep",
+		ToolName:   "sleep",
+		ToolEffect: tool.ReadOnly,
 		Fn: func(ctx context.Context, _ *tool.Runtime, _ map[string]any) (*tool.Result, error) {
 			time.Sleep(50 * time.Millisecond)
 			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("slept")}}, nil

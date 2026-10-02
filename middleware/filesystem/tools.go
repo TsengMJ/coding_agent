@@ -44,11 +44,37 @@ func (m *Middleware) description(name ToolName, def string) string {
 	return def
 }
 
+// toolEffect declares what each filesystem tool touches, for scheduling.
+func toolEffect(name ToolName) func(map[string]any) tool.Effect {
+	pathOf := func(raw map[string]any, key string) []string {
+		if p, err := backend.ValidatePath(fmt.Sprint(raw[key]), nil); err == nil && raw[key] != nil {
+			return []string{p}
+		}
+		return nil
+	}
+	switch name {
+	case ToolLs, ToolGlob, ToolGrep:
+		return func(raw map[string]any) tool.Effect {
+			return tool.Effect{Kind: tool.EffectRead, Paths: pathOf(raw, "path")}
+		}
+	case ToolReadFile:
+		return func(raw map[string]any) tool.Effect {
+			return tool.Effect{Kind: tool.EffectRead, Paths: pathOf(raw, "file_path")}
+		}
+	case ToolWriteFile, ToolEditFile, ToolDelete:
+		return func(raw map[string]any) tool.Effect {
+			return tool.Effect{Kind: tool.EffectWrite, Paths: pathOf(raw, "file_path")}
+		}
+	}
+	return nil
+}
+
 func (m *Middleware) newTool(name ToolName, def string, schema tool.Schema, fn func(context.Context, args) *tool.Result) tool.Tool {
 	return &tool.Func{
 		ToolName:        string(name),
 		ToolDescription: m.description(name, def),
 		ToolSchema:      schema,
+		ToolEffect:      toolEffect(name),
 		Fn: func(ctx context.Context, rt *tool.Runtime, raw map[string]any) (*tool.Result, error) {
 			rc := backend.NewRunContext(nil)
 			if rt != nil {

@@ -65,6 +65,7 @@ func NewContext7Tools(opts Context7Options) []tool.Tool {
 	return []tool.Tool{
 		&tool.Func{
 			ToolName:        ResolveLibraryIDName,
+			ToolEffect:      tool.ReadOnly,
 			ToolDescription: resolveLibraryIDDescription,
 			ToolSchema: tool.Schema{
 				"type": "object",
@@ -81,6 +82,7 @@ func NewContext7Tools(opts Context7Options) []tool.Tool {
 		},
 		&tool.Func{
 			ToolName:        QueryDocsName,
+			ToolEffect:      tool.ReadOnly,
 			ToolDescription: queryDocsDescription,
 			ToolSchema: tool.Schema{
 				"type": "object",

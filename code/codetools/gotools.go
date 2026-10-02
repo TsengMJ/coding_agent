@@ -103,6 +103,7 @@ func NewRunTests(sb backend.SandboxBackend) tool.Tool {
 func NewDiagnostics(sb backend.SandboxBackend) tool.Tool {
 	return &tool.Func{
 		ToolName:        DiagnosticsName,
+		ToolEffect:      tool.ReadOnly,
 		ToolDescription: diagnosticsDescription,
 		ToolSchema: objectSchema(map[string]any{
 			"language":        languageSchema,

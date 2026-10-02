@@ -89,6 +89,9 @@ type SubAgent struct {
 	// subagent's filesystem middleware; used directly here they are rejected.
 	Permissions    []permissions.FilesystemPermission
 	ResponseFormat agent.ResponseFormat
+	// ReadOnly promises the subagent cannot change the workspace, so its
+	// task calls may run alongside the parent's other reads.
+	ReadOnly bool
 }
 
 func (s SubAgent) SubAgentName() string { return s.Name }
@@ -100,6 +103,8 @@ type CompiledSubAgent struct {
 	Description string
 	Runnable    agent.Agent
 	Mode        Mode
+	// ReadOnly is as for SubAgent.
+	ReadOnly bool
 }
 
 func (s CompiledSubAgent) SubAgentName() string { return s.Name }
@@ -241,8 +246,27 @@ func (m *Middleware) taskTool() tool.Tool {
 			"required":             []string{"description", "subagent_type"},
 			"additionalProperties": false,
 		},
-		Fn: m.task,
+		Fn:         m.task,
+		ToolEffect: m.taskEffect,
 	}
+}
+
+// taskEffect lets read-only and background subagents run alongside other
+// reads; any other subagent may change anything.
+func (m *Middleware) taskEffect(args map[string]any) tool.Effect {
+	name, _ := args["subagent_type"].(string)
+	bg, _ := args["run_in_background"].(bool)
+	readOnly := bg && m.bg != nil
+	switch s := m.specs[name].(type) {
+	case SubAgent:
+		readOnly = readOnly || s.ReadOnly
+	case CompiledSubAgent:
+		readOnly = readOnly || s.ReadOnly
+	}
+	if readOnly {
+		return tool.Effect{Kind: tool.EffectRead}
+	}
+	return tool.Effect{Kind: tool.EffectExec}
 }
 
 // WrapModelCall appends the subagent system prompt, if configured.

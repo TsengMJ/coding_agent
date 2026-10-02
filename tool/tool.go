@@ -4,6 +4,8 @@ package tool
 
 import (
 	"context"
+	"path"
+	"strings"
 
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
@@ -59,17 +61,92 @@ type Tool interface {
 	Invoke(ctx context.Context, rt *Runtime, args map[string]any) (*Result, error)
 }
 
+// EffectKind is the broadest thing a tool call may do to the workspace.
+type EffectKind int
+
+const (
+	// EffectExec may do anything (run commands, change any file); the call
+	// runs alone. It is the zero value, so undeclared tools are safe.
+	EffectExec EffectKind = iota
+	// EffectRead only reads.
+	EffectRead
+	// EffectWrite changes the files in Effect.Paths.
+	EffectWrite
+)
+
+// Effect is what one call does to the workspace. The agent loop runs the
+// calls of a model turn concurrently except where effects conflict; then
+// the later call waits for the earlier one.
+type Effect struct {
+	Kind EffectKind
+	// Paths are the files read or written; nil means the whole workspace.
+	Paths []string
+}
+
+// Effector is implemented by tools that declare their effect. A tool that
+// does not is treated as EffectExec.
+type Effector interface {
+	Effect(args map[string]any) Effect
+}
+
+// EffectOf returns t's effect for args.
+func EffectOf(t Tool, args map[string]any) Effect {
+	if e, ok := t.(Effector); ok {
+		return e.Effect(args)
+	}
+	return Effect{Kind: EffectExec}
+}
+
+// Conflicts reports whether e and o must not run at the same time: either
+// executes, or one writes what the other reads or writes.
+func (e Effect) Conflicts(o Effect) bool {
+	switch {
+	case e.Kind == EffectExec || o.Kind == EffectExec:
+		return true
+	case e.Kind == EffectRead && o.Kind == EffectRead:
+		return false
+	}
+	return pathsOverlap(e.Paths, o.Paths)
+}
+
+func pathsOverlap(a, b []string) bool {
+	if a == nil || b == nil {
+		return true
+	}
+	for _, p := range a {
+		for _, q := range b {
+			p, q := path.Clean("/"+p), path.Clean("/"+q)
+			if p == q || strings.HasPrefix(q, strings.TrimSuffix(p, "/")+"/") || strings.HasPrefix(p, strings.TrimSuffix(q, "/")+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Func adapts a function to the Tool interface (langchain `StructuredTool.from_function`).
 type Func struct {
 	ToolName        string
 	ToolDescription string
 	ToolSchema      Schema
 	Fn              func(ctx context.Context, rt *Runtime, args map[string]any) (*Result, error)
+	// ToolEffect declares the call's effect; nil means EffectExec.
+	ToolEffect func(args map[string]any) Effect
 }
 
 func (f *Func) Name() string        { return f.ToolName }
 func (f *Func) Description() string { return f.ToolDescription }
 func (f *Func) Schema() Schema      { return f.ToolSchema }
+
+func (f *Func) Effect(args map[string]any) Effect {
+	if f.ToolEffect == nil {
+		return Effect{Kind: EffectExec}
+	}
+	return f.ToolEffect(args)
+}
+
+// ReadOnly is a ToolEffect for tools that only read.
+func ReadOnly(map[string]any) Effect { return Effect{Kind: EffectRead} }
 
 func (f *Func) Invoke(ctx context.Context, rt *Runtime, args map[string]any) (*Result, error) {
 	return f.Fn(ctx, rt, args)
@@ -102,3 +179,5 @@ type describedTool struct {
 }
 
 func (d describedTool) Description() string { return d.description }
+
+func (d describedTool) Effect(args map[string]any) Effect { return EffectOf(d.Tool, args) }

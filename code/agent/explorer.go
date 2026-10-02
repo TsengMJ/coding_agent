@@ -47,6 +47,7 @@ func explorer(model llm.ChatModel, codeTools []tool.Tool) subagents.SubAgent {
 		SystemPrompt: explorerPrompt,
 		Model:        model,
 		Tools:        git,
+		ReadOnly:     true,
 		Middleware: []core.Middleware{researchLimits{allowed: explorerReadOnly,
 			refusal: "Error: `%s` is not available to the explorer, which only reads; report what you found instead."}},
 	}

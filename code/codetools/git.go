@@ -58,6 +58,7 @@ type FileDiff struct {
 func NewGitStatus(sb backend.SandboxBackend) tool.Tool {
 	return &tool.Func{
 		ToolName:        GitStatusName,
+		ToolEffect:      tool.ReadOnly,
 		ToolDescription: gitStatusDescription,
 		ToolSchema:      objectSchema(map[string]any{}),
 		Fn: func(ctx context.Context, _ *tool.Runtime, _ map[string]any) (*tool.Result, error) {
@@ -82,6 +83,7 @@ func gitStatus(ctx context.Context, sb backend.SandboxBackend) *tool.Result {
 func NewGitDiff(sb backend.SandboxBackend) tool.Tool {
 	return &tool.Func{
 		ToolName:        GitDiffName,
+		ToolEffect:      tool.ReadOnly,
 		ToolDescription: gitDiffDescription,
 		ToolSchema: objectSchema(map[string]any{
 			"paths":             map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional files or directories to limit the diff to."},

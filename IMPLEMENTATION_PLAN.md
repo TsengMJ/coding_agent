@@ -447,7 +447,15 @@
 **Goal**: 同批次工具依副作用排程；寫入前核對內容版本；shell 完整輸出可找回。
 **Success Criteria**: 唯讀工具並行、同路徑寫入序列化、`execute` 獨佔；讀取後被外部修改的檔案拒絕編輯；`apply_patch` 回滾遇到外部修改時不覆蓋；shell 尾端不再遺失。
 **Tests**: 同檔並行寫入、模擬外部插入修改、回滾衝突、超大輸出保留尾端與 artifact 讀回、`-race`。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- `tool.Effect`（Exec / Read / Write + paths）：未宣告的工具視為 Exec（獨佔）。`nodeTools` 依呼叫順序建立依賴：後面的呼叫只等與它衝突的前面呼叫，所以同一回合「改檔再跑測試」一定看到修改。檔案工具、git、diagnostics、web、todo 宣告了效果；`task` 對 `ReadOnly` subagent（explorer、web researcher）與背景任務是 Read，其他 subagent 是 Exec。
+- `backend.WithVersionGuard`（dcode 最外層）：沒讀過或讀後被改過（指令、使用者、其他編輯器）的既有檔案，write / edit / apply_patch 一律拒絕並要求重讀；新檔案不需要。subagent 與 apply_patch 共用同一個 guard。核心 SDK 預設不套（StateBackend 沒有外部修改的問題）。
+- `apply_patch` 回滾只還原內容仍等於本次寫入的檔案，其他保留並在錯誤中列出。
+- Shell 輸出改為保留頭尾各一半，中間標 `[... output omitted ...]` 並報告省略的位元組數。偏離計畫：沒有另建 Postgres 串流 artifact。超過 20k tokens 的結果本來就由 eviction 存進 Postgres artifact store；R1 baseline 中 execute 只佔工具輸出 ≤6%，沒有證據需要中段內容，重跑加 grep 即可。
+- 保留同回合同路徑寫入的拒絕檢查：StateBackend 下兩個寫入都基於同一個 snapshot，循序執行也會遺失更新。
+- 行為變化：兩個 `execute` 不再並行（TUI 測試改為顯示 sequential）。
 
 ### Stage R3: Durable run 與 crash 恢復
 **Goal**: crash 後不重放結果未知的非冪等工具；GUI 斷線不中止 run（先確認問題存在）。

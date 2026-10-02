@@ -71,6 +71,7 @@ func NewBraveSearch(opts BraveOptions) tool.Tool {
 	b := &brave{opts: opts}
 	return &tool.Func{
 		ToolName:        WebSearchName,
+		ToolEffect:      tool.ReadOnly,
 		ToolDescription: webSearchDescription,
 		ToolSchema:      webSearchSchema(),
 		Fn: func(ctx context.Context, _ *tool.Runtime, args map[string]any) (*tool.Result, error) {

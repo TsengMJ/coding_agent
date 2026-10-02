@@ -68,6 +68,7 @@ func (m *Middleware) Name() string { return "TodoListMiddleware" }
 func (m *Middleware) Tools() []tool.Tool {
 	return []tool.Tool{&tool.Func{
 		ToolName:        ToolName,
+		ToolEffect:      tool.ReadOnly,
 		ToolDescription: m.toolDescription,
 		ToolSchema: tool.Schema{
 			"type": "object",

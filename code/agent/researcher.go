@@ -64,6 +64,7 @@ func webResearcher(model llm.ChatModel, webTools []tool.Tool) subagents.SubAgent
 		SystemPrompt: webResearcherPrompt,
 		Model:        model,
 		Tools:        webTools,
+		ReadOnly:     true,
 		Middleware: []core.Middleware{researchLimits{allowed: allowed, max: map[string]int{
 			tools.WebSearchName: researchMaxSearches,
 			tools.FetchURLName:  researchMaxPages,

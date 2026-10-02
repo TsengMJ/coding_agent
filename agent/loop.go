@@ -385,7 +385,9 @@ const maxParallelTools = 8
 
 // nodeTools runs the pending tool calls concurrently against one state
 // snapshot, then applies their results in call order so tool messages and
-// Command updates stay deterministic.
+// Command updates stay deterministic. A call whose effect conflicts with an
+// earlier call's (see tool.Effect) waits for it, so a turn that edits a file
+// and then runs the tests sees the edit.
 func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 	st := state.(*execState)
 	calls := pendingToolCalls(st.State)
@@ -395,16 +397,26 @@ func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 	errs := make([]error, len(calls))
 	sem := make(chan struct{}, maxParallelTools)
 	structuredCalls := 0
-	for _, call := range calls {
+	effects := make([]tool.Effect, len(calls))
+	done := make([]chan struct{}, len(calls))
+	for i, call := range calls {
 		if a.isStructuredCall(call) {
 			structuredCalls++
 		}
+		effects[i] = a.effectOf(call)
+		done[i] = make(chan struct{})
 	}
 	var wg sync.WaitGroup
 	for i, call := range calls {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer close(done[i])
+			for j := range i {
+				if effects[j].Conflicts(effects[i]) {
+					<-done[j]
+				}
+			}
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			start := time.Now()
@@ -427,7 +439,7 @@ func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 		}()
 	}
 	wg.Wait()
-	done := false
+	finished := false
 	for i, call := range calls {
 		if errs[i] != nil {
 			return nil, errs[i]
@@ -435,12 +447,22 @@ func (a *loopAgent) nodeTools(ctx context.Context, state any) (any, error) {
 		if err := a.applyToolResult(st.State, call, results[i], timings[i]); err != nil {
 			return nil, err
 		}
-		done = done || (a.isStructuredCall(call) && !results[i].IsError)
+		finished = finished || (a.isStructuredCall(call) && !results[i].IsError)
 	}
-	if done {
+	if finished {
 		return &graph.Command{Goto: "after_agent", Update: st}, nil
 	}
 	return st, nil
+}
+
+// effectOf is a call's scheduling effect. The structured output tool and
+// unknown tools (which only produce an error) touch nothing.
+func (a *loopAgent) effectOf(call llm.ToolCall) tool.Effect {
+	t, ok := a.toolByName[call.Name]
+	if !ok || a.isStructuredCall(call) {
+		return tool.Effect{Kind: tool.EffectRead, Paths: []string{}}
+	}
+	return tool.EffectOf(t, call.Args)
 }
 
 func (a *loopAgent) isStructuredCall(call llm.ToolCall) bool {

@@ -93,7 +93,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	}
 	b = withHostRoutes(b, userSkillRoots(opts.UserDir, opts.AgentName), opts.Artifacts, opts.Cwd)
 	skillSources := existingSkillSources(ctx, b, SkillSources(opts.UserDir, opts.AgentName))
-	b = trace.WrapBackend(b)
+	b = backend.WithVersionGuard(trace.WrapBackend(b))
 	promptOpts := opts
 	promptOpts.Model = nil
 	promptOpts.ProjectContext = ""

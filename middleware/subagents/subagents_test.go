@@ -12,6 +12,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/deepagents_golang/tool"
 )
 
 // funcAgent is a CompiledSubAgent runnable backed by a function.
@@ -93,6 +94,23 @@ func TestValidateSpecs(t *testing.T) {
 func TestNewRequiresSubagents(t *testing.T) {
 	if _, err := New(Options{}); err == nil {
 		t.Fatal("want error without subagents")
+	}
+}
+
+func TestTaskEffectFollowsSubagentReadOnly(t *testing.T) {
+	m := llm.NewFakeModel()
+	mw, err := New(Options{SubAgents: []Spec{
+		SubAgent{Name: "explorer", Description: "reads", Model: m, ReadOnly: true},
+		SubAgent{Name: "worker", Description: "writes", Model: m},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := mw.Tools()[0]
+	for name, want := range map[string]tool.EffectKind{"explorer": tool.EffectRead, "worker": tool.EffectExec, "missing": tool.EffectExec} {
+		if got := tool.EffectOf(task, map[string]any{"subagent_type": name}).Kind; got != want {
+			t.Errorf("%s: effect %v, want %v", name, got, want)
+		}
 	}
 }
 
@@ -236,8 +254,8 @@ func TestParallelTaskCallsRunConcurrently(t *testing.T) {
 		}}
 	}
 	mw, err := New(Options{SubAgents: []Spec{
-		CompiledSubAgent{Name: "a", Description: "A", Runnable: barrier("from a")},
-		CompiledSubAgent{Name: "b", Description: "B", Runnable: barrier("from b")},
+		CompiledSubAgent{Name: "a", Description: "A", Runnable: barrier("from a"), ReadOnly: true},
+		CompiledSubAgent{Name: "b", Description: "B", Runnable: barrier("from b"), ReadOnly: true},
 	}})
 	if err != nil {
 		t.Fatal(err)

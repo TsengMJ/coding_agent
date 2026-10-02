@@ -106,6 +106,7 @@ func NewFetchURLWith(opts FetchOptions) tool.Tool {
 	}
 	return &tool.Func{
 		ToolName:        FetchURLName,
+		ToolEffect:      tool.ReadOnly,
 		ToolDescription: desc,
 		ToolSchema: tool.Schema{
 			"type":                 "object",

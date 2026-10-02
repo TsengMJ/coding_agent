@@ -148,6 +148,9 @@ func TestSplitExecOutput(t *testing.T) {
 			execResult{Stdout: "partial", Stderr: "fatal: not a git repository\nhint", ExitCode: 128}},
 		{"truncated", backend.ExecuteResponse{Output: "abc\n\n... Output truncated at 3 bytes.", ExitCode: code(0), Truncated: true},
 			execResult{Stdout: "abc", Truncated: true}},
+		{"head and tail", backend.ExecuteResponse{Output: "a\n[... output omitted ...]\nz\n[stderr] boom\n\n... Output truncated at 3 bytes: 9 bytes were omitted where marked \"[... output omitted ...]\"; rerun through grep, head or tail to see them.\n\nExit code: 1",
+			ExitCode: code(1), Truncated: true},
+			execResult{Stdout: "a\n[... output omitted ...]\nz", Stderr: "boom", ExitCode: 1, Truncated: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

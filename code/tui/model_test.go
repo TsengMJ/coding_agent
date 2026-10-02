@@ -418,7 +418,7 @@ func TestTranscriptShowsModelCallsWithToolsNested(t *testing.T) {
 	drain(t, m, m.submit("run two sleeps"))
 
 	view := ansi.Strip(m.transcript())
-	for _, want := range []string{"◆ main · LLM #1", "1.2k in / 34 out", "├─ execute sleep 0.3", "└─ execute sleep 0.3", "◆ main · LLM #2", "⇉ 2 tools", "parallel"} {
+	for _, want := range []string{"◆ main · LLM #1", "1.2k in / 34 out", "├─ execute sleep 0.3", "└─ execute sleep 0.3", "◆ main · LLM #2", "⇉ 2 tools", "sequential"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("transcript missing %q:\n%s", want, view)
 		}
