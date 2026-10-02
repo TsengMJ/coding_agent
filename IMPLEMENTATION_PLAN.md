@@ -411,3 +411,68 @@
 - 23d dcode：`code/subagents.LoadAsync` 讀 `config.toml` 的 `[async_subagents.<name>]`（`description/url/graph_id/headers`），缺欄位報錯；名字不能和其他 subagent 重複
 **Tests**: httptest 假 server 跑完 start → check（success 帶結果）→ update → cancel → list、headers、system prompt 與工具順序；未知類型、server 錯誤、未知 task_id、空清單；New 驗證；checkpoint JSON 的 reducer；組裝後拿得到五個工具、沒有 URL 被拒；LoadAsync 讀取 / 缺檔 / 缺欄位。
 **Status**: Complete
+
+## 重構 R0–R9（[docs/reconstruct_plan_final.md](docs/reconstruct_plan_final.md)）
+
+依最終方案逐步重構：先日常使用的系統正確性，再處理 benchmark 已觀察到的失敗。各 Stage 只用 deterministic 測試與歷史 trace 的離線分析驗證，全部完成後跑一次 `regress-v1` × 2。每個新行為都有開關，供最終消融使用。
+
+### Stage R0: 整理工作樹
+**Goal**: 修掉 server 測試的 data race，把 Stage 17–23 未提交的改動依層提交，之後的 run 才能對應到 commit。
+**Success Criteria**: `make check`、`go test -race ./...`、`make web-test` 通過；每個 commit 單獨可編譯。
+**Tests**: `go test -race -count=10 ./code/server/` 無 race。
+**Status**: Complete
+**Results**: race 是前一個測試的 `Serve` goroutine 在收尾時讀 `shutdownGrace`，同時下一個測試在改它；`ServeHandler` 改成在回報 ready 之前讀一次。提交為 4 個 commit（核心 SDK、dcode / dbench、GUI、文件），前兩個各自在只含該層改動的工作樹上 build / vet / test 通過。
+
+### Stage R1: 可信量測
+**Goal**: 修正與補齊 dbench 指標，讓最終評測能和歷史 baseline 正確比較。不改 agent 行為。
+**Success Criteria**: 歷史 run 重算的指標與文件 §3.1 一致（定義修正的部分說明差異）；舊資料缺的欄位標成 unknown。
+**Tests**: metrics table-driven（`run_tests` 計入、重複呼叫、各工具輸出字元、gold_src 過濾、first_gold_src_touch_step）；analyze 對固定 trace fixture 的 golden 輸出；失敗分類規則。
+**Status**: Not Started
+
+### Stage R2: 寫入安全與工具執行正確性
+**Goal**: 同批次工具依副作用排程；寫入前核對內容版本；shell 完整輸出可找回。
+**Success Criteria**: 唯讀工具並行、同路徑寫入序列化、`execute` 獨佔；讀取後被外部修改的檔案拒絕編輯；`apply_patch` 回滾遇到外部修改時不覆蓋；shell 尾端不再遺失。
+**Tests**: 同檔並行寫入、模擬外部插入修改、回滾衝突、超大輸出保留尾端與 artifact 讀回、`-race`。
+**Status**: Not Started
+
+### Stage R3: Durable run 與 crash 恢復
+**Goal**: crash 後不重放結果未知的非冪等工具；GUI 斷線不中止 run（先確認問題存在）。
+**Success Criteria**: 工具執行 ledger 記錄開始 / 完成；重啟後未完成的工具以「結果未知」告知模型。
+**Tests**: 工具前後、checkpoint 前後注入 crash；斷線續接。
+**Status**: Not Started
+
+### Stage R4: Provider 正確性與 cache 前綴
+**Goal**: OpenRouter 的 `reasoning_details` 原樣回傳；system message 在整個 run 內不變。
+**Success Criteria**: probe 確認 API 行為；httptest 驗證來回；system message 多次呼叫位元組相同。
+**Tests**: httptest reasoning_details round trip；liveContext 移到尾端後 system message 不變。
+**Status**: Not Started
+
+### Stage R5: 驗證與完成閘門
+**Goal**: agent 不能把自己造成的 regression 當成無關；最終 diff 沒有副產品。
+**Success Criteria**: 失敗測試在 HEAD 上比對並標記；受影響的測試檔列入完成條件；DiffInspector 擋下副產品；prompt 矛盾移除。
+**Tests**: 暫存 git repo 的 regression / pre-existing / flaky；工作樹不遺失；DiffInspector table-driven；FakeModel 重現 bd80。
+**Status**: Not Started
+
+### Stage R6: Context 與工具輸出
+**Goal**: 舊的可重建 tool 輸出不再留在 context。
+**Success Criteria**: 歷史 trace 離線重播的 input tokens 明顯下降；tool call 配對不壞。
+**Tests**: ContextBuilder table-driven；歷史 trace 重播。
+**Status**: Not Started
+
+### Stage R7: 進度監控與委派契約
+**Goal**: 相同失敗不再盲目重試；subagent 共用父預算。
+**Success Criteria**: 第 3 次相同失敗呼叫被拒；預算提示；subagent 步數上限與取消傳播。
+**Tests**: FakeModel 重送失敗 patch；指紋正規化；歷史 trace 重播統計觸發次數。
+**Status**: Not Started
+
+### Stage R8: 搜尋、環境與記憶
+**Goal**: grep 支援 regex 與 `.gitignore`、有結果上限；glob 忽略規則一致；Environment Profile。
+**Success Criteria**: rg 不存在時退回；明確搜尋依賴目錄時照常回傳。
+**Tests**: rg 參數組裝、gitignore 生效、上限訊息、退回路徑。
+**Status**: Not Started
+
+### Stage R9: 安全
+**Goal**: 子程序最小環境、trace 遮蔽 secret、sandbox adapter、危險指令分級。
+**Success Criteria**: 子程序看不到未允許的環境變數；trace 不含測試用假 secret；沒有 sandbox 時明確顯示。
+**Tests**: env 白名單、redaction 規則、風險分級 table-driven、sandbox 整合測試（平台支援時）。
+**Status**: Not Started
