@@ -152,6 +152,18 @@ export interface ThreadState {
   plan?: Plan;
 }
 
+export interface HistoryPage {
+  thread_id: string;
+  checkpoint_seq: number;
+  messages: Message[];
+  interrupts?: Interrupt[];
+  model?: string;
+  todos?: Todo[];
+  plan?: Plan;
+  has_more: boolean;
+  next_before?: number;
+}
+
 // Question, Option and Answer mirror code/askuser.
 export interface QuestionOption {
   id: string;
@@ -201,6 +213,7 @@ export interface ThreadInfo {
   title?: string;
   updated_at?: string;
   message_count?: number;
+  running?: boolean;
 }
 
 // SlashCommand mirrors commands.Command from GET /api/commands.

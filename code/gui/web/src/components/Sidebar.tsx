@@ -18,7 +18,6 @@ export function Sidebar({
   onPick,
   onNew,
   onRename,
-  busy,
   version,
 }: {
   threads: ThreadInfo[];
@@ -28,12 +27,15 @@ export function Sidebar({
   onPick: (t: ThreadInfo) => void;
   onNew: () => void;
   onRename: (id: string, title: string) => Promise<boolean>;
-  busy: boolean;
   version: string;
 }) {
   const [editing, setEditing] = useState("");
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const runningByCwd = new Map<string, number>();
+  for (const thread of threads) {
+    if (thread.running && thread.cwd) runningByCwd.set(thread.cwd, (runningByCwd.get(thread.cwd) ?? 0) + 1);
+  }
   const listed: ThreadInfo[] = threads.some((t) => t.thread_id === current) ? threads : [{ thread_id: current, cwd: "", title: "New thread" }, ...threads];
   const save = async () => {
     if (!draft.trim() || saving) return;
@@ -49,7 +51,7 @@ export function Sidebar({
     <nav className="sidebar">
       <div className="sidebar-head">
         <span className="brand">dcode</span>
-        <button className="btn" onClick={onNew} disabled={busy} title="Start a new thread">
+        <button className="btn" onClick={onNew} title="Start a new thread">
           + New
         </button>
       </div>
@@ -76,15 +78,15 @@ export function Sidebar({
               </form>
             ) : (
               <div className="thread-item-top">
-                <button className="thread-pick" onClick={() => onPick(t)} disabled={busy}>
+                <button className="thread-pick" onClick={() => onPick(t)}>
                   <span className="thread-title" title={t.title || "(untitled)"}>{t.title || "(untitled)"}</span>
                 </button>
+                {t.running && <span className="thread-running" title="This thread is currently running"><span className="spinner" /> Running</span>}
                 {t.updated_at && (
                   <button
                     className="thread-edit"
                     aria-label={`Rename ${t.title || "thread"}`}
                     title="Rename thread"
-                    disabled={busy}
                     onClick={() => { setEditing(t.thread_id); setDraft(t.title || ""); }}
                   >
                     ✎
@@ -96,6 +98,7 @@ export function Sidebar({
               {t.thread_id} {t.message_count ? `· ${t.message_count} msgs` : ""} {ago(t.updated_at)}
             </div>
             {allDirs && t.cwd && <div className="thread-meta mono">{t.cwd}</div>}
+            {t.running && (runningByCwd.get(t.cwd) ?? 0) > 1 && <div className="thread-warning">⚠ multiple agents share this directory</div>}
           </div>
         ))}
       </div>

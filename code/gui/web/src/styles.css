@@ -138,7 +138,8 @@ pre,
 }
 
 .thread-item-top {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 4px;
 }
@@ -201,9 +202,47 @@ pre,
 }
 
 .thread-title {
+  display: block;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.thread-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.thread-warning {
+  color: var(--yellow);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.clear-search {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  margin-left: -30px;
+  padding: 0 8px;
+  z-index: 1;
+}
+
+.history-load-state {
+  color: var(--muted);
+  text-align: center;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.history-load-state button {
+  margin-left: 6px;
 }
 
 .thread-meta {
@@ -1599,6 +1638,25 @@ kbd {
     width: min(560px, 100vw);
     box-shadow: -12px 0 36px rgba(0, 0, 0, 0.4);
   }
+}
+
+@media (max-width: 700px) {
+  .app,
+  .app.with-drawer {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .sidebar-head { padding: 10px 6px; }
+  .brand { font-size: 0; }
+  .brand::after { content: "d"; font-size: 16px; }
+  .sidebar-head .btn { padding: 4px 7px; font-size: 0; }
+  .sidebar-head .btn::after { content: "+"; font-size: 16px; }
+  .sidebar > div:nth-child(2), .thread-meta, .thread-running, .thread-warning, .thread-edit { display: none; }
+  .thread-list { padding: 4px; }
+  .thread-item { padding: 8px 4px; }
+  .thread-item-top { grid-template-columns: minmax(0, 1fr); }
+  .thread-title { font-size: 11px; }
+  .sidebar-foot { padding: 6px 4px; font-size: 0; }
 }
 
 .empty-state {

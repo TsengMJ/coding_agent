@@ -20,7 +20,11 @@ export interface LiveState {
   error: string;
 }
 
-type Item = { kind: "turn"; turn: Turn } | { kind: "live" };
+type Item =
+  | { kind: "header"; turn: Turn }
+  | { kind: "step"; turn: Turn; index: number }
+  | { kind: "files"; turn: Turn }
+  | { kind: "live" };
 
 // Timeline is the scrollable history: one virtualized item per turn, so
 // long threads stay fast, plus a live item for what is streaming now. It
@@ -31,14 +35,30 @@ export const Timeline = forwardRef<VirtuosoHandle, {
   threadId: string;
   onReuseUserMessage: (text: string) => void;
   reuseDisabled: boolean;
+  hasMore?: boolean;
+  loadingOlder?: boolean;
+  olderError?: string;
+  onLoadOlder?: () => void;
+  loading?: boolean;
 }>(
-  function Timeline({ turns, live, threadId, onReuseUserMessage, reuseDisabled }, ref) {
-    const items: Item[] = [...turns.map((turn) => ({ kind: "turn" as const, turn })), { kind: "live" }];
+  function Timeline({ turns, live, threadId, onReuseUserMessage, reuseDisabled, hasMore, loadingOlder, olderError, onLoadOlder, loading }, ref) {
+    // A user turn can contain dozens of model calls and tool rows. Keep each
+    // step virtualized independently so one long turn cannot defeat Virtuoso.
+    const items: Item[] = [];
+    for (const turn of turns) {
+      if (turn.user || turn.notes.length) items.push({ kind: "header", turn });
+      turn.steps.forEach((_, index) => items.push({ kind: "step", turn, index }));
+      if (turn.files.length) items.push({ kind: "files", turn });
+    }
+    items.push({ kind: "live" });
     const [atBottom, setAtBottom] = useState(true);
     const handle = ref as React.RefObject<VirtuosoHandle | null>;
     useEffect(() => {
       if (atBottom) handle.current?.scrollToIndex({ index: "LAST", align: "end" });
     }, [live.streamText, live.pendingUser, live.running, atBottom, handle]);
+    if (loading && turns.length === 0) {
+      return <div className="timeline empty-state" role="status"><h2>Loading conversation…</h2><div>Reading the most recent messages.</div></div>;
+    }
     if (turns.length === 0 && !live.pendingUser && !live.running) {
       return (
         <div className="timeline empty-state">
@@ -49,24 +69,37 @@ export const Timeline = forwardRef<VirtuosoHandle, {
       );
     }
     return (
+      <>
       <Virtuoso
         key={threadId}
         ref={ref}
         className="timeline"
         data={items}
         initialTopMostItemIndex={items.length - 1}
+        startReached={() => { if (hasMore && !loadingOlder) onLoadOlder?.(); }}
         followOutput={(bottom) => (bottom ? "auto" : false)}
         atBottomStateChange={setAtBottom}
         atBottomThreshold={80}
         increaseViewportBy={{ top: 800, bottom: 800 }}
-        computeItemKey={(_, it) => (it.kind === "turn" ? it.turn.key : "live")}
-        itemContent={(_, it) => (it.kind === "turn" ? <TurnView turn={it.turn} onReuseUserMessage={onReuseUserMessage} reuseDisabled={reuseDisabled} /> : <LiveView live={live} />)}
+        computeItemKey={(_, it) => it.kind === "header" ? `${it.turn.key}-header` : it.kind === "step" ? it.turn.steps[it.index].key : it.kind === "files" ? `${it.turn.key}-files` : "live"}
+        itemContent={(_, it) => {
+          if (it.kind === "header") return <TurnHeader turn={it.turn} onReuseUserMessage={onReuseUserMessage} reuseDisabled={reuseDisabled} />;
+          if (it.kind === "step") return <div className="turn"><StepView step={it.turn.steps[it.index]} /></div>;
+          if (it.kind === "files") return <FilesChanged turn={it.turn} />;
+          return <LiveView live={live} />;
+        }}
       />
+      {(loadingOlder || olderError) && (
+        <div className="history-load-state" role="status">
+          {loadingOlder ? "Loading earlier messages…" : <>Could not load earlier messages. <button type="button" onClick={onLoadOlder}>Retry</button></>}
+        </div>
+      )}
+      </>
     );
   },
 );
 
-function TurnView({ turn, onReuseUserMessage, reuseDisabled }: { turn: Turn; onReuseUserMessage: (text: string) => void; reuseDisabled: boolean }) {
+function TurnHeader({ turn, onReuseUserMessage, reuseDisabled }: { turn: Turn; onReuseUserMessage: (text: string) => void; reuseDisabled: boolean }) {
   const { query } = useUI();
   const userText = textOf(turn.user);
   return (
@@ -95,10 +128,6 @@ function TurnView({ turn, onReuseUserMessage, reuseDisabled }: { turn: Turn; onR
           {m.role}: {firstLine(textOf(m))}
         </div>
       ))}
-      {turn.steps.map((s) => (
-        <StepView key={s.key} step={s} />
-      ))}
-      {turn.files.length > 0 && <FilesChanged turn={turn} />}
     </div>
   );
 }
@@ -184,6 +213,7 @@ function ToolRow({ step, last }: { step: ToolStep; last: boolean }) {
   const added = step.diffs.reduce((a, d) => a + d.added, 0);
   const removed = step.diffs.reduce((a, d) => a + d.removed, 0);
   const label = step.sub ? `◇ task #${step.sub.number}` : step.call.name;
+  const canHaveDiff = ["write_file", "edit_file", "apply_patch", "delete"].includes(step.call.name);
   return (
     <div className="nest">
       <div
@@ -203,6 +233,11 @@ function ToolRow({ step, last }: { step: ToolStep; last: boolean }) {
         </span>
         <span className="meta">
           {step.diffs.length > 0 && <DiffStat added={added} removed={removed} />}
+          {canHaveDiff && step.diffs.length === 0 && (
+            <button className="copy" type="button" disabled={ui.diffsLoading} onClick={(e) => { e.stopPropagation(); ui.loadDiffs(); }}>
+              {ui.diffsLoading ? "loading changes…" : "load changes"}
+            </button>
+          )}
           <span className={step.status === "error" || failedCommand(step) ? "minus" : ""}>{resultSummary(step)}</span>
           {step.durationMs !== undefined && <span>{formatDuration(step.durationMs)}</span>}
         </span>

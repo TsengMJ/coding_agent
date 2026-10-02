@@ -1,6 +1,7 @@
 import type {
   Decision,
   Info,
+  HistoryPage,
   LLMCallDetail,
   Message,
   RunEvent,
@@ -95,6 +96,17 @@ export class Api {
     }
   }
 
+  async history(id: string, before = 0, limit = 20): Promise<HistoryPage | null> {
+    try {
+      const q = new URLSearchParams({ limit: String(limit) });
+      if (before) q.set("before", String(before));
+      return await this.json(`/threads/${encodeURIComponent(id)}/history?${q}`);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
   async usage(id: string): Promise<ThreadUsage | null> {
     try {
       return await this.json(`/threads/${encodeURIComponent(id)}/usage`);
@@ -106,6 +118,10 @@ export class Api {
 
   trace(id: string): Promise<Trace> {
     return this.json(`/threads/${encodeURIComponent(id)}/trace`);
+  }
+
+  traceSummary(id: string): Promise<Trace> {
+    return this.json(`/threads/${encodeURIComponent(id)}/trace/summary`);
   }
 
   llmCall(id: string, seq: number): Promise<LLMCallDetail> {

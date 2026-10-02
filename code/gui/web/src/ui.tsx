@@ -13,6 +13,8 @@ export interface UI {
   inspect: (seq: number, label: string) => void;
   inspecting?: number;
   query: string;
+  loadDiffs: () => void;
+  diffsLoading: boolean;
 }
 
 export const UIContext = createContext<UI | null>(null);

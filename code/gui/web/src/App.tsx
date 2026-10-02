@@ -34,6 +34,7 @@ const MAIN_MIN_WIDTH = 480;
 const DRAWER_OVERLAY_WIDTH = SIDEBAR_WIDTH + RESIZE_HANDLE_WIDTH + DRAWER_MIN_WIDTH + MAIN_MIN_WIDTH;
 
 type Draft = { text: string; literal: boolean };
+type HistoryCursor = { checkpointSeq: number; hasMore: boolean; nextBefore: number; loading: boolean; error: string };
 
 function savedDrawerWidth(): number | null {
   try {
@@ -83,7 +84,10 @@ export function App({ api }: { api: Api }) {
   const [fatal, setFatal] = useState("");
   const [threadId, setThreadId] = useState("");
   const [runCwd, setRunCwd] = useState("");
-  const [view, setView] = useState<ThreadView>(emptyView);
+  // A running stream must belong to its thread even after the user switches
+  // the visible conversation. Keeping views keyed by ID also lets several
+  // threads run at once in one browser page.
+  const [views, setViews] = useState<Record<string, ThreadView>>({});
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [allDirs, setAllDirs] = useState(false);
   const [autoApprove, setAutoApprove] = useState(false);
@@ -97,21 +101,33 @@ export function App({ api }: { api: Api }) {
   // modelOverride is sent with every run (dcode -model or /model); threadModel
   // is the model the current thread last ran with.
   const [modelOverride, setModelOverride] = useState("");
-  const [threadModel, setThreadModel] = useState("");
+  const [threadModels, setThreadModels] = useState<Record<string, string>>({});
   const [usage, setUsage] = useState<ThreadUsage | null>(null);
   const [mode, setMode] = useState<RunMode>("agent");
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [historyCursors, setHistoryCursors] = useState<Record<string, HistoryCursor>>({});
+  const [diffsLoading, setDiffsLoading] = useState<Record<string, boolean>>({});
   const [replaceCandidate, setReplaceCandidate] = useState<string | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [drawerWidth, setDrawerWidth] = useState(() => savedDrawerWidth() ?? Math.round(window.innerWidth * 0.42));
   const drawerWidthRef = useRef(drawerWidth);
-  const abortRef = useRef<AbortController | null>(null);
+  const abortRefs = useRef<Record<string, AbortController | undefined>>({});
   const listRef = useRef<VirtuosoHandle | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const currentThreadRef = useRef("");
   const loadSeqRef = useRef(0);
   const listSeqRef = useRef(0);
+
+  const setViewFor = useCallback((id: string, update: ThreadView | ((previous: ThreadView) => ThreadView)) => {
+    setViews((previous) => {
+      const current = previous[id] ?? emptyView();
+      const next = typeof update === "function" ? update(current) : update;
+      return { ...previous, [id]: next };
+    });
+  }, []);
+  const view = views[threadId] ?? emptyView();
+  const threadModel = threadModels[threadId] ?? "";
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth);
@@ -192,40 +208,78 @@ export function App({ api }: { api: Api }) {
   const refreshPlan = useCallback(
     async (id: string) => {
       try {
-        const ts = await api.thread(id);
-        if (id === currentThreadRef.current) setView((v) => ({ ...v, plan: ts?.plan ?? null }));
+        const ts = await api.history(id);
+        if (ts) setViewFor(id, (v) => ({ ...v, plan: ts.plan ?? null }));
       } catch {
         // keep the last known plan
       }
     },
-    [api],
+    [api, setViewFor],
   );
 
   const loadThread = useCallback(
     async (id: string) => {
       const seq = ++loadSeqRef.current;
       currentThreadRef.current = id;
-      abortRef.current?.abort();
       setThreadId(id);
       setExpanded(new Set());
       setSelected("");
       setInspect(null);
       setReplaceCandidate(null);
-      setView(emptyView());
-      setThreadModel("");
+      setViewFor(id, (v) => ({ ...v, error: "" }));
+      setHistoryCursors((pages) => ({ ...pages, [id]: { checkpointSeq: 0, hasMore: false, nextBefore: 0, loading: true, error: "" } }));
+      setThreadModels((models) => ({ ...models, [id]: "" }));
       setUsage(null);
-      void refreshUsage(id);
       try {
-        const [ts, trace] = await Promise.all([api.thread(id), api.trace(id)]);
+        const [ts, trace] = await Promise.all([api.history(id), api.traceSummary(id)]);
         if (seq !== loadSeqRef.current) return;
-        setThreadModel(ts?.model ?? "");
-        setView(fromHistory(ts, trace));
+        setThreadModels((models) => ({ ...models, [id]: ts?.model ?? "" }));
+        setViewFor(id, fromHistory(ts, trace));
+        setHistoryCursors((pages) => ({ ...pages, [id]: {
+          checkpointSeq: ts?.checkpoint_seq ?? 0, hasMore: ts?.has_more ?? false,
+          nextBefore: ts?.next_before ?? 0, loading: false, error: "",
+        } }));
       } catch (e) {
-        if (seq === loadSeqRef.current) setView({ ...emptyView(), error: `Could not load thread ${id}: ${(e as Error).message}` });
+        if (seq === loadSeqRef.current) {
+          setViewFor(id, { ...emptyView(), error: `Could not load thread ${id}: ${(e as Error).message}` });
+          setHistoryCursors((pages) => ({ ...pages, [id]: { checkpointSeq: 0, hasMore: false, nextBefore: 0, loading: false, error: (e as Error).message } }));
+        }
       }
-    },
-    [api, refreshUsage],
+  },
+    [api, setViewFor],
   );
+
+  const loadOlder = useCallback(async () => {
+    const cursor = historyCursors[threadId];
+    if (!cursor?.hasMore || cursor.loading || !cursor.nextBefore) return;
+    setHistoryCursors((pages) => ({ ...pages, [threadId]: { ...cursor, loading: true, error: "" } }));
+    try {
+      const page = await api.history(threadId, cursor.nextBefore);
+      if (!page || page.checkpoint_seq !== cursor.checkpointSeq) {
+        void loadThread(threadId);
+        return;
+      }
+      setViewFor(threadId, (v) => ({ ...v, messages: [...page.messages, ...v.messages] }));
+      setHistoryCursors((pages) => ({ ...pages, [threadId]: {
+        checkpointSeq: page.checkpoint_seq, hasMore: page.has_more,
+        nextBefore: page.next_before ?? 0, loading: false, error: "",
+      } }));
+    } catch (e) {
+      setHistoryCursors((pages) => ({ ...pages, [threadId]: { ...cursor, loading: false, error: (e as Error).message } }));
+    }
+  }, [api, historyCursors, loadThread, setViewFor, threadId]);
+
+  const loadDiffs = useCallback(() => {
+    if (diffsLoading[threadId]) return;
+    setDiffsLoading((loading) => ({ ...loading, [threadId]: true }));
+    void api.trace(threadId).then((trace) => {
+      setViewFor(threadId, (v) => ({ ...v, diffs: trace.diffs }));
+    }).catch((e: Error) => {
+      setNotice(`Could not load file diffs: ${e.message}`);
+    }).finally(() => {
+      setDiffsLoading((loading) => ({ ...loading, [threadId]: false }));
+    });
+  }, [api, diffsLoading, setViewFor, threadId]);
 
   useEffect(() => {
     api
@@ -257,6 +311,18 @@ export function App({ api }: { api: Api }) {
     return () => window.removeEventListener("focus", onFocus);
   }, [info, refreshThreads]);
 
+  // Running is process-local state. Poll the inexpensive thread catalogue
+  // while this page is visible so a reload or another GUI page still shows
+  // every active thread.
+  useEffect(() => {
+    if (!info) return;
+    const tick = () => {
+      if (document.visibilityState === "visible") void refreshThreads(info.cwd);
+    };
+    const id = window.setInterval(tick, 3000);
+    return () => window.clearInterval(id);
+  }, [info, refreshThreads]);
+
   useEffect(() => {
     api
       .commands()
@@ -277,37 +343,43 @@ export function App({ api }: { api: Api }) {
     () => (filter === "llm" ? visibleTurns.map((t) => ({ ...t, steps: t.steps.map((s) => ({ ...s, tools: [], batch: undefined })) })) : visibleTurns),
     [visibleTurns, filter],
   );
+  const noSearchResults = timeline.turns.length > 0 && shownTurns.length === 0 && (filter !== "all" || !!query.trim());
 
   const run = useCallback(
     async (
       req: { messages?: Message[]; resume?: { decisions: Decision[] }; mode?: RunMode; build_plan?: boolean },
       userText: string,
     ) => {
+      const runThreadID = threadId;
+      const runCwdForThread = runCwd;
+      const runAutoApprove = autoApprove;
+      const runModel = modelOverride || undefined;
+      const runMode = mode;
       const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      setView((v) => startRun(v, userText));
+      abortRefs.current[runThreadID] = ctrl;
+      setViewFor(runThreadID, (v) => startRun(v, userText));
+      void refreshThreads(info?.cwd ?? "");
       let error = "";
       try {
-        const model = modelOverride || undefined;
-        const body = { thread_id: threadId, cwd: runCwd, auto_approve: autoApprove, model, mode, ...req };
+        const body = { thread_id: runThreadID, cwd: runCwdForThread, auto_approve: runAutoApprove, model: runModel, mode: runMode, ...req };
         for await (const ev of api.run(body, ctrl.signal)) {
           if (ev.event === "done") break;
           if (ev.event === "error") error = ev.error ?? "run failed";
-          setView((v) => applyEvent(v, ev));
+          setViewFor(runThreadID, (v) => applyEvent(v, ev));
         }
       } catch (e) {
         if (!ctrl.signal.aborted) error = (e as Error).message;
       } finally {
         if (ctrl.signal.aborted && !error) error = "Stopped.";
-        setView((v) => endRun(v, error));
-        abortRef.current = null;
+        setViewFor(runThreadID, (v) => endRun(v, error));
+        delete abortRefs.current[runThreadID];
         void refreshThreads(info?.cwd ?? "");
-        if (modelOverride) setThreadModel(modelOverride);
-        void refreshUsage(threadId);
-        void refreshPlan(threadId);
+        if (modelOverride) setThreadModels((models) => ({ ...models, [runThreadID]: modelOverride }));
+        void refreshUsage(runThreadID);
+        void refreshPlan(runThreadID);
       }
     },
-    [api, threadId, runCwd, autoApprove, modelOverride, mode, refreshThreads, refreshUsage, refreshPlan, info],
+    [api, threadId, runCwd, autoApprove, modelOverride, mode, refreshThreads, refreshUsage, refreshPlan, info, setViewFor],
   );
 
   const build = useCallback(() => {
@@ -461,8 +533,10 @@ export function App({ api }: { api: Api }) {
       inspect: (seq, label) => setInspect({ seq, label }),
       inspecting: inspect?.seq,
       query,
+      loadDiffs,
+      diffsLoading: !!diffsLoading[threadId],
     }),
-    [api, threadId, expanded, selected, inspect, query],
+    [api, threadId, expanded, selected, inspect, query, loadDiffs, diffsLoading],
   );
 
   // keyboard navigation over the rendered rows
@@ -557,7 +631,6 @@ export function App({ api }: { api: Api }) {
           }}
           onNew={newThread}
           onRename={renameThread}
-          busy={view.running}
           version={info.version}
         />
         <main className="main">
@@ -607,6 +680,7 @@ export function App({ api }: { api: Api }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
+            {query && <button className="clear-search" type="button" onClick={() => setQuery("")} aria-label="Clear search">×</button>}
             {(filter !== "all" || query) && (
               <span className="muted" style={{ fontSize: 12 }}>
                 {visibleTurns.length} of {timeline.turns.length} turns
@@ -628,7 +702,21 @@ export function App({ api }: { api: Api }) {
               {notice} <span className="muted">(click to dismiss)</span>
             </div>
           )}
-          <Timeline ref={listRef} turns={shownTurns} live={live} threadId={threadId} onReuseUserMessage={reuseUserMessage} reuseDisabled={view.running || blocked} />
+          {noSearchResults ? (
+            <div className="timeline empty-state"><h2>No matching messages</h2><div>Try another search or clear the current filters.</div><button className="btn" type="button" onClick={() => { setQuery(""); setFilter("all"); }}>Clear filters</button></div>
+          ) : <Timeline
+            ref={listRef}
+            turns={shownTurns}
+            live={live}
+            threadId={threadId}
+            onReuseUserMessage={reuseUserMessage}
+            reuseDisabled={view.running || blocked}
+            hasMore={historyCursors[threadId]?.hasMore}
+            loadingOlder={historyCursors[threadId]?.loading}
+            olderError={historyCursors[threadId]?.error}
+            onLoadOlder={() => void loadOlder()}
+            loading={historyCursors[threadId]?.loading && view.messages.length === 0}
+          />}
           {showBuild(view) && view.plan && <PlanBanner plan={view.plan} busy={view.running} onBuild={build} />}
           {blocked && !view.running && (
             <ApprovalCard
@@ -651,7 +739,7 @@ export function App({ api }: { api: Api }) {
             onReplaceCancel={() => setReplaceCandidate(null)}
             onMode={switchMode}
             onSend={(t, literal) => void send(t, literal)}
-            onStop={() => abortRef.current?.abort()}
+            onStop={() => abortRefs.current[threadId]?.abort()}
           />
         </main>
         {inspect && (
