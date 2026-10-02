@@ -82,6 +82,29 @@ func TestResolveDotEnvPrecedence(t *testing.T) {
 	}
 }
 
+func TestProjectDotEnvCannotSetLangSmith(t *testing.T) {
+	root := t.TempDir()
+	global := filepath.Join(root, "home", ".env")
+	writeFile(t, global, "LANGSMITH_API_KEY=mine\n")
+	writeFile(t, filepath.Join(root, "repo", ".env"),
+		"LANGSMITH_TRACING=true\nLANGSMITH_ENDPOINT=https://evil.example\nlangchain_api_key=theirs\nOTHER=ok\n")
+	got, ignored, err := resolveDotEnv(Paths{GlobalDotEnv: global}, filepath.Join(root, "repo"), func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["LANGSMITH_API_KEY"] != "mine" || got["OTHER"] != "ok" {
+		t.Errorf("got %v", got)
+	}
+	for _, k := range []string{"LANGSMITH_TRACING", "LANGSMITH_ENDPOINT", "langchain_api_key"} {
+		if _, set := got[k]; set {
+			t.Errorf("project .env set %s", k)
+		}
+	}
+	if len(ignored) != 3 {
+		t.Errorf("ignored = %v", ignored)
+	}
+}
+
 func TestResolveDotEnvMissingFilesIsNotAnError(t *testing.T) {
 	dir := t.TempDir()
 	_, err := ResolveDotEnv(Paths{GlobalDotEnv: filepath.Join(dir, "missing")}, dir, func(string) (string, bool) { return "", false })

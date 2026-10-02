@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS bench_attempts (
 	finished_at         TIMESTAMPTZ,
 	PRIMARY KEY (run_id, instance_id, trial)
 );
+ALTER TABLE bench_attempts ADD COLUMN IF NOT EXISTS subagent_llm_calls INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS bench_test_results (
 	run_id      TEXT NOT NULL REFERENCES bench_runs(id) ON DELETE CASCADE,
@@ -120,8 +121,10 @@ CREATE TABLE IF NOT EXISTS bench_references (
 	PRIMARY KEY (harness, model, instance_id)
 );
 
--- Scored attempts: infra errors are retried, not counted.
-CREATE OR REPLACE VIEW bench_scored_attempts AS
+-- Scored attempts: infra errors are retried, not counted. a.* is fixed when
+-- the view is created, so a new attempt column needs the views rebuilt.
+DROP VIEW IF EXISTS bench_scored_attempts CASCADE;
+CREATE VIEW bench_scored_attempts AS
 SELECT a.*, t.repo, t.language, t.hard, t.issue_categories, t.gold_files, t.gold_lines
 FROM bench_attempts a
 LEFT JOIN bench_tasks t USING (instance_id)
@@ -320,9 +323,9 @@ INSERT INTO bench_attempts (run_id, instance_id, trial, phase, resolved, f2p_pas
 	failure_category, error, patch, patch_files, patch_added, patch_removed, touches_tests, gold_file_precision,
 	gold_file_recall, steps, llm_calls, tool_calls, execute_calls, test_runs, files_read, first_edit_step, summarizations,
 	peak_context_tokens, tokens_in, tokens_out, cache_read, cache_write, cost_usd, agent_ms, model_ms, tool_ms,
-	execute_ms, grade_ms, image_digest, trace_path, log_dir, started_at, finished_at)
+	execute_ms, grade_ms, image_digest, trace_path, log_dir, started_at, finished_at, subagent_llm_calls)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,
-	$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42)
+	$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43)
 ON CONFLICT (run_id, instance_id, trial) DO UPDATE SET phase=EXCLUDED.phase, resolved=EXCLUDED.resolved,
 	f2p_passed=EXCLUDED.f2p_passed, f2p_total=EXCLUDED.f2p_total, p2p_passed=EXCLUDED.p2p_passed,
 	p2p_total=EXCLUDED.p2p_total, failure_category=EXCLUDED.failure_category, error=EXCLUDED.error,
@@ -336,13 +339,14 @@ ON CONFLICT (run_id, instance_id, trial) DO UPDATE SET phase=EXCLUDED.phase, res
 	cache_read=EXCLUDED.cache_read, cache_write=EXCLUDED.cache_write, cost_usd=EXCLUDED.cost_usd,
 	agent_ms=EXCLUDED.agent_ms, model_ms=EXCLUDED.model_ms, tool_ms=EXCLUDED.tool_ms, execute_ms=EXCLUDED.execute_ms,
 	grade_ms=EXCLUDED.grade_ms, image_digest=EXCLUDED.image_digest, trace_path=EXCLUDED.trace_path,
-	log_dir=EXCLUDED.log_dir, started_at=EXCLUDED.started_at, finished_at=EXCLUDED.finished_at`,
+	log_dir=EXCLUDED.log_dir, started_at=EXCLUDED.started_at, finished_at=EXCLUDED.finished_at,
+	subagent_llm_calls=EXCLUDED.subagent_llm_calls`,
 		a.RunID, a.InstanceID, a.Trial, a.Phase, a.Resolved, a.F2PPassed, a.F2PTotal, a.P2PPassed, a.P2PTotal,
 		a.FailureCategory, a.Error, a.Patch, a.PatchFiles, a.PatchAdded, a.PatchRemoved, a.TouchesTests,
 		a.GoldPrecision, a.GoldRecall, a.Steps, a.LLMCalls, jsonOrEmpty(a.ToolCalls, "{}"), a.ExecuteCalls,
 		a.TestRuns, a.FilesRead, a.FirstEditStep, a.Summarizations, a.PeakContextTokens, a.TokensIn, a.TokensOut,
 		a.CacheRead, a.CacheWrite, a.CostUSD, a.AgentMS, a.ModelMS, a.ToolMS, a.ExecuteMS, a.GradeMS,
-		a.ImageDigest, a.TracePath, a.LogDir, a.StartedAt, a.FinishedAt)
+		a.ImageDigest, a.TracePath, a.LogDir, a.StartedAt, a.FinishedAt, a.SubagentLLMCalls)
 	if err != nil {
 		return fmt.Errorf("bench: save attempt %s/%s#%d: %w", a.RunID, a.InstanceID, a.Trial, err)
 	}
@@ -355,7 +359,7 @@ SELECT run_id, instance_id, trial, phase, resolved, f2p_passed, f2p_total, p2p_p
 	error, patch, patch_files, patch_added, patch_removed, touches_tests, gold_file_precision, gold_file_recall, steps,
 	llm_calls, tool_calls, execute_calls, test_runs, files_read, first_edit_step, summarizations, peak_context_tokens,
 	tokens_in, tokens_out, cache_read, cache_write, cost_usd, agent_ms, model_ms, tool_ms, execute_ms, grade_ms,
-	image_digest, trace_path, log_dir, started_at, finished_at
+	image_digest, trace_path, log_dir, started_at, finished_at, subagent_llm_calls
 FROM bench_attempts WHERE run_id=$1 ORDER BY instance_id, trial`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("bench: attempts %s: %w", runID, err)
@@ -370,7 +374,8 @@ FROM bench_attempts WHERE run_id=$1 ORDER BY instance_id, trial`, runID)
 			&a.PatchRemoved, &a.TouchesTests, &a.GoldPrecision, &a.GoldRecall, &a.Steps, &a.LLMCalls, &tools,
 			&a.ExecuteCalls, &a.TestRuns, &a.FilesRead, &a.FirstEditStep, &a.Summarizations, &a.PeakContextTokens,
 			&a.TokensIn, &a.TokensOut, &a.CacheRead, &a.CacheWrite, &a.CostUSD, &a.AgentMS, &a.ModelMS, &a.ToolMS,
-			&a.ExecuteMS, &a.GradeMS, &a.ImageDigest, &a.TracePath, &a.LogDir, &a.StartedAt, &a.FinishedAt); err != nil {
+			&a.ExecuteMS, &a.GradeMS, &a.ImageDigest, &a.TracePath, &a.LogDir, &a.StartedAt, &a.FinishedAt,
+			&a.SubagentLLMCalls); err != nil {
 			return nil, fmt.Errorf("bench: attempts %s: %w", runID, err)
 		}
 		if err := json.Unmarshal(tools, &a.ToolCalls); err != nil {

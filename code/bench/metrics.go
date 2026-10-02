@@ -2,10 +2,12 @@ package bench
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/tsengmingchun/deepagents_golang/code/cost"
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 )
 
 // testCommand recognizes shell commands that run a test suite in the V2
@@ -27,6 +29,9 @@ func MetricsFromTrace(calls []trace.LLMCallDetail, prices cost.Table) Metrics {
 		m.LLMCalls++
 		m.ModelMS += c.DurationMs
 		main := len(c.Namespace) == 0
+		if len(c.Namespace) > 0 && strings.HasPrefix(c.Namespace[0], subagents.NamespacePrefix) {
+			m.SubagentLLMCalls++
+		}
 		if u := c.Usage; u != nil {
 			m.TokensIn += u.InputTokens
 			m.TokensOut += u.OutputTokens

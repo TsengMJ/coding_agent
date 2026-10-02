@@ -86,8 +86,10 @@ type Attempt struct {
 
 // Metrics describe how the agent worked on a task.
 type Metrics struct {
-	Steps             int
-	LLMCalls          int
+	Steps    int
+	LLMCalls int
+	// SubagentLLMCalls counts model calls made inside task subagent runs.
+	SubagentLLMCalls  int
 	ToolCalls         map[string]int
 	ExecuteCalls      int
 	TestRuns          int

@@ -133,6 +133,20 @@ type ThreadState struct {
 	Plan *planmode.Plan `json:"plan,omitempty"`
 }
 
+// HistoryPage is the paged thread view used by the GUI. It intentionally
+// contains only message history and the small state needed to render it.
+type HistoryPage struct {
+	ThreadID      string          `json:"thread_id"`
+	CheckpointSeq int64           `json:"checkpoint_seq"`
+	Messages      []llm.Message   `json:"messages"`
+	Interrupts    []Interrupt     `json:"interrupts,omitempty"`
+	Model         string          `json:"model,omitempty"`
+	Todos         []todolist.Todo `json:"todos,omitempty"`
+	Plan          *planmode.Plan  `json:"plan,omitempty"`
+	HasMore       bool            `json:"has_more"`
+	NextBefore    int             `json:"next_before,omitempty"`
+}
+
 // Server is what clients talk to, in-process (Service) or over HTTP.
 type Server interface {
 	// Run streams events for one run. Stopping iteration or cancelling ctx
@@ -140,6 +154,9 @@ type Server interface {
 	Run(ctx context.Context, req RunRequest) iter.Seq2[Event, error]
 	// GetThread returns nil when the thread has no state.
 	GetThread(ctx context.Context, threadID string) (*ThreadState, error)
+	// GetHistory returns a page of newest-first conversation history. before
+	// is an opaque-to-clients one-based cursor returned as NextBefore.
+	GetHistory(ctx context.Context, threadID string, before, limit int) (*HistoryPage, error)
 	ListThreads(ctx context.Context, f sessions.Filter) ([]sessions.Info, error)
 	// RenameThread updates a saved thread's title.
 	RenameThread(ctx context.Context, threadID, title string) (*sessions.Info, error)
@@ -149,6 +166,8 @@ type Server interface {
 	// GetTrace returns the recorded model calls, file diffs and subagent
 	// messages of a thread; an unknown thread has an empty trace.
 	GetTrace(ctx context.Context, threadID string) (*trace.Trace, error)
+	// GetTraceSummary excludes large blobs and diffs for initial GUI loading.
+	GetTraceSummary(ctx context.Context, threadID string) (*trace.Trace, error)
 	// GetLLMCall returns one recorded model call with its full request;
 	// the error wraps trace.ErrNotFound when there is none.
 	GetLLMCall(ctx context.Context, threadID string, seq int) (*trace.LLMCallDetail, error)

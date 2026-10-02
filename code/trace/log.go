@@ -142,6 +142,57 @@ WHERE r.thread_id = $1 ORDER BY r.id`, threadID)
 	return rows.Err()
 }
 
+// EachType reads record payloads directly and deliberately avoids joining the
+// blob table. Summary callers therefore do not transfer repeated prompts,
+// tool schemas or tool-output blobs.
+func (p *PostgresLog) EachType(ctx context.Context, threadID string, types []string, fn func([]byte) bool) error {
+	rows, err := p.pool.Query(ctx, `
+SELECT data FROM dcode_trace_records
+WHERE thread_id = $1 AND type = ANY($2)
+ORDER BY id`, threadID, types)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var line []byte
+		if err := rows.Scan(&line); err != nil {
+			return err
+		}
+		if !fn(line) {
+			return nil
+		}
+	}
+	return rows.Err()
+}
+
+func (p *PostgresLog) Blobs(ctx context.Context, hashes []string) (map[string]json.RawMessage, error) {
+	out := map[string]json.RawMessage{}
+	if len(hashes) == 0 {
+		return out, nil
+	}
+	rows, err := p.pool.Query(ctx, `SELECT hash, line FROM dcode_trace_blobs WHERE hash = ANY($1)`, hashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var hash string
+		var line []byte
+		if err := rows.Scan(&hash, &line); err != nil {
+			return nil, err
+		}
+		var rec record
+		if err := json.Unmarshal(line, &rec); err != nil {
+			return nil, err
+		}
+		if rec.Blob != nil {
+			out[hash] = rec.Blob.Data
+		}
+	}
+	return out, rows.Err()
+}
+
 // DeleteThread removes threadID's records; shared blobs stay.
 func (p *PostgresLog) DeleteThread(ctx context.Context, threadID string) error {
 	_, err := p.pool.Exec(ctx, `DELETE FROM dcode_trace_records WHERE thread_id = $1`, threadID)

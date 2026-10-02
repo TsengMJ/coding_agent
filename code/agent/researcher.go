@@ -22,8 +22,9 @@ const (
 )
 
 const webResearcherDescription = "Researches a question on the web and in library docs (web_search, fetch_url, Context7) and returns a short report with cited URLs, " +
-	"the versions the answer applies to, and any conflicts between sources. Use it for questions that need several searches or pages, " +
-	"so the pages stay out of your context. It can read project files but cannot change them. Tell it the versions the project uses."
+	"the versions the answer applies to, and any conflicts between sources. Use it proactively for any question that needs more than one search or page, " +
+	"so the pages stay out of your context; independent questions can go to several researchers at once. " +
+	"It can read project files but cannot change them. Tell it the versions the project uses."
 
 var webResearcherPrompt = fmt.Sprintf(`You are a web researcher for a coding agent. Answer the question you are given from up-to-date sources and return a report the agent can act on.
 
@@ -71,10 +72,12 @@ func webResearcher(model llm.ChatModel, webTools []tool.Tool) subagents.SubAgent
 }
 
 // researchLimits offers only the allowed tools and refuses calls beyond a
-// tool's maximum in the run.
+// tool's maximum in the run. refusal formats the error for a tool that is
+// not allowed (%s is its name); empty uses the web researcher's wording.
 type researchLimits struct {
 	allowed []string
 	max     map[string]int
+	refusal string
 }
 
 func (researchLimits) Name() string { return "ResearchLimitsMiddleware" }
@@ -88,7 +91,11 @@ func (m researchLimits) WrapModelCall(ctx context.Context, req *core.ModelReques
 func (m researchLimits) WrapToolCall(ctx context.Context, req *core.ToolCallRequest, next core.ToolHandler) (*tool.Result, error) {
 	name := req.ToolCall.Name
 	if !slices.Contains(m.allowed, name) {
-		return refusal("Error: `%s` is not available to the web researcher, which only reads; report what you found instead.", name), nil
+		format := m.refusal
+		if format == "" {
+			format = "Error: `%s` is not available to the web researcher, which only reads; report what you found instead."
+		}
+		return refusal(format, name), nil
 	}
 	if limit, ok := m.max[name]; ok && callIndex(req) > limit {
 		return refusal("Error: the research limit of %d `%s` calls is used up; write your report from what you have.", limit, name), nil

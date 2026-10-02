@@ -89,6 +89,25 @@ func NewHandler(srv Server) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, ts)
 	})
+	mux.HandleFunc("GET /threads/{id}/history", func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		before, limit, err := historyParams(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		page, err := srv.GetHistory(r.Context(), r.PathValue("id"), before, limit)
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		if page == nil {
+			writeError(w, http.StatusNotFound, errors.New("thread not found"))
+			return
+		}
+		w.Header().Set("Server-Timing", fmt.Sprintf("history;dur=%.1f", float64(time.Since(start).Microseconds())/1000))
+		writeJSONMeasured(w, http.StatusOK, page)
+	})
 	mux.HandleFunc("PATCH /threads/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Title string `json:"title"`
@@ -122,6 +141,16 @@ func NewHandler(srv Server) http.Handler {
 			writeError(w, statusFor(err), err)
 			return
 		}
+		writeJSONMeasured(w, http.StatusOK, t)
+	})
+	mux.HandleFunc("GET /threads/{id}/trace/summary", func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		t, err := srv.GetTraceSummary(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		w.Header().Set("Server-Timing", fmt.Sprintf("trace-summary;dur=%.1f", float64(time.Since(start).Microseconds())/1000))
 		writeJSON(w, http.StatusOK, t)
 	})
 	mux.HandleFunc("GET /threads/{id}/trace/llm/{seq}", func(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +175,23 @@ func NewHandler(srv Server) http.Handler {
 		writeJSON(w, http.StatusOK, res)
 	})
 	return mux
+}
+
+func historyParams(r *http.Request) (before, limit int, err error) {
+	limit = 20
+	if raw := r.URL.Query().Get("before"); raw != "" {
+		before, err = strconv.Atoi(raw)
+		if err != nil || before < 0 {
+			return 0, 0, fmt.Errorf("before must be a non-negative integer")
+		}
+	}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 50 {
+			return 0, 0, fmt.Errorf("limit must be between 1 and 50")
+		}
+	}
+	return before, limit, nil
 }
 
 func handleRun(w http.ResponseWriter, r *http.Request, srv Server) {
@@ -210,6 +256,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// writeJSONMeasured exposes the serialized payload size for local GUI
+// diagnostics. It is intentionally a response header rather than telemetry.
+func writeJSONMeasured(w http.ResponseWriter, status int, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Dcode-Response-Bytes", strconv.Itoa(len(b)))
+	w.WriteHeader(status)
+	_, _ = w.Write(append(b, '\n'))
+}
+
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
@@ -233,6 +293,9 @@ func ServeHandler(ctx context.Context, addr string, h http.Handler, ready func(n
 	if err != nil {
 		return err
 	}
+	// Read before ready so a caller that changes shutdownGrace after ready
+	// does not race with this run of the server.
+	grace := shutdownGrace
 	runsCtx, cancelRuns := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelRuns()
 	hs := &http.Server{
@@ -251,7 +314,7 @@ func ServeHandler(ctx context.Context, addr string, h http.Handler, ready func(n
 	case <-ctx.Done():
 	}
 
-	drainCtx, cancelDrain := context.WithTimeout(context.Background(), shutdownGrace)
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), grace)
 	defer cancelDrain()
 	if err := hs.Shutdown(drainCtx); err == nil {
 		return nil

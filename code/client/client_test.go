@@ -36,6 +36,9 @@ func (f *fakeServer) Run(_ context.Context, req server.RunRequest) iter.Seq2[ser
 }
 
 func (f *fakeServer) GetThread(context.Context, string) (*server.ThreadState, error) { return nil, nil }
+func (f *fakeServer) GetHistory(context.Context, string, int, int) (*server.HistoryPage, error) {
+	return nil, nil
+}
 func (f *fakeServer) ListThreads(context.Context, sessions.Filter) ([]sessions.Info, error) {
 	return nil, nil
 }
@@ -45,7 +48,8 @@ func (f *fakeServer) RenameThread(context.Context, string, string) (*sessions.In
 func (f *fakeServer) Compact(context.Context, string) (*server.CompactResult, error) {
 	return nil, nil
 }
-func (f *fakeServer) GetTrace(context.Context, string) (*trace.Trace, error) { return nil, nil }
+func (f *fakeServer) GetTrace(context.Context, string) (*trace.Trace, error)        { return nil, nil }
+func (f *fakeServer) GetTraceSummary(context.Context, string) (*trace.Trace, error) { return nil, nil }
 func (f *fakeServer) GetLLMCall(context.Context, string, int) (*trace.LLMCallDetail, error) {
 	return nil, nil
 }

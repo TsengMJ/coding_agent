@@ -239,3 +239,16 @@ func TestMetricsFromTraceSkipsSummarizationCalls(t *testing.T) {
 		t.Fatalf("metrics %+v", m)
 	}
 }
+
+func TestMetricsFromTraceCountsSubagentCalls(t *testing.T) {
+	calls := []trace.LLMCallDetail{
+		{LLMCall: trace.LLMCall{ToolCount: 3}, Response: &llm.Message{ToolCalls: []llm.ToolCall{{ID: "t1", Name: "task"}}}},
+		{LLMCall: trace.LLMCall{ToolCount: 3, Namespace: []string{"task:t1"}}},
+		{LLMCall: trace.LLMCall{ToolCount: 3, Namespace: []string{"task:t1"}}},
+		{LLMCall: trace.LLMCall{Namespace: []string{"web_extract:f1"}}},
+	}
+	m := MetricsFromTrace(calls, cost.Table{})
+	if m.SubagentLLMCalls != 2 || m.ToolCalls["task"] != 1 {
+		t.Fatalf("metrics %+v", m)
+	}
+}

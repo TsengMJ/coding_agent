@@ -36,6 +36,10 @@ func (f funcServer) Run(ctx context.Context, _ RunRequest) iter.Seq2[Event, erro
 
 func (funcServer) GetThread(context.Context, string) (*ThreadState, error) { return nil, nil }
 
+func (funcServer) GetHistory(context.Context, string, int, int) (*HistoryPage, error) {
+	return nil, nil
+}
+
 func (funcServer) ListThreads(context.Context, sessions.Filter) ([]sessions.Info, error) {
 	return nil, nil
 }
@@ -47,6 +51,8 @@ func (funcServer) RenameThread(context.Context, string, string) (*sessions.Info,
 func (funcServer) Compact(context.Context, string) (*CompactResult, error) { return nil, nil }
 
 func (funcServer) GetTrace(context.Context, string) (*trace.Trace, error) { return nil, nil }
+
+func (funcServer) GetTraceSummary(context.Context, string) (*trace.Trace, error) { return nil, nil }
 
 func (funcServer) GetLLMCall(context.Context, string, int) (*trace.LLMCallDetail, error) {
 	return nil, nil

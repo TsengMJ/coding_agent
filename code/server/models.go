@@ -8,11 +8,12 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/code/trace"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 )
 
 // ModelNameKey is the reply Metadata key naming the "provider:model" spec
 // that produced an assistant message.
-const ModelNameKey = "model_name"
+const ModelNameKey = subagents.ModelNameKey
 
 // runModel is the model chosen for one run.
 type runModel struct {

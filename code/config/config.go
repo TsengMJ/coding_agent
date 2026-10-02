@@ -54,6 +54,12 @@ type Settings struct {
 	// ResultsTTL is how long evicted tool results stay readable
 	// (storage.results_ttl); zero uses the default.
 	ResultsTTL time.Duration
+	// LangSmithTracing sends run trees to LangSmith (tracing.langsmith,
+	// default false; LANGSMITH_TRACING=true also turns it on).
+	LangSmithTracing bool
+	// LangSmithProject is the LangSmith project for dcode's runs
+	// (tracing.project); empty uses $LANGSMITH_PROJECT, then "dcode".
+	LangSmithProject string
 	// Raw holds every key read from config.toml.
 	Raw map[string]any
 }
@@ -93,6 +99,9 @@ type Resolver interface {
 // DirName is the per-user and per-project configuration directory name.
 const DirName = ".deepagents"
 
+// ConfigFileName is the user configuration file inside the user DirName.
+const ConfigFileName = "config.toml"
+
 // DefaultPaths computes paths for the current user and working directory.
 // Profile-specific state directories are not modeled yet; everything lives
 // directly under ~/.deepagents.
@@ -109,7 +118,7 @@ func DefaultPaths(cwd string) (Paths, error) {
 		Home:         home,
 		UserDir:      userDir,
 		ProjectDir:   filepath.Join(cwd, DirName),
-		ConfigFile:   filepath.Join(userDir, "config.toml"),
+		ConfigFile:   filepath.Join(userDir, ConfigFileName),
 		SessionsDB:   filepath.Join(userDir, "sessions.db"),
 		GlobalDotEnv: filepath.Join(userDir, ".env"),
 	}, nil

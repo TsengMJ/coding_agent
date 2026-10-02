@@ -20,6 +20,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
 	"github.com/tsengmingchun/deepagents_golang/llm"
 	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/deepagents_golang/tracing"
 )
 
 // ErrBudgetExceeded stops an agent that spent its -max-cost.
@@ -51,6 +52,8 @@ type DcodeSolver struct {
 	DockerBinary string
 	// Traces records each attempt's trace under its own thread; required.
 	Traces trace.Log
+	// Tracer also sends run trees to LangSmith; nil is off.
+	Tracer tracing.Tracer
 }
 
 // TracePrefix starts SolveResult.TracePath; the rest is the trace thread ID.
@@ -155,6 +158,7 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 		Checkpointer: rt.NewMemoryCheckpointer(), AutoApprove: true, NoWebTools: true,
 		ProjectContext:    projectContext(task, repoDir),
 		WorkingDirSection: workingDirSection(repoDir),
+		Tracer:            s.Tracer,
 	})
 	if err != nil {
 		res.Category, res.Error = CategoryAgentError, err.Error()
@@ -169,7 +173,8 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 	defer cancel()
 	start := time.Now()
 	_, runErr := a.Invoke(runCtx, core.Input{Messages: []llm.Message{llm.NewUserMessage(instruction)}},
-		rt.RunConfig{ThreadID: "bench", RecursionLimit: s.MaxSteps})
+		rt.RunConfig{ThreadID: "bench", RecursionLimit: s.MaxSteps,
+			Metadata: map[string]any{"bench_attempt": threadID, "instance_id": task.InstanceID}})
 	agentMS := time.Since(start).Milliseconds()
 	if runErr != nil {
 		res.Category, res.Error = classifyAgentError(runErr, runCtx, model), runErr.Error()

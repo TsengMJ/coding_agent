@@ -55,6 +55,10 @@ type Summary struct {
 	MeanTestRuns    float64
 	TouchesTestsPct float64
 	EmptyPatchPct   float64
+	// Delegation: share of attempts that called task, and per-attempt means.
+	TaskUsePct           float64
+	MeanTaskCalls        float64
+	MeanSubagentLLMCalls float64
 }
 
 // Summarize aggregates attempts; tasks provides language, repo and hard.
@@ -76,7 +80,7 @@ func Summarize(attempts []Attempt, tasks map[string]Task) Summary {
 	anyResolved := map[string]bool{}
 	var steps, agentMin, tokens, costs []float64
 	var recallSum float64
-	var recallN, testRuns, touches, empty, k, n int
+	var recallN, testRuns, touches, empty, k, n, taskUsers, taskCalls, subCalls int
 	for _, a := range attempts {
 		if a.Phase != PhaseDone {
 			continue
@@ -108,6 +112,11 @@ func Summarize(attempts []Attempt, tasks map[string]Task) Summary {
 			recallN++
 		}
 		testRuns += a.TestRuns
+		if c := a.ToolCalls["task"]; c > 0 {
+			taskUsers++
+			taskCalls += c
+		}
+		subCalls += a.SubagentLLMCalls
 		if a.TouchesTests {
 			touches++
 		}
@@ -142,6 +151,9 @@ func Summarize(attempts []Attempt, tasks map[string]Task) Summary {
 		s.MeanTestRuns = float64(testRuns) / float64(n)
 		s.TouchesTestsPct = 100 * float64(touches) / float64(n)
 		s.EmptyPatchPct = 100 * float64(empty) / float64(n)
+		s.TaskUsePct = 100 * float64(taskUsers) / float64(n)
+		s.MeanTaskCalls = float64(taskCalls) / float64(n)
+		s.MeanSubagentLLMCalls = float64(subCalls) / float64(n)
 	}
 	return s
 }
@@ -265,6 +277,8 @@ func RenderReport(run *Run, s Summary) string {
 	}
 	fmt.Fprintf(&b, "| mean test runs | %.1f |\n| mean gold-file recall | %s |\n", s.MeanTestRuns, recall)
 	fmt.Fprintf(&b, "| patches touching tests | %.0f%% |\n| empty patches | %.0f%% |\n", s.TouchesTestsPct, s.EmptyPatchPct)
+	fmt.Fprintf(&b, "| attempts using subagents | %.0f%% |\n| mean task calls | %.1f |\n| mean subagent model calls | %.1f |\n",
+		s.TaskUsePct, s.MeanTaskCalls, s.MeanSubagentLLMCalls)
 	return b.String()
 }
 

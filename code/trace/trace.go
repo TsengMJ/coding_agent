@@ -39,6 +39,19 @@ type Log interface {
 	Each(ctx context.Context, threadID string, fn func(line []byte) bool) error
 }
 
+// TypedLog is an optional efficient read path for summary views. Implementors
+// must not resolve blob bodies when the requested types exclude "blob".
+type TypedLog interface {
+	EachType(ctx context.Context, threadID string, types []string, fn func(line []byte) bool) error
+}
+
+// BlobLog supports direct lookup of only the bodies referenced by one model
+// call. PostgreSQL implements it so opening one inspector does not scan every
+// blob ever written to the thread.
+type BlobLog interface {
+	Blobs(ctx context.Context, hashes []string) (map[string]json.RawMessage, error)
+}
+
 // responseTextLimit caps the reply text kept in an LLMCall summary.
 const responseTextLimit = 400
 
@@ -182,15 +195,26 @@ func (s *Store) Load(threadID string) (*Trace, error) {
 	return t, err
 }
 
+// Summary returns model-call and subagent-message metadata without diffs or
+// blob bodies. It is the initial GUI trace path; details remain on demand.
+func (s *Store) Summary(threadID string) (*Trace, error) {
+	t := &Trace{ThreadID: threadID, LLMCalls: []LLMCall{}, Diffs: []Diff{}, Messages: []Message{}}
+	err := s.eachTypes(threadID, []string{"llm_call", "message"}, func(rec record) bool {
+		if rec.LLM != nil {
+			t.LLMCalls = append(t.LLMCalls, rec.LLM.LLMCall)
+		} else if rec.Message != nil {
+			t.Messages = append(t.Messages, *rec.Message)
+		}
+		return true
+	})
+	return t, err
+}
+
 // LLMCall returns model call seq of threadID with its full request.
 func (s *Store) LLMCall(threadID string, seq int) (*LLMCallDetail, error) {
-	blobs := map[string]json.RawMessage{}
 	var found *llmRecord
-	err := s.each(threadID, func(rec record) bool {
-		switch {
-		case rec.Blob != nil:
-			blobs[rec.Blob.Hash] = rec.Blob.Data
-		case rec.LLM != nil && rec.LLM.Seq == seq:
+	err := s.eachTypes(threadID, []string{"llm_call"}, func(rec record) bool {
+		if rec.LLM != nil && rec.LLM.Seq == seq {
 			found = rec.LLM
 			return false
 		}
@@ -201,6 +225,24 @@ func (s *Store) LLMCall(threadID string, seq int) (*LLMCallDetail, error) {
 	}
 	if found == nil {
 		return nil, fmt.Errorf("%w: model call %d of thread %s", ErrNotFound, seq, threadID)
+	}
+	refs := slices.Clone(found.MessageRefs)
+	if found.ToolsRef != "" {
+		refs = append(refs, found.ToolsRef)
+	}
+	blobs := map[string]json.RawMessage{}
+	if l, ok := s.log.(BlobLog); ok {
+		blobs, err = l.Blobs(context.Background(), refs)
+	} else {
+		err = s.each(threadID, func(rec record) bool {
+			if rec.Blob != nil {
+				blobs[rec.Blob.Hash] = rec.Blob.Data
+			}
+			return true
+		})
+	}
+	if err != nil {
+		return nil, err
 	}
 	d := &LLMCallDetail{
 		LLMCall: found.LLMCall, ToolChoice: found.ToolChoice, Settings: found.Settings,
@@ -265,6 +307,27 @@ func decodeBlob(blobs map[string]json.RawMessage, hash string, v any) error {
 // each calls fn for every record of threadID until fn returns false.
 func (s *Store) each(threadID string, fn func(record) bool) error {
 	return readRecords(s.log, threadID, fn)
+}
+
+func (s *Store) eachTypes(threadID string, types []string, fn func(record) bool) error {
+	if l, ok := s.log.(TypedLog); ok {
+		err := l.EachType(context.Background(), threadID, types, func(line []byte) bool {
+			var rec record
+			if err := json.Unmarshal(line, &rec); err != nil {
+				return true
+			}
+			return fn(rec)
+		})
+		if err != nil {
+			return fmt.Errorf("trace: read %s: %w", threadID, err)
+		}
+		return nil
+	}
+	set := map[string]bool{}
+	for _, typ := range types {
+		set[typ] = true
+	}
+	return s.each(threadID, func(rec record) bool { return !set[rec.Type] || fn(rec) })
 }
 
 // readRecords decodes threadID's lines; a line that does not decode is

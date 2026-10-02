@@ -25,6 +25,9 @@ type Info struct {
 	MessageCount int       `json:"message_count"`
 	// Model is the "provider:model" spec the thread last ran with.
 	Model string `json:"model,omitempty"`
+	// Running is a process-local service status. It is intentionally not
+	// persisted: a service restart cancels in-flight runs.
+	Running bool `json:"running,omitempty"`
 }
 
 // Filter narrows List. An empty Cwd lists every thread; Limit <= 0 means no limit.

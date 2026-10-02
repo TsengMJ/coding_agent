@@ -6,21 +6,43 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
 // DotEnvFile is the file name searched for in the project tree.
 const DotEnvFile = ".env"
 
+// ProjectDeniedEnvPrefixes are variables a project .env may not set: it
+// travels with a cloned repository, which must not be able to turn on
+// LangSmith tracing or point it at another endpoint or account. The shell
+// and the global ~/.deepagents/.env may set them.
+var ProjectDeniedEnvPrefixes = []string{"LANGSMITH_", "LANGCHAIN_"}
+
+func projectDenied(key string) bool {
+	upper := strings.ToUpper(key)
+	for _, p := range ProjectDeniedEnvPrefixes {
+		if strings.HasPrefix(upper, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // LoadDotEnv sets environment variables from the nearest project .env
 // (searching upward from cwd) and the global ~/.deepagents/.env. Variables
 // already present in the environment are never overridden.
 func LoadDotEnv(p Paths, cwd string) error {
-	values, err := ResolveDotEnv(p, cwd, os.LookupEnv)
+	values, ignored, err := resolveDotEnv(p, cwd, os.LookupEnv)
 	if err != nil {
 		return err
+	}
+	if len(ignored) > 0 {
+		log.Printf("dcode: ignoring %s from the project .env; set them in the shell or %s", strings.Join(ignored, ", "), p.GlobalDotEnv)
 	}
 	for k, v := range values {
 		if err := os.Setenv(k, v); err != nil {
@@ -31,22 +53,32 @@ func LoadDotEnv(p Paths, cwd string) error {
 }
 
 // ResolveDotEnv returns the variables LoadDotEnv would set. Precedence is
-// environment > project .env > global .env.
+// environment > project .env > global .env; ProjectDeniedEnvPrefixes keys
+// in the project .env are left out.
 func ResolveDotEnv(p Paths, cwd string, lookup func(string) (string, bool)) (map[string]string, error) {
+	values, _, err := resolveDotEnv(p, cwd, lookup)
+	return values, err
+}
+
+// resolveDotEnv also returns the project .env keys it left out, sorted.
+func resolveDotEnv(p Paths, cwd string, lookup func(string) (string, bool)) (map[string]string, []string, error) {
 	merged := map[string]string{}
-	files := []string{p.GlobalDotEnv}
-	if project, ok := FindDotEnv(cwd); ok {
-		files = append(files, project)
+	global, err := readDotEnvFile(p.GlobalDotEnv)
+	if p.GlobalDotEnv != "" && err != nil {
+		return nil, nil, err
 	}
-	for _, path := range files {
-		if path == "" {
-			continue
-		}
-		values, err := readDotEnvFile(path)
+	maps.Copy(merged, global)
+	var ignored []string
+	if project, ok := FindDotEnv(cwd); ok && project != p.GlobalDotEnv {
+		values, err := readDotEnvFile(project)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for k, v := range values {
+			if projectDenied(k) {
+				ignored = append(ignored, k)
+				continue
+			}
 			merged[k] = v
 		}
 	}
@@ -55,7 +87,8 @@ func ResolveDotEnv(p Paths, cwd string, lookup func(string) (string, bool)) (map
 			delete(merged, k)
 		}
 	}
-	return merged, nil
+	slices.Sort(ignored)
+	return merged, ignored, nil
 }
 
 // FindDotEnv returns the nearest .env file in start or any parent directory.

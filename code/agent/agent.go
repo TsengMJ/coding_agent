@@ -29,6 +29,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 	rt "github.com/tsengmingchun/deepagents_golang/runtime"
 	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/deepagents_golang/tracing"
 )
 
 //go:embed system_prompt.md
@@ -72,6 +73,8 @@ type Options struct {
 	// WorkingDirSection replaces the rendered working-directory and path
 	// section, for a Backend whose commands do not run in Cwd on this host.
 	WorkingDirSection string
+	// Tracer records run trees (see NewLangSmith); nil turns tracing off.
+	Tracer tracing.Tracer
 }
 
 // CreateCLIAgent assembles the coding agent on top of deepagents.CreateDeepAgent.
@@ -130,13 +133,26 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 			subs = append(subs, webResearcher(webModel, tools))
 		}
 	}
-	tools = append(tools, codetools.New(b)...)
+	codeTools := codetools.New(b)
+	tools = append(tools, codeTools...)
+	subs = append([]subagents.Spec{explorer(opts.Model, codeTools)}, subs...)
+	custom, err := customSubagents(opts)
+	if err != nil {
+		return nil, err
+	}
+	subs = append(subs, custom...)
 	interrupts := map[string]hitl.InterruptOnConfig{}
 	if !opts.AutoApprove {
 		interrupts = InterruptOn(opts.Settings)
 	}
 	if opts.Interactive {
-		pm, err := planmode.New(planmode.Options{Store: opts.Plans})
+		var readOnly []string
+		for _, s := range subs {
+			if slices.Contains(ReadOnlySubagents, s.SubAgentName()) {
+				readOnly = append(readOnly, s.SubAgentName())
+			}
+		}
+		pm, err := planmode.New(planmode.Options{Store: opts.Plans, ReadOnlySubagents: readOnly})
 		if err != nil {
 			return nil, err
 		}
@@ -154,6 +170,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		deepagents.WithName(opts.AgentName),
 		deepagents.WithSubAgents(subs...),
 		deepagents.WithBackgroundTasks(),
+		deepagents.WithTracer(opts.Tracer),
 	}
 	if len(interrupts) > 0 {
 		dopts = append(dopts, deepagents.WithInterruptOn(interrupts))
@@ -249,6 +266,7 @@ func SystemPrompt(opts Options) (string, error) {
 			"- After repeated failures, use a different permitted approach. If none is available, report the blocker and any completed work."),
 		"{model_identity_section}", modelIdentitySection(opts.Model),
 		"{working_dir_section}", wd,
+		"{subagents_section}", subagentsSection(opts),
 		"{web_search_section}", webSearchSection(opts),
 		"{project_context_section}", opts.ProjectContext,
 	)

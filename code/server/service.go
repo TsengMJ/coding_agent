@@ -26,6 +26,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
 	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
 	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/deepagents_golang/tracing"
 )
 
 // AutoApproveKey is the RunConfig.Configurable key that disables review.
@@ -46,7 +47,15 @@ type Config struct {
 	// NoVerifyGate lets headless runs finish without the agent's
 	// verify-before-done check (see codeagent.VerifyGate).
 	NoVerifyGate bool
+	// Tracer records run trees (codeagent.NewLangSmith); nil is off.
+	// Service.Close closes it when it has a Close method.
+	Tracer tracing.Tracer
 }
+
+// ResumeTraceTag marks the run of a turn that resumes after an approval, so
+// LangSmith views can fold a turn's rounds back together (Python
+// `RESUME_TRACE_TAG`; an external contract, do not rename).
+const ResumeTraceTag = "dcode:resume"
 
 // Service runs the coding agent for many threads and working directories.
 type Service struct {
@@ -67,6 +76,7 @@ type Service struct {
 	artifacts    *codeagent.Artifacts
 	traces       *trace.Store
 	noVerifyGate bool
+	tracer       tracing.Tracer
 
 	mu     sync.Mutex
 	agents map[agentKey]*agentEntry
@@ -130,6 +140,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		agents:       map[agentKey]*agentEntry{},
 		busy:         map[string]bool{},
 		noVerifyGate: cfg.NoVerifyGate,
+		tracer:       cfg.Tracer,
 		store:        cfg.Storage,
 		checkpointer: cfg.Storage.Checkpointer,
 		sessions:     cfg.Storage.Sessions,
@@ -168,6 +179,11 @@ func (s *Service) DefaultModel() string { return s.defaultModel.spec }
 
 func (s *Service) Close() error {
 	err := s.traces.Close()
+	if c, ok := s.tracer.(interface{ Close() error }); ok {
+		if cerr := c.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close tracer: %w", cerr)
+		}
+	}
 	s.store.Close()
 	return err
 }
@@ -176,12 +192,25 @@ func (s *Service) GetTrace(ctx context.Context, threadID string) (*trace.Trace, 
 	return s.traces.Load(threadID)
 }
 
+func (s *Service) GetTraceSummary(ctx context.Context, threadID string) (*trace.Trace, error) {
+	return s.traces.Summary(threadID)
+}
+
 func (s *Service) GetLLMCall(ctx context.Context, threadID string, seq int) (*trace.LLMCallDetail, error) {
 	return s.traces.LLMCall(threadID, seq)
 }
 
 func (s *Service) ListThreads(ctx context.Context, f sessions.Filter) ([]sessions.Info, error) {
-	return s.sessions.List(ctx, f)
+	list, err := s.sessions.List(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range list {
+		list[i].Running = s.busy[list[i].ThreadID]
+	}
+	return list, nil
 }
 
 // RenameThread gives a saved thread a user-chosen title.
@@ -219,6 +248,42 @@ func (s *Service) GetThread(ctx context.Context, threadID string) (*ThreadState,
 	}
 	ts.Plan = planmode.PlanOf(&cp.State)
 	return ts, nil
+}
+
+// GetHistory is the lightweight read path for the GUI. It leaves GetThread
+// unchanged for API callers that require the complete resumable state.
+func (s *Service) GetHistory(ctx context.Context, threadID string, before, limit int) (*HistoryPage, error) {
+	if threadID == "" {
+		return nil, fmt.Errorf("%w: thread_id is required", ErrBadRequest)
+	}
+	p, err := runtime.LoadHistoryPage(ctx, s.checkpointer, threadID, before, limit)
+	if err != nil || p == nil {
+		return nil, err
+	}
+	info, err := s.sessions.Get(ctx, threadID)
+	if err != nil {
+		return nil, err
+	}
+	if info == nil {
+		return nil, fmt.Errorf("%w: %s", ErrThreadNotFound, threadID)
+	}
+	out := &HistoryPage{
+		ThreadID: p.ThreadID, CheckpointSeq: p.CheckpointSeq, Messages: p.Messages,
+		Interrupts: make([]Interrupt, 0, len(p.PendingInterrupts)), Model: info.Model,
+		HasMore: p.HasMore, NextBefore: p.NextBefore,
+	}
+	if out.Model == "" {
+		out.Model = s.defaultModel.spec
+	}
+	for _, in := range p.PendingInterrupts {
+		out.Interrupts = append(out.Interrupts, toInterrupt(in))
+	}
+	if v, ok := p.Values[todolist.TodosStateKey]; ok && v != nil {
+		out.Todos, _ = todolist.ParseTodos(v)
+	}
+	state := &runtime.State{Values: p.Values}
+	out.Plan = planmode.PlanOf(state)
+	return out, nil
 }
 
 // Compact summarizes the thread's older messages now and saves the result
@@ -329,6 +394,9 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	cfg := runtime.RunConfig{
 		ThreadID:     req.ThreadID,
 		Configurable: map[string]any{AutoApproveKey: req.AutoApprove, planmode.ModeKey: req.Mode, planmode.BuildKey: req.BuildPlan},
+	}
+	if req.Resume != nil {
+		cfg.Tags = []string{ResumeTraceTag}
 	}
 	ctx, tr := s.startTrace(ctx, req.ThreadID)
 	defer tr.stop()
@@ -495,6 +563,7 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest) (agent.Agent, er
 			Cache:        s.store.Cache,
 			Interactive:  req.Interactive,
 			NoVerifyGate: s.noVerifyGate,
+			Tracer:       s.tracer,
 		})
 	})
 	if e.err != nil {

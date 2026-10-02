@@ -69,6 +69,8 @@ When these tools are available, prefer their structured JSON over parsing `execu
 
 When performing multiple independent operations, make all tool calls in a single response — don't make sequential calls when parallel is possible.
 
+{subagents_section}
+
 ## File Reading Best Practices
 
 When exploring codebases or reading multiple files, use pagination to prevent context overflow:

@@ -165,8 +165,9 @@ func TestContext7ToolsRequireApproval(t *testing.T) {
 }
 
 func TestLookupSectionOrdersSources(t *testing.T) {
-	prompt, _ := SystemPrompt(Options{Cwd: "/w", Settings: &config.Settings{WebSearchAPIKey: "k", Context7APIKey: "c"}})
-	order := []string{"### Looking Things Up", "dependency manifests", "`resolve_library_id`", "`web_search` for everything else", "`fetch_url` to read", WebResearcherName}
+	full, _ := SystemPrompt(Options{Cwd: "/w", Settings: &config.Settings{WebSearchAPIKey: "k", Context7APIKey: "c"}})
+	prompt := full[strings.Index(full, "### Looking Things Up"):]
+	order := []string{"### Looking Things Up", "Delegate any lookup", WebResearcherName, "single quick check", "dependency manifests", "`resolve_library_id`", "`web_search` for everything else", "`fetch_url` to read"}
 	last := -1
 	for _, want := range order {
 		i := strings.Index(prompt, want)

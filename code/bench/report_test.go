@@ -82,6 +82,20 @@ func TestSummarizeExcludesInfraErrors(t *testing.T) {
 	}
 }
 
+func TestSummarizeReportsDelegation(t *testing.T) {
+	attempts := []Attempt{
+		{InstanceID: "a", Phase: PhaseDone, Metrics: Metrics{ToolCalls: map[string]int{"task": 3}, SubagentLLMCalls: 12}},
+		{InstanceID: "b", Phase: PhaseDone, Metrics: Metrics{ToolCalls: map[string]int{"read_file": 4}}},
+	}
+	s := Summarize(attempts, map[string]Task{})
+	if s.TaskUsePct != 50 || s.MeanTaskCalls != 1.5 || s.MeanSubagentLLMCalls != 6 {
+		t.Fatalf("summary %+v", s)
+	}
+	if md := RenderReport(&Run{ID: "r"}, s); !strings.Contains(md, "| attempts using subagents | 50% |") {
+		t.Fatalf("report lacks delegation:\n%s", md)
+	}
+}
+
 func TestCompareOnSharedTasks(t *testing.T) {
 	a := TaskOutcome{"x": 1, "y": 0, "z": 0, "only-a": 1}
 	b := TaskOutcome{"x": 1, "y": 1, "z": 0.5}

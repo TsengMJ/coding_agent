@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
 	"github.com/tsengmingchun/deepagents_golang/code/bench"
 	"github.com/tsengmingchun/deepagents_golang/code/config"
 	"github.com/tsengmingchun/deepagents_golang/code/cost"
@@ -185,6 +186,14 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 	}
 	if _, err := solver.NewModel(); err != nil {
 		return fmt.Errorf("init model %q: %w", spec, err)
+	}
+	ls, err := codeagent.NewLangSmith(e.settings)
+	if err != nil {
+		return err
+	}
+	if ls != nil {
+		solver.Tracer = ls
+		defer ls.Close()
 	}
 	fmt.Fprintf(stdout, "run %s: model %s, %d tasks x %d trials\n", run.ID, spec, len(ids), run.Trials)
 	r := &bench.Runner{Store: st, Docker: docker, Catalog: c, Solver: solver, LogRoot: filepath.Join(e.dataDir, "logs"),

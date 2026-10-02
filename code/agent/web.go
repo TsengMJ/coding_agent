@@ -207,12 +207,17 @@ func webSearchSection(opts Options) string {
 	}
 	steps = append(steps, "`fetch_url` to read a specific page. Pass a `prompt` saying exactly what you need, so only the answer comes back; the full page is saved, so read_file or grep it when the answer is not enough.")
 	var b strings.Builder
-	b.WriteString("### Looking Things Up\n\nCheck sources in this order and stop once you have a reliable answer:\n")
+	b.WriteString("### Looking Things Up\n\n")
+	if hasWebResearcher(opts) {
+		fmt.Fprintf(&b, "Delegate any lookup that needs more than one search or page to the `%s` subagent with `task`: it returns a short, cited report and keeps the pages out of your context. "+
+			"Send independent questions to separate researchers in one message, and set `run_in_background: true` when you have other work to do meanwhile. "+
+			"Once a question is delegated, do not search for it yourself; wait for the report.\n\n"+
+			"Look things up yourself only for a single quick check, in this order, and stop once you have a reliable answer:\n", WebResearcherName)
+	} else {
+		b.WriteString("Check sources in this order and stop once you have a reliable answer:\n")
+	}
 	for i, s := range steps {
 		fmt.Fprintf(&b, "%d. %s\n", i+1, s)
-	}
-	if hasWebResearcher(opts) {
-		fmt.Fprintf(&b, "\nFor research that needs several searches or pages, delegate to the `%s` subagent with `task` and set `run_in_background: true` when you have other work to do meanwhile; it returns a short, cited report.\n", WebResearcherName)
 	}
 	b.WriteString("\n")
 	if hasWebSearch(opts.Settings) {

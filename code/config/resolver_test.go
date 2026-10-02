@@ -45,6 +45,17 @@ func TestResolverMissingFileGivesDefaults(t *testing.T) {
 	}
 }
 
+func TestResolverTracingIsOffByDefault(t *testing.T) {
+	clearEnv(t)
+	if s := resolve(t, writeConfig(t, "")); s.LangSmithTracing || s.LangSmithProject != "" {
+		t.Errorf("settings = %+v", s)
+	}
+	s := resolve(t, writeConfig(t, "[tracing]\nlangsmith = true\nproject = \"dcode-dev\"\n"))
+	if !s.LangSmithTracing || s.LangSmithProject != "dcode-dev" {
+		t.Errorf("settings = %+v", s)
+	}
+}
+
 func TestResolverManualModeTurnsReviewBackOn(t *testing.T) {
 	clearEnv(t)
 	s := resolve(t, writeConfig(t, "[startup]\nmode = \"manual\"\n"))

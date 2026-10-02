@@ -8,6 +8,7 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/code/cost"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 )
 
 func replyWithUsage(text string, in, out, cached int) llm.Message {
@@ -51,6 +52,31 @@ func TestComputeUsageTotalsPerModel(t *testing.T) {
 	conv := llm.ApproximateTokenCounter(msgs[:5], nil)
 	if u.ConversationTokens != conv || u.FixedTokens != 4000-conv {
 		t.Errorf("conversation = %d fixed = %d, want %d / %d", u.ConversationTokens, u.FixedTokens, conv, 4000-conv)
+	}
+}
+
+func TestComputeUsageCountsSubagents(t *testing.T) {
+	prices := cost.Table{"a": {Input: 1, Output: 2}}
+	report := llm.NewToolMessage("c1", subagents.TaskToolName, "report")
+	report.Metadata = map[string]any{subagents.UsageKey: []any{
+		map[string]any{"model": "p:a", "calls": 3, "input_tokens": 2000, "output_tokens": 20},
+		map[string]any{"model": "", "calls": 1, "input_tokens": 10, "output_tokens": 1},
+	}}
+	msgs := []llm.Message{
+		llm.NewUserMessage("hi"),
+		tagged(replyWithUsage("", 1000, 100, 0), "p:a"),
+		report,
+		tagged(replyWithUsage("done", 1500, 10, 0), "p:a"),
+	}
+	u := computeUsage(msgs, "p:a", prices)
+	if len(u.Models) != 1 || u.Models[0].Calls != 6 || u.Models[0].InputTokens != 4510 {
+		t.Fatalf("models = %+v", u.Models)
+	}
+	if len(u.Subagents) != 1 || u.Subagents[0].Calls != 4 || u.Subagents[0].InputTokens != 2010 || u.Subagents[0].CostUSD == nil {
+		t.Fatalf("subagents = %+v", u.Subagents)
+	}
+	if !near(u.TotalCostUSD, (4510*1+131*2)/1e6) || u.ContextTokens != 1500 {
+		t.Fatalf("total = %v context = %d", u.TotalCostUSD, u.ContextTokens)
 	}
 }
 

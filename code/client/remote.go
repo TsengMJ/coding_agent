@@ -143,6 +143,29 @@ func (r *Remote) GetThread(ctx context.Context, threadID string) (*server.Thread
 	return &ts, nil
 }
 
+func (r *Remote) GetHistory(ctx context.Context, threadID string, before, limit int) (*server.HistoryPage, error) {
+	path := "/threads/" + url.PathEscape(threadID) + "/history?limit=" + strconv.Itoa(limit)
+	if before > 0 {
+		path += "&before=" + strconv.Itoa(before)
+	}
+	resp, err := r.do(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+	var page server.HistoryPage
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return nil, fmt.Errorf("decode history: %w", err)
+	}
+	return &page, nil
+}
+
 func (r *Remote) GetUsage(ctx context.Context, threadID string) (*server.ThreadUsage, error) {
 	resp, err := r.do(ctx, http.MethodGet, "/threads/"+url.PathEscape(threadID)+"/usage", nil, nil)
 	if err != nil {
@@ -224,6 +247,14 @@ func (r *Remote) Compact(ctx context.Context, threadID string) (*server.CompactR
 func (r *Remote) GetTrace(ctx context.Context, threadID string) (*trace.Trace, error) {
 	var t trace.Trace
 	if err := r.getJSON(ctx, "/threads/"+url.PathEscape(threadID)+"/trace", &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *Remote) GetTraceSummary(ctx context.Context, threadID string) (*trace.Trace, error) {
+	var t trace.Trace
+	if err := r.getJSON(ctx, "/threads/"+url.PathEscape(threadID)+"/trace/summary", &t); err != nil {
 		return nil, err
 	}
 	return &t, nil

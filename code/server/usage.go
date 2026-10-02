@@ -8,6 +8,7 @@ import (
 
 	"github.com/tsengmingchun/deepagents_golang/code/cost"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
 )
 
 // PricesFile, in the user config directory, overrides the built-in prices.
@@ -25,8 +26,8 @@ type ModelUsage struct {
 	CostUSD *float64 `json:"cost_usd,omitempty"`
 }
 
-// ThreadUsage reports a thread's context size and token spend. It counts
-// the main agent's replies only; subagent calls are not in the thread state.
+// ThreadUsage reports a thread's context size and token spend, subagents
+// included.
 type ThreadUsage struct {
 	ThreadID string `json:"thread_id"`
 	// Model is the model the thread runs with.
@@ -39,9 +40,12 @@ type ThreadUsage struct {
 	// ConversationTokens estimates the messages sent in the latest call
 	// (all messages when there was none); FixedTokens is the rest of
 	// ContextTokens: system prompt and tool definitions.
-	ConversationTokens int          `json:"conversation_tokens"`
-	FixedTokens        int          `json:"fixed_tokens"`
-	Models             []ModelUsage `json:"models"`
+	ConversationTokens int `json:"conversation_tokens"`
+	FixedTokens        int `json:"fixed_tokens"`
+	// Models totals every reply, the subagents' included; Subagents is the
+	// subagents' share.
+	Models    []ModelUsage `json:"models"`
+	Subagents []ModelUsage `json:"subagents,omitempty"`
 	// TotalCostUSD sums the priced models; Unpriced lists the others.
 	TotalCostUSD float64  `json:"total_cost_usd"`
 	Unpriced     []string `json:"unpriced,omitempty"`
@@ -74,13 +78,23 @@ func (s *Service) GetUsage(ctx context.Context, threadID string) (*ThreadUsage, 
 	return &u, nil
 }
 
-// computeUsage totals assistant replies by their model_name tag; untagged
-// replies count toward fallbackModel.
+// computeUsage totals assistant replies by their model_name tag, and the
+// subagent usage recorded on task reports; untagged replies count toward
+// fallbackModel.
 func computeUsage(msgs []llm.Message, fallbackModel string, prices cost.Table) ThreadUsage {
 	var u ThreadUsage
-	byModel := map[string]*ModelUsage{}
+	all, subs := usageTotals{}, usageTotals{}
 	last := -1
 	for i, m := range msgs {
+		for _, s := range subagents.ParseUsage(m.Metadata[subagents.UsageKey]) {
+			mu := ModelUsage{Model: s.Model, Calls: s.Calls, InputTokens: s.InputTokens, OutputTokens: s.OutputTokens,
+				CacheReadTokens: s.CacheRead, CacheWriteTokens: s.CacheWrite}
+			if mu.Model == "" {
+				mu.Model = fallbackModel
+			}
+			all.add(mu)
+			subs.add(mu)
+		}
 		if m.Role != llm.RoleAssistant || m.Usage == nil {
 			continue
 		}
@@ -88,16 +102,8 @@ func computeUsage(msgs []llm.Message, fallbackModel string, prices cost.Table) T
 		if name == "" {
 			name = fallbackModel
 		}
-		mu := byModel[name]
-		if mu == nil {
-			mu = &ModelUsage{Model: name}
-			byModel[name] = mu
-		}
-		mu.Calls++
-		mu.InputTokens += m.Usage.InputTokens
-		mu.OutputTokens += m.Usage.OutputTokens
-		mu.CacheReadTokens += m.Usage.CacheRead
-		mu.CacheWriteTokens += m.Usage.CacheWrite
+		all.add(ModelUsage{Model: name, Calls: 1, InputTokens: m.Usage.InputTokens, OutputTokens: m.Usage.OutputTokens,
+			CacheReadTokens: m.Usage.CacheRead, CacheWriteTokens: m.Usage.CacheWrite})
 		last = i
 	}
 	if last >= 0 {
@@ -107,21 +113,48 @@ func computeUsage(msgs []llm.Message, fallbackModel string, prices cost.Table) T
 	} else {
 		u.ConversationTokens = llm.ApproximateTokenCounter(msgs, nil)
 	}
-	u.Models = []ModelUsage{}
-	for _, mu := range byModel {
-		c, err := prices.Estimate(mu.Model, llm.Usage{
-			InputTokens: mu.InputTokens, OutputTokens: mu.OutputTokens,
-			CacheRead: mu.CacheReadTokens, CacheWrite: mu.CacheWriteTokens,
-		})
-		if err == nil {
-			mu.CostUSD = &c
-			u.TotalCostUSD += c
+	u.Models = all.priced(prices)
+	for _, mu := range u.Models {
+		if mu.CostUSD != nil {
+			u.TotalCostUSD += *mu.CostUSD
 		} else {
 			u.Unpriced = append(u.Unpriced, mu.Model)
 		}
-		u.Models = append(u.Models, *mu)
 	}
-	slices.SortFunc(u.Models, func(a, b ModelUsage) int { return strings.Compare(a.Model, b.Model) })
-	slices.Sort(u.Unpriced)
+	if len(subs) > 0 {
+		u.Subagents = subs.priced(prices)
+	}
 	return u
+}
+
+// usageTotals sums ModelUsage by model.
+type usageTotals map[string]*ModelUsage
+
+func (t usageTotals) add(mu ModelUsage) {
+	cur := t[mu.Model]
+	if cur == nil {
+		cur = &ModelUsage{Model: mu.Model}
+		t[mu.Model] = cur
+	}
+	cur.Calls += mu.Calls
+	cur.InputTokens += mu.InputTokens
+	cur.OutputTokens += mu.OutputTokens
+	cur.CacheReadTokens += mu.CacheReadTokens
+	cur.CacheWriteTokens += mu.CacheWriteTokens
+}
+
+// priced lists the totals by model name, each with its cost when priced.
+func (t usageTotals) priced(prices cost.Table) []ModelUsage {
+	out := []ModelUsage{}
+	for _, mu := range t {
+		if c, err := prices.Estimate(mu.Model, llm.Usage{
+			InputTokens: mu.InputTokens, OutputTokens: mu.OutputTokens,
+			CacheRead: mu.CacheReadTokens, CacheWrite: mu.CacheWriteTokens,
+		}); err == nil {
+			mu.CostUSD = &c
+		}
+		out = append(out, *mu)
+	}
+	slices.SortFunc(out, func(a, b ModelUsage) int { return strings.Compare(a.Model, b.Model) })
+	return out
 }

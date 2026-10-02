@@ -19,6 +19,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/tsengmingchun/deepagents_golang"
+	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
 	"github.com/tsengmingchun/deepagents_golang/code/client"
 	"github.com/tsengmingchun/deepagents_golang/code/config"
 	"github.com/tsengmingchun/deepagents_golang/code/gui"
@@ -26,6 +27,7 @@ import (
 	"github.com/tsengmingchun/deepagents_golang/code/sessions"
 	"github.com/tsengmingchun/deepagents_golang/code/storage"
 	"github.com/tsengmingchun/deepagents_golang/code/tui"
+	"github.com/tsengmingchun/deepagents_golang/langsmith"
 )
 
 const (
@@ -129,16 +131,33 @@ func connect(ctx context.Context, e env, serverURL, model string) (server.Server
 // newService opens Postgres and Redis, both required, and starts the
 // in-process service on them.
 func newService(ctx context.Context, e env, model string) (*server.Service, error) {
-	st, err := storage.Open(ctx, storage.PostgresConnFromEnv(), storage.RedisURLFromEnv())
+	ls, err := codeagent.NewLangSmith(e.settings)
 	if err != nil {
 		return nil, err
 	}
-	svc, err := server.New(ctx, server.Config{Settings: e.settings, Paths: e.paths, ModelSpec: model, Storage: st})
+	cfg := server.Config{Settings: e.settings, Paths: e.paths, ModelSpec: model}
+	if ls != nil {
+		cfg.Tracer = ls
+	}
+	st, err := storage.Open(ctx, storage.PostgresConnFromEnv(), storage.RedisURLFromEnv())
 	if err != nil {
+		closeTracer(ls)
+		return nil, err
+	}
+	cfg.Storage = st
+	svc, err := server.New(ctx, cfg)
+	if err != nil {
+		closeTracer(ls)
 		st.Close()
 		return nil, err
 	}
 	return svc, nil
+}
+
+func closeTracer(ls *langsmith.Client) {
+	if ls != nil {
+		_ = ls.Close()
+	}
 }
 
 func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {

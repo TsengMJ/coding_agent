@@ -43,6 +43,10 @@ type fileConfig struct {
 	Server struct {
 		URL string `toml:"url"`
 	} `toml:"server"`
+	Tracing struct {
+		LangSmith bool   `toml:"langsmith"`
+		Project   string `toml:"project"`
+	} `toml:"tracing"`
 }
 
 // fileResolver resolves defaults < config.toml < environment. CLI flags are
@@ -106,6 +110,8 @@ func loadUserFile(path string, s *Settings) error {
 		s.ResultsTTL = d
 	}
 	s.ServerURL = fc.Server.URL
+	s.LangSmithTracing = fc.Tracing.LangSmith
+	s.LangSmithProject = fc.Tracing.Project
 	s.MaxRetries = fc.Retries.MaxRetries
 	if s.MaxRetries != nil && *s.MaxRetries < 0 {
 		return fmt.Errorf("config %s: retries.max_retries must be >= 0, got %d", path, *s.MaxRetries)
