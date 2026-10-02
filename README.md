@@ -254,5 +254,6 @@ go run ./cmd/dbench compare -ref mini-swe-agent/glm-5.3 <run-id>          # 和�
 - 資料放在 `~/.deepagents/bench/`：task repo、metadata、每次嘗試的 log 與 agent trace（`logs/<run>/<instance>/t<trial>/`）、markdown 報表（`reports/`）。
 - 每題映像約 1 GB（`ghcr.io/scaleapi/swe-bench_pro-v2`，linux/amd64）；磁碟吃緊時加 `-prune-images`，網路慢時建議先跑 `bench-gate` 把映像拉好。
 - `-max-cost`（預設每題 3 美元）與 `-max-steps`（預設 250）是額外上限；`infra_error` 不算分，可用 `-retry-infra` 重跑。
-- `-disable baseline,diff_review` 關掉個別 agent 功能做消融比較，會記在 run 的 config。
+- `-disable baseline,diff_review,masking` 關掉個別 agent 功能做消融比較，會記在 run 的 config。`masking`：送給模型的請求裡，較舊的 `read_file` / `grep` / `glob` / `ls` / `git_diff` / `git_status` 輸出換成提示重新呼叫的 placeholder。最近 10 個結果、錯誤與 shell / 測試輸出都保留；對話紀錄本身不改。
+- `go run ./cmd/dbench analyze <run-id>...` 從 trace 重算過程指標並分類失敗，報表最後有 masking 的離線重播：依同一份 trace 估計遮蔽前後的 input tokens 與含 prefix cache 的輸入成本。
 - 比較別的 harness 需要逐題成績：CSV（`instance_id,resolved[,steps,cost_usd]`）或 `{"instance_id": true}` JSON。

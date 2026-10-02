@@ -114,7 +114,11 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	mws := []core.Middleware{summ, todolist.New("", ""), mem, &liveContext{cwd: opts.Cwd, model: opts.Model, project: opts.ProjectContext}}
+	var mws []core.Middleware
+	if !slices.Contains(opts.Disable, FeatureMasking) {
+		mws = append(mws, observationMasking{})
+	}
+	mws = append(mws, summ, todolist.New("", ""), mem, &liveContext{cwd: opts.Cwd, model: opts.Model, project: opts.ProjectContext})
 	if len(skillSources) > 0 {
 		sk, err := skills.New(skills.Options{Backend: b, Sources: skillSources})
 		if err != nil {

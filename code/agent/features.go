@@ -18,10 +18,13 @@ const (
 	// FeatureDiffReview reviews byproducts, changed tests and the task's
 	// requirements once before a headless turn finishes.
 	FeatureDiffReview = "diff_review"
+	// FeatureMasking replaces old read-only tool outputs with placeholders
+	// in model requests (MaskObservations).
+	FeatureMasking = "masking"
 )
 
 // Features lists every name Options.Disable accepts.
-var Features = []string{FeatureBaseline, FeatureDiffReview}
+var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureMasking}
 
 // ParseFeatures splits a comma-separated list of feature names and rejects
 // unknown ones.

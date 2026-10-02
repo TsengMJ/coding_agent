@@ -533,7 +533,37 @@
 **Goal**: 舊的可重建 tool 輸出不再留在 context。
 **Success Criteria**: 歷史 trace 離線重播的 input tokens 明顯下降；tool call 配對不壞。
 **Tests**: ContextBuilder table-driven；歷史 trace 重播。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- `MaskObservations`（`code/agent/masking.go`，middleware 放在 summarization 之前，只改送出的請求）：
+  - 遮蔽對象：`read_file`、`grep`、`glob`、`ls`、`git_diff`、`git_status`。
+  - 保留：最近 10 個結果、錯誤、短於 600 字元的結果、所有 shell / 測試 / 編輯輸出、使用者與 assistant 訊息。tool call 與結果一一對應不變。
+  - 錯誤一律保留，不只最近 3 個：只保留最近 3 個的話，每來一個新錯誤就會遮掉一個舊的，cache prefix 會不斷斷掉；而且這類工具的錯誤都很短。
+- Cache 是設計的關鍵：遮蔽會改寫舊訊息，provider 的 cached prefix 從那裡斷掉。所以每累積 20 個結果才一起遮蔽一次。
+- 離線重播（`dbench analyze` 報表新增 section）：
+  - 方法：同一份 trace 的每個請求，遮蔽前後都用 `ApproximateTokenCounter` 計算；cached = 和同一 agent 上一個請求共用的 prefix；成本用價格表的 cache 價。
+  - 參數掃描，4 個歷史 run 的輸入成本變化：
+
+    | batch \ keep | 10 | 20 |
+    |---|---|---|
+    | 5 | −2 / −3 / −36 / −37% | +27 / +19 / −9 / −17% |
+    | 10 | −9 / −11 / −37 / −41% | |
+    | 20 | **−15 / −15 / −37 / −42%** | −5 / −5 / −28 / −33% |
+    | 40 | −8 / −9 / −34 / −39% | |
+
+    選 keep 10、batch 20。
+  - 結果：input tokens 合計 44.2M → 21.1M（−52%；各 run −35 / −35 / −58 / −62%），輸入成本 −15% 到 −42%。cache 命中由 93–97% 降到 87–91%。
+  - 少數短 run 成本 +5–8%：cache 斷掉的代價大於省下的 tokens。
+  - 這是上限估計：真的遮蔽後 agent 可能重讀檔案，實際效果看最終評測。
+- `-disable masking` 可關掉。
+- 偏離計畫：
+  - 精簡 `git_diff` 沒做：72 次 `git_diff` 中 55 次帶 `paths`（agent 要的就是完整內容）；其餘 17 次照「每檔前 40 行」裁切只省 30k / 704k 字元（4%），而且舊的 diff 已經會被遮蔽。
+  - TaskLedger 沒做：遮蔽保留了 tool call 參數、編輯、測試與錯誤輸出，ledger 要提供的資訊（改了哪些檔、最近的檢查結果）都還在 context 裡，沒有證據顯示需要另一份摘要。
+- 測試：
+  - 遮蔽的 table-driven 測試：數量門檻、batch 邊界、shell / 測試 / 編輯保留、錯誤保留、短結果保留、不改輸入。
+  - 配對不壞；middleware 送出遮蔽後的請求，原請求不變。
+  - 重播：prefix cache 計算、不同 agent 分開、長對話確實縮小。
 
 ### Stage R7: 進度監控與委派契約
 **Goal**: 相同失敗不再盲目重試；subagent 共用父預算。
