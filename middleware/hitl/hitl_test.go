@@ -209,6 +209,25 @@ func TestWhenLimitsReviewToMatchingCalls(t *testing.T) {
 	}
 }
 
+func TestAlwaysWhenOverridesWhenAndAutoApprove(t *testing.T) {
+	cfg := map[string]InterruptOnConfig{"write_file": {
+		When: func(llm.ToolCall) bool { return false },
+		AlwaysWhen: func(call llm.ToolCall) bool {
+			p, _ := call.Args["file_path"].(string)
+			return p == "/etc/hosts"
+		},
+	}}
+	auto := runtime.RunConfig{ThreadID: "t", Configurable: map[string]any{AutoApproveKey: true}}
+	h := newHarnessWith(t, cfg, writeCall("w1", "/a.txt"), llm.NewAssistantMessage("done"))
+	if _, paused := h.start(t, auto); paused != nil {
+		t.Fatal("a call outside AlwaysWhen must follow When and auto-approve")
+	}
+	h = newHarnessWith(t, cfg, writeCall("w1", "/etc/hosts"), llm.NewAssistantMessage("done"))
+	if _, paused := h.start(t, auto); paused == nil {
+		t.Fatal("an AlwaysWhen call must be reviewed under auto-approve")
+	}
+}
+
 func TestUnreviewedToolsRunWithoutInterrupt(t *testing.T) {
 	h := newHarness(t,
 		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "r", Name: "read_file"}}},

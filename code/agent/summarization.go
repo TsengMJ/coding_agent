@@ -2,6 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/tsengmingchun/deepagents_golang/backend"
 	"github.com/tsengmingchun/deepagents_golang/llm"
@@ -13,12 +15,29 @@ import (
 const HistoryPathPrefix = "/.deepagents/conversation_history"
 
 // NewBackend is the default project backend: a LocalShellBackend rooted at
-// cwd in virtual mode.
+// cwd in virtual mode. Shell commands inherit the environment minus
+// credential-named variables, since dcode loads ~/.deepagents/.env into it.
 func NewBackend(cwd string) backend.Backend {
 	return backend.NewLocalShellBackend(backend.LocalShellOptions{
 		FilesystemOptions: backend.FilesystemOptions{RootDir: cwd, VirtualMode: true, RespectGitignore: true},
 		InheritEnv:        true,
+		HideSecretEnv:     true,
+		PassEnv:           passEnv(os.Getenv(ShellPassEnvVar)),
 	})
+}
+
+// ShellPassEnvVar lists, comma-separated, credential variables that shell
+// commands may still see (for example GITHUB_TOKEN for gh).
+const ShellPassEnvVar = "DEEPAGENTS_CODE_SHELL_PASS_ENV"
+
+func passEnv(list string) []string {
+	var out []string
+	for _, name := range strings.Split(list, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // NewSummarization builds the CLI's summarization middleware; it also

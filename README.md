@@ -118,6 +118,14 @@ url = "http://127.0.0.1:8123"              # 等同 DCODE_SERVER
 
 allow-list 只比對每段指令（以 `|`、`;`、`&&`、`||` 切開）的第一個字；含 `$(`、反引號、`$VAR`、`${`、重導向（`>`、`<`、`>>`、`<<`）、背景 `&`、換行或 tab 的指令一律要核准。例如 `ls | grep x` 免核准，`ls "$(rm -rf /)"` 與 `ls &` 仍會問。
 
+shell 指令沒有 sandbox，下列保護只擋常見的意外：
+
+- 破壞性指令（`rm -rf` 根目錄、家目錄或整個專案，`git reset --hard`、`git clean -f`、`git checkout -- .`、`git push --force`、`curl ... | sh`、`mkfs`、`dd of=/dev/...` 等）：
+  - 互動模式下一律要核准，即使用了 `-y`、allow-list 為 `"all"`，或本次已選擇自動核准；
+  - `-n` 這類沒人能核准的模式下直接拒絕執行，並告訴 agent 改用範圍較小的指令。
+- 環境變數：dcode 會把 `~/.deepagents/.env` 載入自己的環境，但 shell 指令看不到名稱像 credential 的變數（`*_API_KEY`、`*_TOKEN`、`*_SECRET`、`*_PASSWORD`、`*_CONN_STRING` 等）。需要時以 `DEEPAGENTS_CODE_SHELL_PASS_ENV=GITHUB_TOKEN,NPM_TOKEN` 逗號列出要放行的變數。
+- Trace：寫入前把上述變數的值、常見 token 格式（`sk-...`、`ctx7sk-...`、`ghp_...`、`AKIA...`、`xox?-...`、`AIza...`）與 URL 中的密碼換成 `[REDACTED]`。
+
 ```sh
 mkdir /tmp/demo && cd /tmp/demo
 dcode -n '建立 main.go 印出 hello，然後 go run main.go'

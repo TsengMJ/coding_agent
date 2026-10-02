@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -32,6 +33,11 @@ type LocalShellOptions struct {
 	Env            map[string]string
 	// InheritEnv passes the parent process environment to commands.
 	InheritEnv bool
+	// HideSecretEnv leaves inherited variables whose names look like
+	// credentials (SecretEnvName) out of the command environment, except
+	// those named in PassEnv. Env is always passed.
+	HideSecretEnv bool
+	PassEnv       []string
 }
 
 // LocalShellBackend is a FilesystemBackend that also runs shell commands on
@@ -251,7 +257,13 @@ func errorResponse(msg string, code int) ExecuteResponse {
 func (b *LocalShellBackend) env() []string {
 	var env []string
 	if b.opts.InheritEnv {
-		env = os.Environ()
+		for _, kv := range os.Environ() {
+			name, _, _ := strings.Cut(kv, "=")
+			if b.opts.HideSecretEnv && SecretEnvName(name) && !slices.Contains(b.opts.PassEnv, name) {
+				continue
+			}
+			env = append(env, kv)
+		}
 	}
 	for k, v := range b.opts.Env {
 		env = append(env, k+"="+v)

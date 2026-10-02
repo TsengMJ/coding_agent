@@ -43,6 +43,9 @@ type InterruptOnConfig struct {
 	// Always keeps the interrupt when AutoApproveKey is set, for tools that
 	// ask the user something rather than wait for permission.
 	Always bool
+	// AlwaysWhen marks calls that are reviewed even when AutoApproveKey is
+	// set or When would let them through (for example destructive commands).
+	AlwaysWhen func(call llm.ToolCall) bool
 }
 
 // ActionRequest describes one tool call awaiting review (the interrupt value).
@@ -92,7 +95,11 @@ func (m *Middleware) AfterModel(ctx context.Context, state *runtime.State, rt *a
 	var reqs []ActionRequest
 	for _, call := range last.ToolCalls {
 		cfg, ok := m.interruptOn[call.Name]
-		if !ok || (auto && !cfg.Always) || (cfg.When != nil && !cfg.When(call)) {
+		if !ok {
+			continue
+		}
+		forced := cfg.AlwaysWhen != nil && cfg.AlwaysWhen(call)
+		if !forced && ((auto && !cfg.Always) || (cfg.When != nil && !cfg.When(call))) {
 			continue
 		}
 		reqs = append(reqs, ActionRequest{

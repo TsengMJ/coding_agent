@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -143,14 +144,17 @@ type llmRecord struct {
 
 // Store reads and writes thread traces in a Log.
 type Store struct {
-	log  Log
-	mu   sync.Mutex
-	recs map[string]*Recorder
+	log    Log
+	redact redactor
+	mu     sync.Mutex
+	recs   map[string]*Recorder
 }
 
-// NewStore returns a store on log.
+// NewStore returns a store on log. Records are written with the values of
+// credential-named environment variables, as of now, and well-known token
+// formats redacted.
 func NewStore(log Log) *Store {
-	return &Store{log: log, recs: map[string]*Recorder{}}
+	return &Store{log: log, redact: newRedactor(os.Environ()), recs: map[string]*Recorder{}}
 }
 
 // Recorder returns the recorder for threadID, reading its existing records
@@ -161,7 +165,7 @@ func (s *Store) Recorder(threadID string) (*Recorder, error) {
 	if r, ok := s.recs[threadID]; ok {
 		return r, nil
 	}
-	r := &Recorder{log: s.log, threadID: threadID, blobs: map[string]bool{}, last: map[string][]string{}}
+	r := &Recorder{log: s.log, redact: s.redact, threadID: threadID, blobs: map[string]bool{}, last: map[string][]string{}}
 	if err := r.scan(); err != nil {
 		return nil, err
 	}
@@ -356,6 +360,7 @@ func readRecords(l Log, threadID string, fn func(record) bool) error {
 type Recorder struct {
 	mu       sync.Mutex
 	log      Log
+	redact   redactor
 	threadID string
 	seq      int
 	blobs    map[string]bool
@@ -497,6 +502,9 @@ func (r *Recorder) blob(v any) (string, []byte, error) {
 // write appends lines as one unit so readers never see a record without
 // the blobs it refers to.
 func (r *Recorder) write(lines [][]byte) error {
+	for i, line := range lines {
+		lines[i] = r.redact.line(line)
+	}
 	if err := r.log.Append(context.Background(), r.threadID, lines); err != nil {
 		return fmt.Errorf("trace: write: %w", err)
 	}

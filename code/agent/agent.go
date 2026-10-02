@@ -159,8 +159,13 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	}
 	subs = append(subs, custom...)
 	interrupts := map[string]hitl.InterruptOnConfig{}
-	if !opts.AutoApprove {
+	switch {
+	case !opts.AutoApprove:
 		interrupts = InterruptOn(opts.Settings)
+	case opts.Interactive:
+		interrupts["execute"] = destructiveOnly()
+	default:
+		mws = append(mws, destructiveGuard{})
 	}
 	if opts.Interactive {
 		var readOnly []string
@@ -206,7 +211,7 @@ func DefaultInterruptOn() map[string]hitl.InterruptOnConfig {
 			AllowedDecisions: []hitl.DecisionType{hitl.DecisionApprove, hitl.DecisionReject},
 			Description:      "Action: Delete file or directory",
 		},
-		"execute":                 {},
+		"execute":                 {AlwaysWhen: isDestructiveCall, Describe: describeExecute},
 		codetools.RunTestsName:    {},
 		codetools.DiagnosticsName: {},
 		"web_search":              {Describe: FormatWebSearchDescription},
@@ -233,13 +238,13 @@ func InterruptOn(s *config.Settings) map[string]hitl.InterruptOnConfig {
 	switch {
 	case s == nil:
 	case s.ShellAllowAll:
-		delete(cfg, "execute")
+		cfg["execute"] = destructiveOnly()
 		for name := range runnerTools {
 			delete(cfg, name)
 		}
 	case len(s.ShellAllowList) > 0:
 		allow := s.ShellAllowList
-		cfg["execute"] = hitl.InterruptOnConfig{When: func(call llm.ToolCall) bool {
+		cfg["execute"] = hitl.InterruptOnConfig{AlwaysWhen: isDestructiveCall, Describe: describeExecute, When: func(call llm.ToolCall) bool {
 			cmd, _ := call.Args["command"].(string)
 			return !IsShellCommandAllowed(cmd, allow, false)
 		}}

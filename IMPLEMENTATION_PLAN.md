@@ -637,4 +637,22 @@
 **Goal**: 子程序最小環境、trace 遮蔽 secret、sandbox adapter、危險指令分級。
 **Success Criteria**: 子程序看不到未允許的環境變數；trace 不含測試用假 secret；沒有 sandbox 時明確顯示。
 **Tests**: env 白名單、redaction 規則、風險分級 table-driven、sandbox 整合測試（平台支援時）。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- 實際風險：
+  - dcode 把 `~/.deepagents/.env`（OPENROUTER_API_KEY、CONTEXT7_API_KEY、POSTGRES_CONN_STRING ...）載入自己的環境，而 `execute` 繼承整個環境，所以 `env`、`printenv` 或測試程式的錯誤輸出會把 key 帶進對話與 trace。
+  - 預設自動核准（`-y` / `startup.mode="yolo"` / allow-list `"all"`）時，沒有任何東西擋破壞性指令。
+- 危險指令：`DestructiveCommand` 以固定規則判定（不靠 LLM）。
+  - 互動模式：`InterruptOnConfig.AlwaysWhen`，命中時一律送核准，不受 `-y`、`"all"`、本次自動核准影響，核准畫面寫明原因。
+  - Headless：沒人能核准，`destructiveGuard` 直接回錯誤，請 agent 改用範圍較小的指令。
+  - 歷史 trace 的 133 個 `execute` 指令中 0 個命中，所以不影響評測行為。
+- 環境最小化：`LocalShellOptions.HideSecretEnv`（dcode 開啟）讓 shell 看不到名稱像 credential 的變數；`DEEPAGENTS_CODE_SHELL_PASS_ENV` 放行指定變數。
+  - 用黑名單而不是白名單：專案常依賴任意環境變數（`NODE_ENV`、`DATABASE_URL`、`GOPATH` ...），白名單會讓測試莫名失敗。
+- Trace 遮蔽：Store 建立時記下 credential 變數的值（≥ 8 字元），寫入前連同常見 token 格式與 URL 密碼一起換成 `[REDACTED]`；只替換 JSON 字串內容，紀錄仍是合法 JSON。
+- 這三項是安全底線，沒有 ablation 開關；危險指令的規則不影響評測（0 / 133），環境與 trace 的處理不改變 agent 看到的內容（除了 secret 本身）。
+- 偏離計畫：沒做 sandbox adapter。`--help` 已明確寫出指令不在 sandbox 內；adapter 需要平台相依的整合（macOS seatbelt / Linux bwrap），無法在 regress 評測中驗證，依「每個抽象都要可觀察」先不做。
+- 測試：
+  - 危險指令 table-driven（含 `rm -rf build`、`git checkout -- src/a.go` 這類不該命中的情況）；headless agent 拒絕；`AlwaysWhen` 蓋過 `When` 與自動核准；`"all"` 與 allow-list 仍審破壞性指令。
+  - shell 看不到 `*_API_KEY`、看得到 PassEnv 與一般變數；`SecretEnvName` 不誤判 `TOKENIZERS_PARALLELISM`。
+  - trace 遮蔽：含 JSON 跳脫字元的密碼、跳脫換行後的 key、URL 密碼；`risk-assessment-...` 不被誤遮。

@@ -372,6 +372,29 @@ func TestLocalShellExecuteRunsInRoot(t *testing.T) {
 	}
 }
 
+func TestLocalShellHidesSecretEnv(t *testing.T) {
+	t.Setenv("DCODE_TEST_API_KEY", "hidden-value")
+	t.Setenv("DCODE_TEST_GH_TOKEN", "passed-value")
+	t.Setenv("DCODE_TEST_PLAIN", "plain-value")
+	b := newShell(t, LocalShellOptions{HideSecretEnv: true, PassEnv: []string{"DCODE_TEST_GH_TOKEN"}})
+	res := b.Execute(context.Background(), `echo "$DCODE_TEST_API_KEY|$DCODE_TEST_GH_TOKEN|$DCODE_TEST_PLAIN"`, nil)
+	if res.Output != "|passed-value|plain-value\n" {
+		t.Fatalf("output = %q", res.Output)
+	}
+}
+
+func TestSecretEnvName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"OPENROUTER_API_KEY": true, "CONTEXT7_APIKEY": true, "GITHUB_TOKEN": true,
+		"AWS_SECRET_ACCESS_KEY": true, "POSTGRES_CONN_STRING": true, "DB_PASSWORD": true,
+		"PATH": false, "HOME": false, "TOKENIZERS_PARALLELISM": false, "GOPATH": false,
+	} {
+		if got := SecretEnvName(name); got != want {
+			t.Errorf("SecretEnvName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestLocalShellExecuteNonZeroExit(t *testing.T) {
 	b := newShell(t, LocalShellOptions{})
 	res := b.Execute(context.Background(), "echo out; echo bad >&2; exit 3", nil)

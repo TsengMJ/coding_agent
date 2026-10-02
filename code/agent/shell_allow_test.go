@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/tsengmingchun/deepagents_golang/code/config"
@@ -95,8 +96,27 @@ func TestInterruptOnSkipsAllowListedCommands(t *testing.T) {
 	if InterruptOn(nil)["execute"].When != nil {
 		t.Error("no allow list: every execute call needs review")
 	}
-	if _, ok := InterruptOn(&config.Settings{ShellAllowAll: true})["execute"]; ok {
-		t.Error(`"all": execute should not be reviewed`)
+	all := InterruptOn(&config.Settings{ShellAllowAll: true})["execute"]
+	if all.When == nil || all.When(executeCall("rm -rf build")) {
+		t.Error(`"all": ordinary commands should not be reviewed`)
+	}
+	if all.AlwaysWhen == nil || !all.AlwaysWhen(executeCall("git reset --hard")) {
+		t.Error(`"all": destructive commands should still be reviewed`)
+	}
+}
+
+func TestInterruptOnAlwaysReviewsDestructiveCommands(t *testing.T) {
+	for name, s := range map[string]*config.Settings{
+		"default":    nil,
+		"allow list": {ShellAllowList: []string{"git", "rm"}},
+	} {
+		cfg := InterruptOn(s)["execute"]
+		if cfg.AlwaysWhen == nil || !cfg.AlwaysWhen(executeCall("git clean -fdx")) || cfg.AlwaysWhen(executeCall("git status")) {
+			t.Errorf("%s: AlwaysWhen does not single out destructive commands", name)
+		}
+		if got := cfg.Describe(executeCall("rm -rf ~")); !strings.HasPrefix(got, "Destructive command:") {
+			t.Errorf("%s: description = %q", name, got)
+		}
 	}
 }
 
