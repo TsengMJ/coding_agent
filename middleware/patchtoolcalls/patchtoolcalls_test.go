@@ -58,7 +58,7 @@ func TestInsertsCancellationRightAfterDanglingCall(t *testing.T) {
 	if patched.Role != llm.RoleTool || patched.ToolCallID != "c1" || patched.Name != "execute" || patched.Status != llm.ToolStatusError {
 		t.Fatalf("patched = %+v", patched)
 	}
-	if !strings.Contains(patched.Text(), "did not complete") {
+	if !strings.Contains(patched.Text(), "did not complete") || !strings.Contains(patched.Text(), "Check the current state") {
 		t.Fatalf("text = %q", patched.Text())
 	}
 	if got[3].ToolCallID != "c2" || got[4].Text() != "next" {

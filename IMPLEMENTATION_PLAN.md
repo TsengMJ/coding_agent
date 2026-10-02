@@ -461,7 +461,24 @@
 **Goal**: crash 後不重放結果未知的非冪等工具；GUI 斷線不中止 run（先確認問題存在）。
 **Success Criteria**: 工具執行 ledger 記錄開始 / 完成；重啟後未完成的工具以「結果未知」告知模型。
 **Tests**: 工具前後、checkpoint 前後注入 crash；斷線續接。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- 先確認問題：
+  - crash 不會盲目重放工具。checkpoint 在每個節點後才存，所以中斷後最後一筆是「有 tool_calls、沒有結果」的 assistant 訊息，`patchtoolcalls` 會在下一次 run 補上錯誤結果。原文寫的是「可能被取消」，模型容易照樣重跑。
+  - GUI 斷線會中止 run：`POST /runs` 的 run 綁在 request context 上，重新整理頁面就取消。另外 `loadThread` 會用 history 覆蓋正在串流的 view。
+  - history 分頁有錯：Postgres 版在 user turn 少於 limit 時退回「最後 limit 筆訊息」，第一頁從 turn 中間開始，和 memory 版（整串）不一致。兩版也都把 summarization 等 middleware 補的 user 訊息當成 turn。
+  - trace summary 讀整個 thread：沒有量到慢的證據，不處理。
+- 偏離計畫：沒有建工具執行 ledger。上面的 dangling call 機制已經能在下一次 run 告知模型「結果未知」，ledger 只會多一份要同步的狀態。改為修訂補上的訊息：說明工具可能已部分或全部執行，並要求先用 git_diff / read_file 確認現況再重跑。既有的 `TestCancelledToolCallIsPatchedOnNextTurn` 覆蓋「取消後下一次 run」的路徑。
+- HTTP handler 改為持有 run（`code/server/runs.go`）：
+  - run 的事件緩存在 server，`GET /threads/{id}/events` 從頭重播後再持續跟隨（閒置時回 204）；`POST /threads/{id}/cancel` 取消 run。
+  - `POST /runs?detach=1` 的 run 不隨斷線結束；不帶參數時維持「斷線即取消」，TUI 與 remote client 不變。
+  - server 關閉時仍會等 run 結束，超過 grace 才取消。
+- GUI：
+  - run 改用 detach；Stop 改呼叫 cancel，讓 run 正常收尾（取消後才存的訊息也看得到）。
+  - 正在串流的 thread 不再被 history 覆蓋；載入時若 server 上仍在跑就自動接回。
+  - 重播的訊息依 id（tool 訊息依 tool_call_id）去重，diff 也去重；GUI 送出的 user 訊息帶 id。
+- History：只有沒有 `lc_source` metadata 的 user 訊息算 turn；user turn 少於 limit 時回傳整串。新增 memory / Postgres 共用的測試。
 
 ### Stage R4: Provider 正確性與 cache 前綴
 **Goal**: OpenRouter 的 `reasoning_details` 原樣回傳；system message 在整個 run 內不變。

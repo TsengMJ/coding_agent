@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/tsengmingchun/deepagents_golang/code/commands"
@@ -33,7 +34,10 @@ var (
 // NewHandler exposes srv over HTTP:
 //
 //	GET  /healthz         -> {"status":"ok","model":default spec when known}
-//	POST /runs            RunRequest -> NDJSON stream of Event, ending in done or error
+//	POST /runs            RunRequest -> NDJSON stream of Event, ending in done or error;
+//	                      a client that disconnects cancels the run unless it posted ?detach=1
+//	GET  /threads/{id}/events -> the running run's stream from its first event (204 when idle)
+//	POST /threads/{id}/cancel -> 202, cancels the running run (404 when idle)
 //	GET  /threads         ?cwd=&limit= -> []sessions.Info
 //	GET  /threads/{id}    -> ThreadState (404 when unknown)
 //	PATCH /threads/{id}    {"title":"..."} -> sessions.Info
@@ -54,8 +58,26 @@ func NewHandler(srv Server) http.Handler {
 	mux.HandleFunc("GET /commands", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, commands.Visible(commands.DCode))
 	})
+	runs := newLiveRuns()
 	mux.HandleFunc("POST /runs", func(w http.ResponseWriter, r *http.Request) {
-		handleRun(w, r, srv)
+		handleRun(w, r, srv, runs)
+	})
+	mux.HandleFunc("GET /threads/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		run := runs.get(r.PathValue("id"))
+		if run == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		streamRun(w, r, run)
+	})
+	mux.HandleFunc("POST /threads/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		run := runs.get(r.PathValue("id"))
+		if run == nil {
+			writeError(w, http.StatusNotFound, errors.New("thread has no running run"))
+			return
+		}
+		run.cancel()
+		w.WriteHeader(http.StatusAccepted)
 	})
 	mux.HandleFunc("GET /threads", func(w http.ResponseWriter, r *http.Request) {
 		f := sessions.Filter{Cwd: r.URL.Query().Get("cwd")}
@@ -194,13 +216,41 @@ func historyParams(r *http.Request) (before, limit int, err error) {
 	return before, limit, nil
 }
 
-func handleRun(w http.ResponseWriter, r *http.Request, srv Server) {
+// runScope is where runs started over HTTP live: ServeHandler cancels ctx
+// after the shutdown grace and waits for wg.
+type runScope struct {
+	ctx context.Context
+	wg  sync.WaitGroup
+}
+
+type runScopeKey struct{}
+
+func handleRun(w http.ResponseWriter, r *http.Request, srv Server, runs *liveRuns) {
 	var req RunRequest
 	dec := json.NewDecoder(io.LimitReader(r.Body, maxRequestBytes))
 	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode run request: %w", err))
 		return
 	}
+	ctx, wg := context.WithoutCancel(r.Context()), (*sync.WaitGroup)(nil)
+	if scope, ok := r.Context().Value(runScopeKey{}).(*runScope); ok {
+		ctx, wg = scope.ctx, &scope.wg
+	}
+	run, err := runs.start(ctx, srv, req, wg)
+	if err != nil {
+		writeError(w, statusFor(err), err)
+		return
+	}
+	if r.URL.Query().Get("detach") != "1" {
+		defer run.cancel()
+	}
+	streamRun(w, r, run)
+}
+
+// streamRun writes the run's events as NDJSON, from its first event, ending
+// in done or error. A client that disconnects or stops reading only stops
+// its own stream.
+func streamRun(w http.ResponseWriter, r *http.Request, run *liveRun) {
 	rc := http.NewResponseController(w)
 	enc := json.NewEncoder(w)
 	started := false
@@ -210,8 +260,8 @@ func handleRun(w http.ResponseWriter, r *http.Request, srv Server) {
 			w.WriteHeader(http.StatusOK)
 			started = true
 		}
-		// A client that stops reading would otherwise block the run, and
-		// keep its thread busy, forever.
+		// A client that stops reading would otherwise hold this handler
+		// forever.
 		_ = rc.SetWriteDeadline(time.Now().Add(eventWriteTimeout))
 		if err := enc.Encode(ev); err != nil {
 			return false
@@ -219,20 +269,16 @@ func handleRun(w http.ResponseWriter, r *http.Request, srv Server) {
 		err := rc.Flush()
 		return err == nil || errors.Is(err, http.ErrNotSupported)
 	}
-	for ev, err := range srv.Run(r.Context(), req) {
-		if err != nil {
-			if !started {
-				writeError(w, statusFor(err), err)
-				return
-			}
-			send(Event{Kind: EventError, Error: err.Error()})
-			return
-		}
-		if !send(ev) {
-			return
-		}
+	finished, err := run.follow(r.Context(), send)
+	switch {
+	case !finished:
+	case err != nil && !started:
+		writeError(w, statusFor(err), err)
+	case err != nil:
+		send(Event{Kind: EventError, Error: err.Error()})
+	default:
+		send(Event{Kind: EventDone})
 	}
-	send(Event{Kind: EventDone})
 }
 
 func statusFor(err error) int {
@@ -298,10 +344,12 @@ func ServeHandler(ctx context.Context, addr string, h http.Handler, ready func(n
 	grace := shutdownGrace
 	runsCtx, cancelRuns := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelRuns()
+	scope := &runScope{ctx: runsCtx}
+	baseCtx := context.WithValue(runsCtx, runScopeKey{}, scope)
 	hs := &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
-		BaseContext:       func(net.Listener) context.Context { return runsCtx },
+		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 	}
 	if ready != nil {
 		ready(ln.Addr())
@@ -316,7 +364,7 @@ func ServeHandler(ctx context.Context, addr string, h http.Handler, ready func(n
 
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), grace)
 	defer cancelDrain()
-	if err := hs.Shutdown(drainCtx); err == nil {
+	if err := hs.Shutdown(drainCtx); err == nil && waitGroup(drainCtx, &scope.wg) {
 		return nil
 	}
 	cancelRuns()
@@ -325,7 +373,20 @@ func ServeHandler(ctx context.Context, addr string, h http.Handler, ready func(n
 	if err := hs.Shutdown(finalCtx); err != nil {
 		return hs.Close()
 	}
+	waitGroup(finalCtx, &scope.wg)
 	return nil
+}
+
+// waitGroup waits for wg until ctx is done and reports whether wg finished.
+func waitGroup(ctx context.Context, wg *sync.WaitGroup) bool {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func requireLoopback(addr string) error {

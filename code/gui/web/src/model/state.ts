@@ -64,7 +64,26 @@ export function showBuild(v: ThreadView): boolean {
   return !v.running && v.interrupts.length === 0 && v.plan?.status === "draft";
 }
 
-// applyEvent folds one run event into the view.
+// messageKey identifies a message across the history page and a replayed
+// run stream; messages the server did not name fall back to their content.
+function messageKey(m: Message): string {
+  if (m.id) return `id:${m.id}`;
+  if (m.role === "tool" && m.tool_call_id) return `tool:${m.tool_call_id}`;
+  return `content:${m.role}:${JSON.stringify(m.content)}`;
+}
+
+function hasMessage(list: Message[], m: Message): boolean {
+  const key = messageKey(m);
+  return list.some((x) => messageKey(x) === key);
+}
+
+function sameDiff(a: FileDiff, b: FileDiff): boolean {
+  return a.tool_call_id === b.tool_call_id && a.path === b.path && a.op === b.op && a.time === b.time;
+}
+
+// applyEvent folds one run event into the view. A client that reattaches
+// to a run replays its events from the start, so messages and diffs the
+// view already has are skipped.
 export function applyEvent(v: ThreadView, ev: RunEvent): ThreadView {
   switch (ev.event) {
     case "delta":
@@ -75,11 +94,13 @@ export function applyEvent(v: ThreadView, ev: RunEvent): ThreadView {
       if (!m) return v;
       if (ev.namespace?.length) {
         const k = nsKey(ev.namespace);
-        return { ...v, sub: { ...v.sub, [k]: [...(v.sub[k] ?? []), m] } };
+        const list = v.sub[k] ?? [];
+        if (hasMessage(list, m)) return v;
+        return { ...v, sub: { ...v.sub, [k]: [...list, m] } };
       }
       return {
         ...v,
-        messages: [...v.messages, m],
+        messages: hasMessage(v.messages, m) ? v.messages : [...v.messages, m],
         pendingUser: m.role === "user" ? "" : v.pendingUser,
         streamText: m.role === "assistant" ? "" : v.streamText,
       };
@@ -89,7 +110,10 @@ export function applyEvent(v: ThreadView, ev: RunEvent): ThreadView {
     case "trace": {
       const t = ev.trace;
       if (t?.llm_call) return { ...v, llm: { ...v.llm, [t.llm_call.seq]: t.llm_call } };
-      if (t?.diff) return { ...v, diffs: [...v.diffs, t.diff] };
+      if (t?.diff) {
+        const d = t.diff;
+        return v.diffs.some((x) => sameDiff(x, d)) ? v : { ...v, diffs: [...v.diffs, d] };
+      }
       return v;
     }
     case "error":

@@ -132,9 +132,8 @@ WITH latest AS (
   SELECT COALESCE(NULLIF($2, 0), (SELECT COALESCE(MAX(pos), 0) + 1 FROM numbered)) AS upper
 ), page_start AS (
   SELECT COALESCE((SELECT pos FROM numbered, bounds
-    WHERE pos < bounds.upper AND message->>'role' = 'user'
-    ORDER BY pos DESC OFFSET GREATEST($3 - 1, 0) LIMIT 1),
-    GREATEST(1, (SELECT upper FROM bounds) - $3)) AS pos
+    WHERE pos < bounds.upper AND message->>'role' = 'user' AND message->'metadata'->'lc_source' IS NULL
+    ORDER BY pos DESC OFFSET GREATEST($3 - 1, 0) LIMIT 1), 1) AS pos
 )
 SELECT
   COALESCE((SELECT jsonb_agg(numbered.message ORDER BY numbered.pos) FROM numbered, bounds, page_start

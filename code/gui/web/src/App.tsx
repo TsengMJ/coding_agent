@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { Api, ApiError } from "./api";
-import type { Decision, Info, Message, RunMode, SlashCommand, ThreadInfo, ThreadUsage } from "./types";
+import type { Decision, Info, Message, RunEvent, RunMode, SlashCommand, ThreadInfo, ThreadUsage } from "./types";
 import { helpText, parseModelArgs, resolveCommand } from "./model/commands";
 import { contextText, costText, tokensText } from "./model/usage";
 import { applyEvent, emptyView, endRun, fromHistory, showBuild, startRun, type ThreadView } from "./model/state";
@@ -24,7 +24,8 @@ function newThreadID(): string {
   return [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-const userMessage = (text: string): Message => ({ role: "user", content: [{ type: "text", text }] });
+// The ID lets a reattached page tell this message from its replay.
+const userMessage = (text: string): Message => ({ id: `user-${newThreadID()}`, role: "user", content: [{ type: "text", text }] });
 
 const DRAWER_STORAGE_KEY = "dcode.inspectorWidth";
 const SIDEBAR_WIDTH = 260;
@@ -112,6 +113,8 @@ export function App({ api }: { api: Api }) {
   const [drawerWidth, setDrawerWidth] = useState(() => savedDrawerWidth() ?? Math.round(window.innerWidth * 0.42));
   const drawerWidthRef = useRef(drawerWidth);
   const abortRefs = useRef<Record<string, AbortController | undefined>>({});
+  // threads whose run the user asked to stop
+  const stopRefs = useRef(new Set<string>());
   const listRef = useRef<VirtuosoHandle | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -217,6 +220,57 @@ export function App({ api }: { api: Api }) {
     [api, setViewFor],
   );
 
+  // follow folds a run's events into its thread's view until the stream
+  // ends; ctrl must already be registered in abortRefs.
+  const follow = useCallback(
+    async (id: string, ctrl: AbortController, events: () => Promise<AsyncIterable<RunEvent>>) => {
+      let error = "";
+      try {
+        for await (const ev of await events()) {
+          if (ev.event === "done") break;
+          if (ev.event === "error") error = ev.error ?? "run failed";
+          setViewFor(id, (v) => applyEvent(v, ev));
+        }
+      } catch (e) {
+        if (!ctrl.signal.aborted) error = (e as Error).message;
+      } finally {
+        if (stopRefs.current.delete(id) || (ctrl.signal.aborted && !error)) error = "Stopped.";
+        setViewFor(id, (v) => endRun(v, error));
+        delete abortRefs.current[id];
+        void refreshThreads(info?.cwd ?? "");
+        void refreshUsage(id);
+        void refreshPlan(id);
+      }
+    },
+    [info, refreshThreads, refreshUsage, refreshPlan, setViewFor],
+  );
+
+  // attach shows a run that is still going on the server, e.g. after this
+  // page was reloaded.
+  const attach = useCallback(
+    async (id: string) => {
+      if (abortRefs.current[id]) return;
+      const ctrl = new AbortController();
+      abortRefs.current[id] = ctrl;
+      let events: AsyncGenerator<RunEvent> | null = null;
+      try {
+        events = await api.events(id, ctrl.signal);
+      } catch {
+        // the history already shows the saved state
+      }
+      if (!events) {
+        delete abortRefs.current[id];
+        return;
+      }
+      const stream = events;
+      setViewFor(id, (v) => startRun(v, ""));
+      await follow(id, ctrl, async () => stream);
+    },
+    [api, follow, setViewFor],
+  );
+  const attachRef = useRef(attach);
+  attachRef.current = attach;
+
   const loadThread = useCallback(
     async (id: string) => {
       const seq = ++loadSeqRef.current;
@@ -226,19 +280,23 @@ export function App({ api }: { api: Api }) {
       setSelected("");
       setInspect(null);
       setReplaceCandidate(null);
+      // This page is streaming the thread's run; its view is newer than
+      // any saved checkpoint.
+      if (abortRefs.current[id]) return;
       setViewFor(id, (v) => ({ ...v, error: "" }));
       setHistoryCursors((pages) => ({ ...pages, [id]: { checkpointSeq: 0, hasMore: false, nextBefore: 0, loading: true, error: "" } }));
       setThreadModels((models) => ({ ...models, [id]: "" }));
       setUsage(null);
       try {
         const [ts, trace] = await Promise.all([api.history(id), api.traceSummary(id)]);
-        if (seq !== loadSeqRef.current) return;
+        if (seq !== loadSeqRef.current || abortRefs.current[id]) return;
         setThreadModels((models) => ({ ...models, [id]: ts?.model ?? "" }));
         setViewFor(id, fromHistory(ts, trace));
         setHistoryCursors((pages) => ({ ...pages, [id]: {
           checkpointSeq: ts?.checkpoint_seq ?? 0, hasMore: ts?.has_more ?? false,
           nextBefore: ts?.next_before ?? 0, loading: false, error: "",
         } }));
+        if (ts) void attachRef.current(id);
       } catch (e) {
         if (seq === loadSeqRef.current) {
           setViewFor(id, { ...emptyView(), error: `Could not load thread ${id}: ${(e as Error).message}` });
@@ -359,28 +417,21 @@ export function App({ api }: { api: Api }) {
       abortRefs.current[runThreadID] = ctrl;
       setViewFor(runThreadID, (v) => startRun(v, userText));
       void refreshThreads(info?.cwd ?? "");
-      let error = "";
-      try {
-        const body = { thread_id: runThreadID, cwd: runCwdForThread, auto_approve: runAutoApprove, model: runModel, mode: runMode, ...req };
-        for await (const ev of api.run(body, ctrl.signal)) {
-          if (ev.event === "done") break;
-          if (ev.event === "error") error = ev.error ?? "run failed";
-          setViewFor(runThreadID, (v) => applyEvent(v, ev));
-        }
-      } catch (e) {
-        if (!ctrl.signal.aborted) error = (e as Error).message;
-      } finally {
-        if (ctrl.signal.aborted && !error) error = "Stopped.";
-        setViewFor(runThreadID, (v) => endRun(v, error));
-        delete abortRefs.current[runThreadID];
-        void refreshThreads(info?.cwd ?? "");
-        if (modelOverride) setThreadModels((models) => ({ ...models, [runThreadID]: modelOverride }));
-        void refreshUsage(runThreadID);
-        void refreshPlan(runThreadID);
-      }
+      const body = { thread_id: runThreadID, cwd: runCwdForThread, auto_approve: runAutoApprove, model: runModel, mode: runMode, ...req };
+      await follow(runThreadID, ctrl, async () => api.run(body, ctrl.signal));
+      if (modelOverride) setThreadModels((models) => ({ ...models, [runThreadID]: modelOverride }));
     },
-    [api, threadId, runCwd, autoApprove, modelOverride, mode, refreshThreads, refreshUsage, refreshPlan, info, setViewFor],
+    [api, threadId, runCwd, autoApprove, modelOverride, mode, refreshThreads, follow, info, setViewFor],
   );
+
+  // stop cancels the run on the server and lets its stream end, so the
+  // messages saved while stopping still show; the abort is the fallback.
+  const stop = useCallback((id: string) => {
+    const ctrl = abortRefs.current[id];
+    if (!ctrl) return;
+    stopRefs.current.add(id);
+    api.cancel(id).catch(() => ctrl.abort());
+  }, [api]);
 
   const build = useCallback(() => {
     setMode("agent");
@@ -739,7 +790,7 @@ export function App({ api }: { api: Api }) {
             onReplaceCancel={() => setReplaceCandidate(null)}
             onMode={switchMode}
             onSend={(t, literal) => void send(t, literal)}
-            onStop={() => abortRefs.current[threadId]?.abort()}
+            onStop={() => stop(threadId)}
           />
         </main>
         {inspect && (

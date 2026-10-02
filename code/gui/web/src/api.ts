@@ -136,8 +136,8 @@ export class Api {
     await this.request("/default-model", { method: "PUT", body: JSON.stringify({ model: spec }) });
   }
 
-  // run streams the events of one run; aborting signal cancels it on the
-  // server too.
+  // run streams the events of one run. The run keeps going on the server
+  // when signal aborts (a reload can reattach with events); cancel stops it.
   async *run(
     req: {
       thread_id: string;
@@ -151,12 +151,28 @@ export class Api {
     },
     signal: AbortSignal,
   ): AsyncGenerator<RunEvent> {
-    const resp = await this.request("/runs", {
+    const resp = await this.request("/runs?detach=1", {
       method: "POST",
       body: JSON.stringify({ ...req, interactive: true }),
       signal,
     });
     yield* readNDJSON(resp.body!);
+  }
+
+  // events reattaches to the thread's running run, replaying it from its
+  // first event; null when the thread is idle.
+  async events(id: string, signal: AbortSignal): Promise<AsyncGenerator<RunEvent> | null> {
+    const resp = await this.request(`/threads/${encodeURIComponent(id)}/events`, { signal });
+    if (resp.status === 204 || !resp.body) return null;
+    return readNDJSON(resp.body);
+  }
+
+  async cancel(id: string): Promise<void> {
+    try {
+      await this.request(`/threads/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 404)) throw e;
+    }
   }
 }
 

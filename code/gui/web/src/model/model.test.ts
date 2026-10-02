@@ -59,6 +59,26 @@ describe("applyEvent", () => {
     expect(v.diffs).toHaveLength(1);
   });
 
+  it("ignores replayed messages and diffs after reattaching to a run", () => {
+    const reply = { ...assistant("done"), id: "a1" };
+    const diff = { tool_call_id: "c1", path: "/a", op: "edit" as const, unified: "", added: 1, removed: 0, time: "t" };
+    const prompt = { ...user("hi"), id: "u1" };
+    let v = fromHistory({ thread_id: "t", messages: [prompt, reply, toolMsg("c1", "ok")] }, null);
+    v = { ...v, diffs: [diff] };
+    v = startRun(v, "");
+    for (const e of [ev({ message: prompt }), { event: "delta", text: "do" } as RunEvent, ev({ message: reply }),
+      ev({ message: toolMsg("c1", "ok") }), { event: "trace", trace: { diff } } as RunEvent,
+      ev({ message: assistant("sub"), namespace: ["task:t1"] }), ev({ message: assistant("sub"), namespace: ["task:t1"] })]) {
+      v = applyEvent(v, e);
+    }
+    expect(v.messages).toHaveLength(3);
+    expect(v.diffs).toHaveLength(1);
+    expect(v.sub["task:t1"]).toHaveLength(1);
+    expect(v.streamText).toBe("");
+    v = applyEvent(v, ev({ message: { ...assistant("next"), id: "a2" } }));
+    expect(v.messages).toHaveLength(4);
+  });
+
   it("records interrupts and errors, and endRun stops running", () => {
     let v = startRun(emptyView(), "x");
     v = applyEvent(v, { event: "interrupt", interrupts: [{ id: "i", action_requests: [{ name: "execute", args: {} }] }] });

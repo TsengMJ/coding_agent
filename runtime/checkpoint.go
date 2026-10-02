@@ -79,6 +79,17 @@ func LoadHistoryPage(ctx context.Context, c Checkpointer, threadID string, befor
 	return pageCheckpoint(cp, before, limit), nil
 }
 
+// SyntheticSourceKey in a message's metadata names the middleware that
+// added it (a summary, a gate's reminder); such a user message does not
+// start a turn.
+const SyntheticSourceKey = "lc_source"
+
+// IsUserTurn reports whether m starts a user turn: a user message that a
+// person, not middleware, sent.
+func IsUserTurn(m llm.Message) bool {
+	return m.Role == llm.RoleUser && m.Metadata[SyntheticSourceKey] == nil
+}
+
 func pageCheckpoint(cp *Checkpoint, before, limit int) *HistoryPage {
 	msgs := cp.State.Messages
 	upper := before
@@ -91,7 +102,7 @@ func pageCheckpoint(cp *Checkpoint, before, limit int) *HistoryPage {
 	start := 0
 	seen := 0
 	for i := upper - 2; i >= 0; i-- {
-		if msgs[i].Role == llm.RoleUser {
+		if IsUserTurn(msgs[i]) {
 			seen++
 			if seen == limit {
 				start = i

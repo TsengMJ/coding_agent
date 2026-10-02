@@ -54,7 +54,9 @@ func (m *Middleware) BeforeAgent(_ context.Context, state *runtime.State, _ *age
 				name = "unknown"
 			}
 			text := fmt.Sprintf("Tool call %s with id %s did not complete - no result was recorded. "+
-				"It may have been cancelled or interrupted.", name, call.ID)
+				"It was cancelled or interrupted, possibly part-way through or after it already ran, "+
+				"so files or processes it touches may already have changed. "+
+				"Check the current state (for example with git_diff or read_file) before running it again.", name, call.ID)
 			tm := llm.NewToolMessage(call.ID, name, text)
 			tm.Status = llm.ToolStatusError
 			patched = append(patched, tm)
