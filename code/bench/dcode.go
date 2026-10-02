@@ -109,7 +109,7 @@ func (s *DcodeSolver) Solve(ctx context.Context, task Task, env SolveEnv) (Solve
 		return SolveResult{}, fmt.Errorf("refresh git index: %v %s", err, res.Stderr)
 	}
 
-	res := s.runAgent(ctx, task, id, ws, repoDir, traceThread(env, task))
+	res := s.runAgent(ctx, task, id, ws, repoDir, traceThread(env, task), env.LogDir)
 	if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return SolveResult{}, ctx.Err()
 	}
@@ -123,7 +123,7 @@ func (s *DcodeSolver) Solve(ctx context.Context, task Task, env SolveEnv) (Solve
 
 // runAgent runs dcode until it finishes or hits a budget; the outcome is
 // described by Category and Error rather than returned as an error.
-func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, repoDir, threadID string) SolveResult {
+func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, repoDir, threadID, logDir string) SolveResult {
 	var res SolveResult
 	if s.Traces == nil {
 		res.Category, res.Error = CategoryAgentError, "bench.DcodeSolver: Traces is required"
@@ -199,8 +199,22 @@ func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, re
 	verdictsMu.Lock()
 	res.Metrics.Process.BaselineVerdicts = verdicts
 	verdictsMu.Unlock()
+	if err := writeBaselineLog(logDir, verdicts); err != nil {
+		res.Error = strings.TrimSpace(res.Error + "\n" + err.Error())
+	}
 	res.Metrics.AgentMS = agentMS
 	return res
+}
+
+func writeBaselineLog(logDir string, verdicts []BaselineVerdict) error {
+	if logDir == "" || len(verdicts) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	for _, v := range verdicts {
+		fmt.Fprintf(&b, "%s\t%s\n", v.Verdict, strings.Join(v.Tests, ", "))
+	}
+	return os.WriteFile(filepath.Join(logDir, "baseline.log"), []byte(b.String()), 0o644)
 }
 
 func classifyAgentError(err error, runCtx context.Context, m *meteredModel) string {

@@ -257,3 +257,23 @@ func TestMetricsFromTraceCountsSubagentCalls(t *testing.T) {
 		t.Fatalf("metrics %+v", m)
 	}
 }
+
+func TestWriteBaselineLog(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeBaselineLog(dir, []BaselineVerdict{
+		{Verdict: "preexisting", Tests: []string{"export posts"}},
+		{Verdict: "flaky"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "baseline.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "preexisting\texport posts\nflaky\t\n" {
+		t.Fatalf("log = %q", got)
+	}
+	if err := writeBaselineLog("", []BaselineVerdict{{Verdict: "x"}}); err != nil {
+		t.Fatal(err)
+	}
+}
