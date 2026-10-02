@@ -126,7 +126,8 @@ func TestServeRefreshesProjectContextBetweenGUIRuns(t *testing.T) {
 	}
 	post("two")
 	reqs := model.Requests()
-	if len(reqs) != 2 || strings.Contains(reqs[0].Messages[0].Text(), "Project files: go.mod") || !strings.Contains(reqs[1].Messages[0].Text(), "Project files: go.mod") {
+	tail := func(r llm.ChatRequest) string { return r.Messages[len(r.Messages)-1].Text() }
+	if len(reqs) != 2 || strings.Contains(tail(reqs[0]), "Project files: go.mod") || !strings.Contains(tail(reqs[1]), "Project files: go.mod") {
 		t.Fatalf("GUI requests did not refresh project markers")
 	}
 }

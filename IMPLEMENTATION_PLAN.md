@@ -484,7 +484,13 @@
 **Goal**: OpenRouter 的 `reasoning_details` 原樣回傳；system message 在整個 run 內不變。
 **Success Criteria**: probe 確認 API 行為；httptest 驗證來回；system message 多次呼叫位元組相同。
 **Tests**: httptest reasoning_details round trip；liveContext 移到尾端後 system message 不變。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- Probe（3 次請求，共約 $0.001）：`openai/gpt-6-luna-pro` 經 OpenRouter Chat Completions，有用 49–59 個 reasoning tokens，但三種方式都沒有回 `reasoning` / `reasoning_details`：預設、`reasoning.effort`、串流加 `include_reasoning`。
+- 偏離計畫：不做 passthrough。我們的模型沒有東西可以回傳；OpenAI 的 reasoning items 只有 Responses API 會給，那是另一個較大的改動，要等有使用 Responses 的需求再評估。所以 R1 看到的 input token 跳升不是推理內容造成的，目前仍無法解釋。
+- liveContext：固定的 project context（dbench 用的）照舊放在 system message。即時的 git status 改成只存在於該次請求的尾端 user 訊息（`lc_source: live_context`，不算 user turn，不寫進 state）。system message 和歷史在一個 run 內位元組相同，provider 可以沿用 cache 前綴。dbench 的請求不受影響，所以不需要開關。
+- 測試：`TestSystemMessageIsStableWithinARun`（write_todos + write_file 之後 system message 不變，尾端看得到新檔）；既有的 project context 測試改為檢查尾端。
 
 ### Stage R5: 驗證與完成閘門
 **Goal**: agent 不能把自己造成的 regression 當成無關；最終 diff 沒有副產品。

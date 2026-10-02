@@ -10,6 +10,7 @@ import (
 
 	core "github.com/tsengmingchun/deepagents_golang/agent"
 	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
 	rt "github.com/tsengmingchun/deepagents_golang/runtime"
 )
 
@@ -74,7 +75,11 @@ func TestCachedAgentRefreshesProjectContext(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	first, second := model.Requests()[0].Messages[0].Text(), model.Requests()[1].Messages[0].Text()
+	reqs := model.Requests()
+	if reqs[0].Messages[0].Text() != reqs[1].Messages[0].Text() {
+		t.Fatal("system message changed with the working tree; it must stay a cacheable prefix")
+	}
+	first, second := lastText(reqs[0]), lastText(reqs[1])
 	if !strings.Contains(first, "Git branch: `trunk`") || strings.Contains(first, "Project files: go.mod") {
 		t.Fatalf("first context has wrong project snapshot")
 	}
@@ -88,10 +93,10 @@ func TestCachedAgentRefreshesProjectContext(t *testing.T) {
 func TestLiveContextUsesExplicitOverrideAndDropsUnavailableGit(t *testing.T) {
 	dir := t.TempDir()
 	mw := &liveContext{cwd: dir, model: llm.NewFakeModel(), project: "fixed project"}
-	req := &core.ModelRequest{}
+	req := &core.ModelRequest{Messages: []llm.Message{llm.NewUserMessage("hi")}}
 	var got string
 	next := func(_ context.Context, r *core.ModelRequest) (*core.ModelResponse, error) {
-		got = r.SystemMessage.Text()
+		got = r.SystemMessage.Text() + "\n" + r.Messages[len(r.Messages)-1].Text()
 		return &core.ModelResponse{}, nil
 	}
 	if _, err := mw.WrapModelCall(context.Background(), req, next); err != nil || !strings.Contains(got, "fixed project") {
@@ -111,6 +116,65 @@ func TestLiveContextUsesExplicitOverrideAndDropsUnavailableGit(t *testing.T) {
 	_, _ = mw.WrapModelCall(context.Background(), req, next)
 	if strings.Contains(got, "go.mod") {
 		t.Fatalf("stale context remained: %q", got)
+	}
+}
+
+func lastText(r llm.ChatRequest) string { return r.Messages[len(r.Messages)-1].Text() }
+
+func TestLiveContextLeavesHistoryAndSystemMessageUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	mw := &liveContext{cwd: dir, model: llm.NewFakeModel()}
+	history := []llm.Message{llm.NewUserMessage("hi")}
+	req := &core.ModelRequest{Messages: history}
+	var seen []llm.Message
+	next := func(_ context.Context, r *core.ModelRequest) (*core.ModelResponse, error) {
+		seen = r.Messages
+		return &core.ModelResponse{}, nil
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mw.WrapModelCall(context.Background(), req, next); err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 || len(seen) != 2 || !strings.Contains(seen[1].Text(), "Project files: go.mod") {
+		t.Fatalf("history = %d messages, request = %+v", len(history), seen)
+	}
+	if !rt.IsUserTurn(seen[0]) || rt.IsUserTurn(seen[1]) {
+		t.Fatal("the live context message must not count as a user turn")
+	}
+}
+
+func TestSystemMessageIsStableWithinARun(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	model := llm.NewFakeModel(
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "t", Name: "write_todos",
+			Args: map[string]any{"todos": []any{map[string]any{"content": "write a", "status": "in_progress"}}}}}},
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "w", Name: "write_file",
+			Args: map[string]any{"file_path": "/a.txt", "content": "hi"}}}},
+		llm.NewAssistantMessage("done"),
+	)
+	a, err := CreateCLIAgent(context.Background(), Options{Model: model, Cwd: dir, AutoApprove: true, NoWebTools: true, Interactive: true, Plans: planmode.NewMemoryStore()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(context.Background(), core.Input{Messages: []llm.Message{llm.NewUserMessage("go")}}, rt.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := model.Requests()
+	for i, r := range reqs[1:] {
+		if r.Messages[0].Text() != reqs[0].Messages[0].Text() {
+			t.Fatalf("system message of call %d differs from the first", i+2)
+		}
+	}
+	if last := lastText(reqs[len(reqs)-1]); !strings.Contains(last, "?? a.txt") {
+		t.Fatalf("live context should show the new file: %q", last)
 	}
 }
 
@@ -135,10 +199,13 @@ func TestCLIAgentLoadsMemoryAndTodos(t *testing.T) {
 	}
 	req := model.Requests()[0]
 	sys := req.Messages[0].Text()
-	for _, want := range []string{"/AGENTS.md\n\nproject rule", "user pref", "## `write_todos`", "Project files: AGENTS.md"} {
+	for _, want := range []string{"/AGENTS.md\n\nproject rule", "user pref", "## `write_todos`"} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("system prompt missing %q", want)
 		}
+	}
+	if !strings.Contains(lastText(req), "Project files: AGENTS.md") {
+		t.Errorf("live context missing from the request tail: %q", lastText(req))
 	}
 	found := false
 	for _, spec := range req.Tools {
