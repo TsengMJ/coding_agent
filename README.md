@@ -266,6 +266,6 @@ go run ./cmd/dbench compare -ref mini-swe-agent/glm-5.3 <run-id>          # 和�
 - 資料放在 `~/.deepagents/bench/`：task repo、metadata、每次嘗試的 log 與 agent trace（`logs/<run>/<instance>/t<trial>/`）、markdown 報表（`reports/`）。
 - 每題映像約 1 GB（`ghcr.io/scaleapi/swe-bench_pro-v2`，linux/amd64）；磁碟吃緊時加 `-prune-images`，網路慢時建議先跑 `bench-gate` 把映像拉好。
 - `-max-cost`（預設每題 3 美元）與 `-max-steps`（預設 250）是額外上限；`infra_error` 不算分，可用 `-retry-infra` 重跑。
-- `-disable baseline,diff_review,progress,budget` 關掉個別 agent 功能做消融比較，會記在 run 的 config。`progress`：同一個呼叫連續兩次以同樣方式失敗、中間沒有編輯、shell 指令或新的使用者訊息時，第三次不執行。`budget`：headless run 用掉 80% 的時間或步數後，每個請求尾端提醒收斂。
-- `go run ./cmd/dbench analyze <run-id>...` 從 trace 重算過程指標並分類失敗，報表最後有離線重播（progress monitor 會介入幾次），最後是各元件實際觸發的次數（verify gate 各種類、progress、budget、危險指令、version guard、grep regex 重試、service hint、shell 截斷），用來找出從不觸發的元件。
+- `-disable baseline,diff_review,test_edits,progress,budget` 關掉個別 agent 功能做消融比較，會記在 run 的 config。`test_edits`：結束前若改過既有測試，先把這些測試檔暫時換回原版、在目前的程式碼上跑一次，原版失敗就列出來，請 agent 還原測試修正程式，或指出任務哪一條要求這個行為改變。`progress`：同一個呼叫連續兩次以同樣方式失敗、中間沒有編輯、shell 指令或新的使用者訊息時，第三次不執行。`budget`：headless run 用掉 80% 的時間或步數後，每個請求尾端提醒收斂。
+- `go run ./cmd/dbench analyze <run-id>...` 從 trace 重算過程指標並分類失敗，報表最後有離線重播（progress monitor 會介入幾次），最後是各元件實際觸發的次數（verify gate 各種類、progress、budget、危險指令、version guard、grep regex 重試、service hint、shell 截斷），以及 HEAD baseline 的每次判定（regression、pre-existing、flaky ...，記在 attempt 的 process JSON），用來找出從不觸發的元件。
 - 比較別的 harness 需要逐題成績：CSV（`instance_id,resolved[,steps,cost_usd]`）或 `{"instance_id": true}` JSON。

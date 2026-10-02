@@ -701,3 +701,13 @@
 - 沒有做的後續（都需要另跑付費評測才能判斷）：
   - b398：agent 改既有測試的期望來配合實作。可能的方向是「改過的既有測試以原版在目前程式碼上跑一次」，但任務本身改變行為時會誤擋。
   - 若要重做 masking：不遮蔽之後還會編輯的檔案，或只遮蔽 grep / glob / ls。
+
+### Stage R10: 不穩定題追蹤
+**Goal**: 確認刪除 masking 後步數回到 baseline；讓 HEAD baseline 的放行可被觀察；處理 b398「改既有測試配合實作」。
+**Success Criteria**: 8168、bd80 的步數與重讀率接近歷史 baseline；每次 baseline 判定都記在 attempt；b398 若改了既有測試，gate 會列出原版失敗的測試。
+**Tests**: baseline 回報 pre-existing / flaky / regression；test_edits 擋下「改測試配合壞掉的程式」、不擋新增的測試與原版仍通過的修改、還原工作樹不留 stash / ref、可關閉；run_tests 參數組裝。
+**Status**: In Progress
+
+**Results**:
+- Baseline 判定紀錄：`VerifyGate.OnBaseline` / `Options.OnBaseline` 回報每次判定；dbench 存進 `Process.BaselineVerdicts`（判定與測試名稱），analyze 的 Component triggers 多了 `baseline_*` 欄位。
+- `test_edits`（`code/agent/testedits.go`）：檢查通過、diff review 之前，只把改過的既有測試檔 `git stash push -- <files>`，用原版跑 `run_tests`（Go 依 package，其他依檔名；沿用最後一次 run_tests 的 language / dir / timeout），再還原。原版有失敗就列出，請 agent 還原測試修正程式，或在回覆中指出任務的哪一條要求。每個 turn 一次，不佔擋下額度。`-disable test_edits` 可關。
