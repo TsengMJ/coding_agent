@@ -49,8 +49,6 @@ type AttemptAnalysis struct {
 	// MaxUnexplained is the largest such growth.
 	UnexplainedJumps int
 	MaxUnexplained   int
-	// Masking is the offline estimate of observation masking on the trace.
-	Masking *MaskingReplay
 	// Progress is the offline count of progress monitor interventions.
 	Progress *ProgressReplay
 	// Triggers counts what the agent's components actually did in the trace.
@@ -85,8 +83,6 @@ func AnalyzeAttempt(a Attempt, task Task, tests []TestResult, calls []trace.LLMC
 		}
 		out.Loop = out.Metrics.Process.MaxRepeat >= loopRepeat
 		out.UnexplainedJumps, out.MaxUnexplained = inputJumps(calls)
-		replay := ReplayMasking(calls, prices)
-		out.Masking = &replay
 		progress := ReplayProgress(calls)
 		out.Progress = &progress
 		out.Triggers = TriggersFromTrace(calls)
@@ -257,7 +253,6 @@ func AnalyzeMarkdown(run Run, rows []AttemptAnalysis) string {
 		}
 		fmt.Fprintf(&b, "- %s: %d chars (%.0f%%)\n", name, outChars[k], 100*float64(outChars[k])/float64(max(total, 1)))
 	}
-	writeMaskingReplay(&b, rows)
 	writeProgressReplay(&b, rows)
 	writeTriggers(&b, rows)
 	return b.String()
@@ -266,7 +261,7 @@ func AnalyzeMarkdown(run Run, rows []AttemptAnalysis) string {
 // triggerColumns orders the component trigger table.
 var triggerColumns = []string{
 	"gate_check", "gate_baseline", "gate_diff", TriggerProgressRefusal, TriggerProgressNote,
-	TriggerBudget, TriggerMaskedRequests, TriggerDestructive, TriggerVersionGuard,
+	TriggerBudget, TriggerDestructive, TriggerVersionGuard,
 	TriggerGrepRegex, TriggerServiceHint, TriggerShellTruncated,
 }
 
@@ -274,7 +269,7 @@ var triggerColumns = []string{
 // finding components that never fire.
 func writeTriggers(b *strings.Builder, rows []AttemptAnalysis) {
 	b.WriteString("\n## Component triggers\n\n")
-	b.WriteString("What the agent's components did in the recorded trace: tool results and gate messages are counted once, budget notices and masked requests per request.\n\n")
+	b.WriteString("What the agent's components did in the recorded trace: tool results and gate messages are counted once, budget notices per request.\n\n")
 	b.WriteString("| task | t | observed | " + strings.Join(triggerColumns, " | ") + " |\n")
 	b.WriteString("|---|---|---|" + strings.Repeat("---|", len(triggerColumns)) + "\n")
 	sum := Triggers{}
@@ -313,51 +308,6 @@ func writeProgressReplay(b *strings.Builder, rows []AttemptAnalysis) {
 		fmt.Fprintf(b, "| %s | %d | %s | %d | %d |\n", shortInstance(r.Attempt.InstanceID), r.Attempt.Trial, r.Observed, p.Refusals, p.RepeatNotes)
 	}
 	fmt.Fprintf(b, "| total | | | %d | %d |\n", sum.Refusals, sum.RepeatNotes)
-}
-
-// writeMaskingReplay renders the offline masking estimate. Both sides use
-// the approximate token counter and the modeled prefix cache.
-func writeMaskingReplay(b *strings.Builder, rows []AttemptAnalysis) {
-	b.WriteString("\n## Observation masking replay\n\n")
-	b.WriteString("Recorded requests against the same requests with old read-only tool outputs masked; tokens are estimated, cached is the prefix shared with the previous request.\n\n")
-	b.WriteString("| task | t | tokens in (M) | masked (M) | change | cached % | masked cached % | input $ | masked $ | change |\n")
-	b.WriteString("|---|---|---|---|---|---|---|---|---|---|\n")
-	var sum MaskingReplay
-	for _, r := range rows {
-		if r.Masking == nil {
-			continue
-		}
-		rec, m := r.Masking.Recorded, r.Masking.Masked
-		sum.Recorded.Tokens += rec.Tokens
-		sum.Recorded.Cached += rec.Cached
-		sum.Recorded.USD += rec.USD
-		sum.Masked.Tokens += m.Tokens
-		sum.Masked.Cached += m.Cached
-		sum.Masked.USD += m.USD
-		fmt.Fprintf(b, "| %s | %d | %s |\n", shortInstance(r.Attempt.InstanceID), r.Attempt.Trial, replayCells(*r.Masking))
-	}
-	fmt.Fprintf(b, "| total | | %s |\n", replayCells(sum))
-}
-
-func replayCells(r MaskingReplay) string {
-	rec, m := r.Recorded, r.Masked
-	return fmt.Sprintf("%.2f | %.2f | %s | %s | %s | %.2f | %.2f | %s",
-		float64(rec.Tokens)/1e6, float64(m.Tokens)/1e6, change(float64(rec.Tokens), float64(m.Tokens)),
-		pct(rec.Cached, rec.Tokens), pct(m.Cached, m.Tokens), rec.USD, m.USD, change(rec.USD, m.USD))
-}
-
-func change(from, to float64) string {
-	if from == 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%+.0f%%", 100*(to-from)/from)
-}
-
-func pct(part, whole int) string {
-	if whole == 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%.0f", 100*float64(part)/float64(whole))
 }
 
 func cachePct(m Metrics) string {

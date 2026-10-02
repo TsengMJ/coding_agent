@@ -115,9 +115,6 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		return nil, err
 	}
 	var mws []core.Middleware
-	if !slices.Contains(opts.Disable, FeatureMasking) {
-		mws = append(mws, observationMasking{})
-	}
 	if !opts.Interactive && !slices.Contains(opts.Disable, FeatureBudget) {
 		mws = append(mws, newBudgetNotice())
 	}

@@ -18,9 +18,6 @@ const (
 	// FeatureDiffReview reviews byproducts, changed tests and the task's
 	// requirements once before a headless turn finishes.
 	FeatureDiffReview = "diff_review"
-	// FeatureMasking replaces old read-only tool outputs with placeholders
-	// in model requests (MaskObservations).
-	FeatureMasking = "masking"
 	// FeatureProgress refuses an unchanged repeat of a call that failed
 	// the same way twice (ProgressMonitor).
 	FeatureProgress = "progress"
@@ -30,7 +27,7 @@ const (
 )
 
 // Features lists every name Options.Disable accepts.
-var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureMasking, FeatureProgress, FeatureBudget}
+var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureProgress, FeatureBudget}
 
 // ParseFeatures splits a comma-separated list of feature names and rejects
 // unknown ones.

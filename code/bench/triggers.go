@@ -25,7 +25,6 @@ const (
 	TriggerServiceHint     = "service_hint"
 	TriggerShellTruncated  = "shell_truncated"
 	TriggerBudget          = "budget_notice"
-	TriggerMaskedRequests  = "masked_requests"
 )
 
 // toolMarkers are the texts components add to tool results, checked in
@@ -41,18 +40,16 @@ var toolMarkers = []struct{ name, text string }{
 	{TriggerShellTruncated, "... Output truncated at "},
 }
 
-const maskedPrefix = "[Old "
-
 // TriggersFromTrace counts component triggers in an attempt's model calls.
 // Tool results and gate messages are resent with every later request, so
-// each is counted once; request-only notices and masking are counted per
-// request.
+// each is counted once; budget notices, which are request-only, are
+// counted per request.
 func TriggersFromTrace(calls []trace.LLMCallDetail) Triggers {
 	out := Triggers{}
 	seen := map[string]bool{}
 	for _, c := range calls {
 		ns := strings.Join(c.Namespace, "/")
-		budget, masked := false, false
+		budget := false
 		for i, m := range c.Messages {
 			source, _ := m.Metadata[rt.SyntheticSourceKey].(string)
 			switch {
@@ -67,10 +64,6 @@ func TriggersFromTrace(calls []trace.LLMCallDetail) Triggers {
 				}
 			case m.Role == llm.RoleTool:
 				text := m.Text()
-				if strings.HasPrefix(text, maskedPrefix) {
-					masked = true
-					continue
-				}
 				key := "tool|" + ns + "|" + m.ToolCallID
 				if seen[key] {
 					continue
@@ -86,9 +79,6 @@ func TriggersFromTrace(calls []trace.LLMCallDetail) Triggers {
 		}
 		if budget {
 			out[TriggerBudget]++
-		}
-		if masked {
-			out[TriggerMaskedRequests]++
 		}
 	}
 	return out

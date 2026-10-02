@@ -557,6 +557,7 @@
   - 少數短 run 成本 +5–8%：cache 斷掉的代價大於省下的 tokens。
   - 這是上限估計：真的遮蔽後 agent 可能重讀檔案，實際效果看最終評測。
 - `-disable masking` 可關掉。
+- **最終評測後移除**（見「最終評測」）：agent 重讀被遮蔽的檔案，步數 +60%，input tokens 只 −15%，兩項 Success Criteria 都沒達到。`MaskObservations`、`-disable masking` 與離線重播一起刪掉；重播沒有模擬重讀，是這次誤判的原因。
 - 偏離計畫：
   - 精簡 `git_diff` 沒做：72 次 `git_diff` 中 55 次帶 `paths`（agent 要的就是完整內容）；其餘 17 次照「每檔前 40 行」裁切只省 30k / 704k 字元（4%），而且舊的 diff 已經會被遮蔽。
   - TaskLedger 沒做：遮蔽保留了 tool call 參數、編輯、測試與錯誤輸出，ledger 要提供的資訊（改了哪些檔、最近的檢查結果）都還在 context 裡，沒有證據顯示需要另一份摘要。
@@ -656,3 +657,47 @@
   - 危險指令 table-driven（含 `rm -rf build`、`git checkout -- src/a.go` 這類不該命中的情況）；headless agent 拒絕；`AlwaysWhen` 蓋過 `When` 與自動核准；`"all"` 與 allow-list 仍審破壞性指令。
   - shell 看不到 `*_API_KEY`、看得到 PassEnv 與一般變數；`SecretEnvName` 不誤判 `TOKENIZERS_PARALLELISM`。
   - trace 遮蔽：含 JSON 跳脫字元的密碼、跳脫換行後的 key、URL 密碼；`risk-assessment-...` 不被誤遮。
+
+### 最終評測：regress-v1 × 2
+**Status**: Complete
+
+**Results**:
+- Run `20261002-092555-dcode-regress-v1`：commit `03e3e16`（R0–R9），`openrouter:openai/gpt-6-luna-pro`，concurrency 2，共 $2.19。Baseline 是 4 個歷史 run 中同樣 7 題的 22 個 attempt。
+
+  | | attempts | 解出 | $ / attempt | input tokens (M) | cache % | peak ctx (k) | 步數 | 分鐘 |
+  |---|---|---|---|---|---|---|---|---|
+  | baseline | 22 | 15（68%） | 0.170 | 5.25 | 81 | 143 | 37 | 15.2 |
+  | R0–R9 | 14 | 10（71%） | 0.157 | 4.49 | 81 | 116 | 60 | 19.1 |
+
+- 各題：ansible 三題與 NodeBB-a5af 全解（同 baseline）；NodeBB-8168 1/2（baseline 4/4，t1 是 F2P 3/4 的 wrong_solution）；bd80 1/2（baseline 1/4）；b398 0/2（baseline 0/4）。樣本小，解題率差異不顯著。
+- 步數 +60%、時間 +25%，原因是 observation masking：
+  - 新 run 的 678 次 `read_file` 中 234 次重讀「上一次結果已被遮蔽」的檔案；重讀同一路徑的比例由 41% 升到 75%。
+  - `apply_patch` 失敗由每個 attempt 2.5 次升到 5.4 次：遮蔽後依記憶寫 patch，失敗再重讀。
+  - input tokens 只 −15%（主要來自被時間上限截斷的 b398），7 題中 6 題反而上升。
+  - 處理：刪除 masking（見 R6）。
+- R5 的目標題：
+  - b398 t1：diff review 有觸發並點名改了既有測試 `test/messaging.js`，agent 仍把 `should fail to add self to room` 的期望由 400 改成 403 以配合自己的實作，評分時這個 P2P 測試失敗。t0 用滿 50 分鐘（收到 14 次 budget 提示），同一個測試也壞掉。
+  - bd80 t0：最後一次完整 `test/controllers.js` 失敗在 `should export users posts`，HEAD baseline 有執行但判定為 pre-existing 或 flaky 而放行（沒有訊息）；評分時壞的是同一組的 `should export users uploads`，它在 agent 的環境裡通過。agent 看不到這個 regression。
+  - 計畫的標準「bd80 與 b398 各至少解出 1 次」：bd80 達到，b398 沒有。
+
+### 架構審查：元件觸發次數
+**Status**: Complete
+
+**Results**（`dbench analyze` 的 Component triggers，14 個 attempt）：
+
+| 元件 | 觸發 | 處理 |
+|---|---|---|
+| verify gate：檢查不足 / diff review | 6 / 11 | 保留 |
+| HEAD baseline 擋下 | 0（bd80 t0 執行過但放行） | 保留；它放行時不留紀錄，之後要評估得先補上 |
+| progress：拒絕 / 附註 | 0 / 6（歷史重播 2 / 5） | 保留 |
+| budget 提示 | 14（只有 b398 t0，仍逾時） | 保留；唯一案例沒有看到效果 |
+| observation masking | 655 個請求 | **刪除**：造成重讀，見最終評測 |
+| 危險指令拒絕 | 0 | 保留（安全底線，預期為 0） |
+| version guard | 1 | 保留 |
+| grep regex 重試 | 13 | 保留 |
+| service hint | 8（每個 NodeBB attempt 1 次） | 保留 |
+| shell 頭尾截斷 | 0 | 保留（正確性，只在輸出超過 100 KB 時發生） |
+
+- 沒有做的後續（都需要另跑付費評測才能判斷）：
+  - b398：agent 改既有測試的期望來配合實作。可能的方向是「改過的既有測試以原版在目前程式碼上跑一次」，但任務本身改變行為時會誤擋。
+  - 若要重做 masking：不遮蔽之後還會編輯的檔案，或只遮蔽 grep / glob / ls。

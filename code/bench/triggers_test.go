@@ -38,16 +38,15 @@ func TestTriggersCountsEachMarkerOnce(t *testing.T) {
 	cut := toolMsg("c7", "head\n\n... Output truncated at 100000 bytes: 5 bytes were omitted")
 	gate := synthetic(codeagent.VerifyGateName, "baseline", "These tests pass on HEAD")
 	budget := synthetic(codeagent.BudgetSource, "", "80% of the time is used")
-	masked := toolMsg("c0", "[Old read_file output (900 characters) removed to save context. Call read_file again with the same arguments if you need it.]")
 
 	first := []llm.Message{sys, refusal, note, guard, version, regex, hint, cut, gate}
-	later := append(append([]llm.Message{sys, masked}, first[2:]...), budget)
+	later := append(append([]llm.Message{}, first...), budget)
 	calls := []trace.LLMCallDetail{detail(first...), detail(later...), detail(later...)}
 	got := TriggersFromTrace(calls)
 	want := Triggers{
 		TriggerProgressRefusal: 1, TriggerProgressNote: 1, TriggerDestructive: 1, TriggerVersionGuard: 1,
 		TriggerGrepRegex: 1, TriggerServiceHint: 1, TriggerShellTruncated: 1, "gate_baseline": 1,
-		TriggerBudget: 2, TriggerMaskedRequests: 2,
+		TriggerBudget: 2,
 	}
 	if !maps.Equal(got, want) {
 		t.Fatalf("triggers = %v\nwant       %v", got, want)
