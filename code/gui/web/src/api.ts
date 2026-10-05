@@ -13,9 +13,9 @@ import type {
   Trace,
 } from "./types";
 
-const TOKEN_KEY = "dcode-token";
+const TOKEN_KEY = "quill-token";
 
-// takeToken moves the token from the URL fragment dcode opened into
+// takeToken moves the token from the URL fragment quill opened into
 // session storage, so it is not left in the address bar or history.
 export function takeToken(): string {
   const m = /(?:^|[#&])token=([^&]+)/.exec(window.location.hash);
@@ -43,7 +43,7 @@ export class Api {
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
     const resp = await fetch("api" + path, {
       ...init,
-      headers: { ...(init.headers ?? {}), "X-Dcode-Token": this.token, "Content-Type": "application/json" },
+      headers: { ...(init.headers ?? {}), "X-Quill-Token": this.token, "Content-Type": "application/json" },
     });
     if (!resp.ok) {
       let msg = `HTTP ${resp.status}`;

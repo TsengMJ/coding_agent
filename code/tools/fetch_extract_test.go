@@ -12,11 +12,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/code/cache"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/code/cache"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 type extractEnv struct {
@@ -44,7 +44,7 @@ func newExtractEnv(t *testing.T, model llm.ChatModel, body string) extractEnv {
 		},
 		Extractor: model,
 		Pages:     pages,
-		PagesDir:  "/.deepagents/web",
+		PagesDir:  "/.quill/web",
 		Cache:     cache.NewMemory(),
 	})
 	return extractEnv{tool: tl, hits: &hits, pages: pages}
@@ -81,7 +81,7 @@ func TestFetchURLAnswersPromptFromPage(t *testing.T) {
 			t.Errorf("extraction prompt missing %q:\n%s", want, sent)
 		}
 	}
-	if !strings.HasPrefix(savedPath(t, out), "/.deepagents/web/") {
+	if !strings.HasPrefix(savedPath(t, out), "/.quill/web/") {
 		t.Fatalf("saved path = %q", savedPath(t, out))
 	}
 }
@@ -89,7 +89,7 @@ func TestFetchURLAnswersPromptFromPage(t *testing.T) {
 func TestFetchURLSavesFullPageForReadFile(t *testing.T) {
 	env := newExtractEnv(t, llm.NewFakeModel(llm.NewAssistantMessage("short")), "full page text")
 	out, _ := run(t, env.tool, map[string]any{"url": "http://docs.test/a", "prompt": "q"})
-	rel := strings.TrimPrefix(savedPath(t, out), "/.deepagents/web")
+	rel := strings.TrimPrefix(savedPath(t, out), "/.quill/web")
 	got := env.pages.Read(context.Background(), rel, 0, 100)
 	if got.Error != "" || got.FileData == nil || !strings.Contains(got.FileData.Content, "full page text") {
 		t.Fatalf("saved page = %+v", got)

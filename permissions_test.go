@@ -1,4 +1,4 @@
-package deepagents
+package quill
 
 import (
 	"context"
@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/permissions"
+	"github.com/tsengmingchun/quill/middleware/subagents"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 var writeOnly = []permissions.Operation{permissions.OpWrite}
@@ -22,7 +22,7 @@ func TestPermissionsDenyInMainAgent(t *testing.T) {
 		toolCalls(llm.ToolCall{ID: "w", Name: "write_file", Args: map[string]any{"file_path": "/locked/a.txt", "content": "x"}}),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model), WithPermissions(permissions.FilesystemPermission{
+	a, err := CreateAgent(WithModel(model), WithPermissions(permissions.FilesystemPermission{
 		Operations: writeOnly, Paths: []string{"/locked/**"}, Mode: permissions.ModeDeny,
 	}))
 	if err != nil {
@@ -45,7 +45,7 @@ func TestPermissionsInterruptRulePausesForReview(t *testing.T) {
 		),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model), WithCheckpointer(runtime.NewMemoryCheckpointer()),
+	a, err := CreateAgent(WithModel(model), WithCheckpointer(runtime.NewMemoryCheckpointer()),
 		WithPermissions(permissions.FilesystemPermission{Operations: writeOnly, Paths: []string{"/config/**"}, Mode: permissions.ModeInterrupt}))
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestUserInterruptOnOverridesGeneratedConfig(t *testing.T) {
 		llm.NewAssistantMessage("done"),
 	)
 	never := func(llm.ToolCall) bool { return false }
-	a, err := CreateDeepAgent(WithModel(model),
+	a, err := CreateAgent(WithModel(model),
 		WithPermissions(permissions.FilesystemPermission{Operations: writeOnly, Paths: []string{"/config/**"}, Mode: permissions.ModeInterrupt}),
 		WithInterruptOn(map[string]hitl.InterruptOnConfig{"write_file": {When: never}}))
 	if err != nil {
@@ -99,7 +99,7 @@ func TestSubagentsInheritPermissionsWithInterruptAsDeny(t *testing.T) {
 		llm.NewAssistantMessage("could not write"),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model),
+	a, err := CreateAgent(WithModel(model),
 		WithPermissions(permissions.FilesystemPermission{Operations: writeOnly, Paths: []string{"/config/**"}, Mode: permissions.ModeInterrupt}))
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestDeclarativeSubagentOwnPermissionsReplaceParents(t *testing.T) {
 		llm.NewAssistantMessage("wrote"),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model),
+	a, err := CreateAgent(WithModel(model),
 		WithPermissions(permissions.FilesystemPermission{Operations: writeOnly, Paths: []string{"/locked/**"}, Mode: permissions.ModeDeny}),
 		WithSubAgents(subagents.SubAgent{
 			Name: "writer", Description: "writes", SystemPrompt: "write",
@@ -144,7 +144,7 @@ func TestDeclarativeSubagentOwnPermissionsReplaceParents(t *testing.T) {
 
 func TestPermissionsRejectedWithShellBackend(t *testing.T) {
 	b := backend.NewLocalShellBackend(backend.LocalShellOptions{FilesystemOptions: backend.FilesystemOptions{RootDir: t.TempDir(), VirtualMode: true}})
-	_, err := CreateDeepAgent(WithModel(llm.NewFakeModel()), WithBackend(b),
+	_, err := CreateAgent(WithModel(llm.NewFakeModel()), WithBackend(b),
 		WithPermissions(permissions.FilesystemPermission{Operations: writeOnly, Paths: []string{"/x"}, Mode: permissions.ModeDeny}))
 	if err == nil || !strings.Contains(err.Error(), "command execution") {
 		t.Fatalf("err = %v", err)

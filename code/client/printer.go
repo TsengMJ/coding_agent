@@ -8,9 +8,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // toolCallArgKeys lists, in priority order, the argument shown for a tool call.

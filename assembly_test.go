@@ -1,4 +1,4 @@
-package deepagents
+package quill
 
 import (
 	"context"
@@ -7,15 +7,15 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
-	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
-	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
-	"github.com/tsengmingchun/deepagents_golang/profiles"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/subagents"
+	"github.com/tsengmingchun/quill/middleware/summarization"
+	"github.com/tsengmingchun/quill/middleware/todolist"
+	"github.com/tsengmingchun/quill/profiles"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 // Models built from "assembly-test:<name>" specs, so tests can reach
@@ -187,7 +187,7 @@ func TestProfileExcludesMiddlewareAndTools(t *testing.T) {
 	if got := middlewareNames(stackFor(t, o)); !slices.Equal(got, want) {
 		t.Fatalf("stack = %v, want %v", got, want)
 	}
-	a, err := CreateDeepAgent(WithModelSpec(spec), WithBackend(o.Backend), WithSystemPrompt("You code."))
+	a, err := CreateAgent(WithModelSpec(spec), WithBackend(o.Backend), WithSystemPrompt("You code."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestMainAgentDelegatesToGeneralPurposeSubagent(t *testing.T) {
 		llm.NewAssistantMessage("there are 3 files"),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model), WithBackend(tempBackend(t)), WithSystemPrompt("main prompt"))
+	a, err := CreateAgent(WithModel(model), WithBackend(tempBackend(t)), WithSystemPrompt("main prompt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestDeclarativeSubagentInheritsModelAndTools(t *testing.T) {
 		llm.NewAssistantMessage("looks good"),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model), WithBackend(tempBackend(t)),
+	a, err := CreateAgent(WithModel(model), WithBackend(tempBackend(t)),
 		WithSubAgents(subagents.SubAgent{Name: "reviewer", Description: "Reviews code", SystemPrompt: "You review."}))
 	if err != nil {
 		t.Fatal(err)

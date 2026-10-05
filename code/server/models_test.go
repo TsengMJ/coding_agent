@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/storage"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/storage"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 type namedFakeModel struct {

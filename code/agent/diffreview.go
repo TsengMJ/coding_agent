@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
+	"github.com/tsengmingchun/quill/backend"
 )
 
 var (

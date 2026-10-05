@@ -8,21 +8,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
-	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/middleware/planmode"
+	"github.com/tsengmingchun/quill/middleware/todolist"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 func TestOpenRequiresPostgres(t *testing.T) {
 	_, err := Open(context.Background(), "", "redis://localhost:6379/0")
-	if err == nil || !strings.Contains(err.Error(), "DCODE_POSTGRES_CONN_STRING") {
+	if err == nil || !strings.Contains(err.Error(), "QUILL_POSTGRES_CONN_STRING") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestOpenRequiresRedis(t *testing.T) {
 	_, err := Open(context.Background(), "postgres://x@localhost/x", "")
-	if err == nil || !strings.Contains(err.Error(), "DCODE_REDIS_URL") {
+	if err == nil || !strings.Contains(err.Error(), "QUILL_REDIS_URL") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // ToolName is the question tool name.

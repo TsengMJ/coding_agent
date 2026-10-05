@@ -10,9 +10,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 // fakeServer is a minimal agent server: threads are "th-N", runs "run-N";

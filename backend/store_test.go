@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 func newTestStoreBackend() *StoreBackend {
-	return NewStoreBackend(StaticNamespace(runtime.Namespace{"dcode", "artifacts"}), runtime.NewInMemoryStore())
+	return NewStoreBackend(StaticNamespace(runtime.Namespace{"quill", "artifacts"}), runtime.NewInMemoryStore())
 }
 
 func TestStoreBackendWriteReadEdit(t *testing.T) {
@@ -115,14 +115,14 @@ func TestStoreBackendAsCompositeRoute(t *testing.T) {
 	ctx := context.Background()
 	def := NewStateBackend()
 	store := newTestStoreBackend()
-	c := NewCompositeBackend(def, map[string]Backend{"/.deepagents/large_tool_results/": store}, "/.deepagents")
-	if res := c.Write(ctx, "/.deepagents/large_tool_results/call_1", "big output"); res.Error != "" {
+	c := NewCompositeBackend(def, map[string]Backend{"/.quill/large_tool_results/": store}, "/.quill")
+	if res := c.Write(ctx, "/.quill/large_tool_results/call_1", "big output"); res.Error != "" {
 		t.Fatalf("write = %+v", res)
 	}
 	if got := fullContent(t, store, "/call_1"); got != "big output" {
 		t.Fatalf("route stored %q", got)
 	}
-	read := c.Read(WithRunContext(ctx, NewRunContext(&runtime.State{})), "/.deepagents/large_tool_results/call_1", 0, 10)
+	read := c.Read(WithRunContext(ctx, NewRunContext(&runtime.State{})), "/.quill/large_tool_results/call_1", 0, 10)
 	if read.Error != "" || read.FileData.Content != "big output" {
 		t.Fatalf("read through composite = %+v", read)
 	}

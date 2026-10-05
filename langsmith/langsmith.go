@@ -23,7 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/tsengmingchun/deepagents_golang/tracing"
+	"github.com/tsengmingchun/quill/tracing"
 )
 
 // DefaultEndpoint is the LangSmith API used when none is configured.
@@ -187,7 +187,7 @@ func (c *Client) Start(ctx context.Context, info tracing.RunInfo) (context.Conte
 		ID: id, Name: info.Name, RunType: string(info.Type), SessionName: c.cfg.Project,
 		StartTime: start.Format(time.RFC3339Nano), Tags: info.Tags,
 		Inputs: encode(c, encodeInputs(info.Type, info.Inputs)),
-		Extra:  encode(c, map[string]any{"metadata": info.Metadata, "runtime": map[string]any{"sdk": "deepagents-go", "language": "go"}}),
+		Extra:  encode(c, map[string]any{"metadata": info.Metadata, "runtime": map[string]any{"sdk": "quill-go", "language": "go"}}),
 	}
 	if parent, ok := ctx.Value(parentKey{}).(parentRun); ok {
 		self.traceID = parent.traceID

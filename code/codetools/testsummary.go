@@ -44,7 +44,7 @@ type summaryFailure struct {
 // and its console output in "$tmp.out", then prints the summary and the
 // runner's exit code. runner must reference those two files.
 func reportRun(runner, summarize string) string {
-	return `tmp=$(mktemp 2>/dev/null || echo /tmp/dcode-report-$$); ` +
+	return `tmp=$(mktemp 2>/dev/null || echo /tmp/quill-report-$$); ` +
 		runner + `; code=$?; ` + summarize + `; rm -f "$tmp" "$tmp.report" "$tmp.out"; echo ` + exitMarker + `$code`
 }
 

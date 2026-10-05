@@ -161,7 +161,7 @@ func newTestRedis(t *testing.T) *redis.Client {
 
 func TestRedisStore(t *testing.T) {
 	c := newTestRedis(t)
-	s := NewRedisStore(c, RedisStoreOptions{Prefix: "deepagents-test", TTL: time.Minute})
+	s := NewRedisStore(c, RedisStoreOptions{Prefix: "quill-test", TTL: time.Minute})
 	ns := uniqueNS("redis")
 	t.Cleanup(func() { deleteAll(t, s, ns) })
 	testStore(t, s, ns)
@@ -169,7 +169,7 @@ func TestRedisStore(t *testing.T) {
 
 func TestRedisStoreExpires(t *testing.T) {
 	c := newTestRedis(t)
-	s := NewRedisStore(c, RedisStoreOptions{Prefix: "deepagents-test", TTL: time.Second})
+	s := NewRedisStore(c, RedisStoreOptions{Prefix: "quill-test", TTL: time.Second})
 	ns := uniqueNS("ttl")
 	ctx := context.Background()
 	if err := s.Put(ctx, ns, "k", map[string]any{"v": 1}); err != nil {

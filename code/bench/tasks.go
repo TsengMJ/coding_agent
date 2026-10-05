@@ -1,4 +1,4 @@
-// Package bench runs SWE-bench Pro V2 against the dcode agent: it prepares
+// Package bench runs SWE-bench Pro V2 against the quill agent: it prepares
 // the task catalog, runs each task under the locked protocol (offline agent
 // phase, pristine re-grade with the official verifier), and stores results,
 // per-test outcomes and process metrics in PostgreSQL.

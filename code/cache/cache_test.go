@@ -46,7 +46,7 @@ func TestRedis(t *testing.T) {
 	}
 	client := redis.NewClient(opt)
 	t.Cleanup(func() { _ = client.Close() })
-	testCache(t, NewRedis(client, "deepagents-test"))
+	testCache(t, NewRedis(client, "quill-test"))
 }
 
 func TestKeyIsStableAndShort(t *testing.T) {

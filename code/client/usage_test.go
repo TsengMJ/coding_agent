@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 func f64(v float64) *float64 { return &v }
@@ -44,7 +44,7 @@ func TestFormatCost(t *testing.T) {
 	}
 	want := "openai:gpt-4o  3 calls · in 20k (5k cached) · out 1.5k · $0.0625\n" +
 		"x:y  1 call · in 100 · out 10 · unpriced\n" +
-		"total $0.0625 (excluding unpriced models; add them to ~/.deepagents/prices.json)"
+		"total $0.0625 (excluding unpriced models; add them to ~/.quill/prices.json)"
 	if got := FormatCost(u); got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}

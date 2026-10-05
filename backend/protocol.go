@@ -1,6 +1,5 @@
 // Package backend defines pluggable storage and execution backends used by the
-// filesystem, skills, memory and summarization middleware
-// (Python `deepagents.backends`).
+// filesystem, skills, memory and summarization middleware.
 package backend
 
 import (

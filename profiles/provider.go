@@ -1,8 +1,8 @@
 package profiles
 
 import (
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/internal/notimpl"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // ProviderProfile shapes how a model is constructed from a string spec.

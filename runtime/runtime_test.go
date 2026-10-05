@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 var (

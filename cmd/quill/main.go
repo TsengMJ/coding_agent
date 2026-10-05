@@ -1,4 +1,4 @@
-// Command dcode is the Go port of the Deep Agents Code terminal agent.
+// Command quill is the Quill terminal coding agent.
 package main
 
 import (
@@ -18,27 +18,27 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/tsengmingchun/deepagents_golang"
-	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
-	"github.com/tsengmingchun/deepagents_golang/code/client"
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/code/gui"
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/storage"
-	"github.com/tsengmingchun/deepagents_golang/code/tui"
-	"github.com/tsengmingchun/deepagents_golang/langsmith"
+	"github.com/tsengmingchun/quill"
+	codeagent "github.com/tsengmingchun/quill/code/agent"
+	"github.com/tsengmingchun/quill/code/client"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/gui"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/storage"
+	"github.com/tsengmingchun/quill/code/tui"
+	"github.com/tsengmingchun/quill/langsmith"
 )
 
 const (
 	modelFlagUsage  = "model as provider:model (default $" + config.ModelEnvVar + ", models.default in config.toml, or " + server.DefaultModelSpec + ")"
-	serverFlagUsage = "dcode serve URL (default $" + config.ServerEnvVar + " or server.url in config.toml)"
+	serverFlagUsage = "quill serve URL (default $" + config.ServerEnvVar + " or server.url in config.toml)"
 )
 
 func main() {
 	code, err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "dcode:", err)
+		fmt.Fprintln(os.Stderr, "quill:", err)
 		os.Exit(1)
 	}
 	os.Exit(code)
@@ -91,7 +91,7 @@ func loadEnv() (env, error) {
 	return env{cwd: cwd, paths: paths, settings: settings}, nil
 }
 
-// serverURL returns the -server flag if given, else server.url / $DCODE_SERVER.
+// serverURL returns the -server flag if given, else server.url / $QUILL_SERVER.
 func (e env) serverURL(fs *flag.FlagSet, flagValue string) string {
 	if flagWasSet(fs, "server") {
 		return flagValue
@@ -117,7 +117,7 @@ func connect(ctx context.Context, e env, serverURL, model string) (server.Server
 			return nil, err
 		}
 		if err := r.Ping(ctx); err != nil {
-			return nil, fmt.Errorf("%w (is `dcode serve` running?)", err)
+			return nil, fmt.Errorf("%w (is `quill serve` running?)", err)
 		}
 		return r, nil
 	}
@@ -161,7 +161,7 @@ func closeTracer(ls *langsmith.Client) {
 }
 
 func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
-	fs := flag.NewFlagSet("dcode", flag.ContinueOnError)
+	fs := flag.NewFlagSet("quill", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	promptFlag := fs.String("n", "", "run a single prompt non-interactively")
 	threadID := fs.String("thread", "", "thread ID to continue")
@@ -178,24 +178,24 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 	version := fs.Bool("version", false, "print version and exit")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage:\n"+
-			"  dcode [flags] [-n prompt | prompt...]   run the agent in the current directory\n"+
+			"  quill [flags] [-n prompt | prompt...]   run the agent in the current directory\n"+
 			"                                         (interactive: web GUI; -tui terminal UI; -plain line REPL)\n"+
-			"  dcode serve [-addr host:port]          run a long-lived agent server\n"+
-			"  dcode threads [-all] [-json]           list threads\n\n"+
-			"dcode needs Postgres ($DCODE_POSTGRES_CONN_STRING or $POSTGRES_CONN_STRING) for threads,\n"+
-			"plans and traces, and Redis ($DCODE_REDIS_URL or $REDIS_URL) for caches; it will not start without both.\n"+
+			"  quill serve [-addr host:port]          run a long-lived agent server\n"+
+			"  quill threads [-all] [-json]           list threads\n\n"+
+			"quill needs Postgres ($QUILL_POSTGRES_CONN_STRING or $POSTGRES_CONN_STRING) for threads,\n"+
+			"plans and traces, and Redis ($QUILL_REDIS_URL or $REDIS_URL) for caches; it will not start without both.\n"+
 			"Tool calls run without approval by default. With startup.mode = \"manual\" in\n"+
 			"%s, tools that change files (write_file, edit_file, apply_patch, delete) or run\n"+
 			"commands (execute, run_tests, diagnostics) ask first (-y skips it for one run;\n"+
 			"shell.allow_list lets matching commands skip it; allowing go covers run_tests and diagnostics).\n"+
-			"Shell commands run in the current directory and are not sandboxed.\n\n", "~/.deepagents/config.toml")
+			"Shell commands run in the current directory and are not sandboxed.\n\n", "~/.quill/config.toml")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
 	if *version {
-		fmt.Fprintln(stdout, "dcode (go)", deepagents.Version)
+		fmt.Fprintln(stdout, "quill (go)", quill.Version)
 		return 0, nil
 	}
 	if *resume && *threadID != "" {
@@ -229,7 +229,7 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 			return 1, err
 		}
 		if len(latest) == 0 {
-			fmt.Fprintln(stderr, "dcode: no previous thread in this directory; starting a new one")
+			fmt.Fprintln(stderr, "quill: no previous thread in this directory; starting a new one")
 		} else {
 			thread = latest[0].ThreadID
 			fmt.Fprintf(stderr, "resuming thread %s (%s)\n", thread, latest[0].Title)
@@ -263,7 +263,7 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 			}
 		}
 		return 0, runGUI(ctx, srv, serverURL, gui.Info{
-			Cwd: e.cwd, ThreadID: thread, Model: defaultModel, ModelOverride: *model, AutoApprove: yolo, Version: deepagents.Version,
+			Cwd: e.cwd, ThreadID: thread, Model: defaultModel, ModelOverride: *model, AutoApprove: yolo, Version: quill.Version,
 		}, saveModel, *noOpen, stderr)
 	}
 	sig := make(chan os.Signal, 1)
@@ -341,12 +341,12 @@ func runGUI(ctx context.Context, srv server.Server, serverURL string, info gui.I
 	}
 	return server.ServeHandler(ctx, "127.0.0.1:0", h, func(a net.Addr) {
 		url := guiURL(a, token)
-		fmt.Fprintf(stderr, "dcode GUI: %s\n  thread %s · Ctrl-C to quit\n", url, info.ThreadID)
+		fmt.Fprintf(stderr, "quill GUI: %s\n  thread %s · Ctrl-C to quit\n", url, info.ThreadID)
 		if noOpen {
 			return
 		}
 		if err := gui.OpenBrowser(url); err != nil {
-			fmt.Fprintf(stderr, "dcode: %v; open the URL above yourself\n", err)
+			fmt.Fprintf(stderr, "quill: %v; open the URL above yourself\n", err)
 		}
 	})
 }
@@ -368,7 +368,7 @@ func modelName(ctx context.Context, srv server.Server) string {
 }
 
 func runServe(ctx context.Context, args []string, stderr io.Writer) error {
-	fs := flag.NewFlagSet("dcode serve", flag.ContinueOnError)
+	fs := flag.NewFlagSet("quill serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	addr := fs.String("addr", server.DefaultAddr, "listen address (loopback only)")
 	model := fs.String("model", "", modelFlagUsage)
@@ -385,16 +385,16 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	defer svc.Close()
 	context.AfterFunc(ctx, func() {
-		fmt.Fprintln(stderr, "dcode serve: stopping; running turns get up to 30s to finish (Ctrl-C again to force quit)")
+		fmt.Fprintln(stderr, "quill serve: stopping; running turns get up to 30s to finish (Ctrl-C again to force quit)")
 	})
 	return server.Serve(ctx, *addr, svc, func(a net.Addr) {
-		fmt.Fprintf(stderr, "dcode serve listening on http://%s (model %s, storage %s)\n", a, svc.DefaultModel(), svc.Storage())
+		fmt.Fprintf(stderr, "quill serve listening on http://%s (model %s, storage %s)\n", a, svc.DefaultModel(), svc.Storage())
 		fmt.Fprintf(stderr, "  clients: export %s=http://%s\n", client.ServerEnvVar, a)
 	})
 }
 
 func runThreads(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("dcode threads", flag.ContinueOnError)
+	fs := flag.NewFlagSet("quill threads", flag.ContinueOnError)
 	all := fs.Bool("all", false, "list threads from every directory")
 	limit := fs.Int("limit", 20, "maximum threads to list (0 = no limit)")
 	asJSON := fs.Bool("json", false, `print {"schema_version":1,"command":"threads list","data":[...]}`)
@@ -452,7 +452,7 @@ func checkHeadlessFlags(prompt string, quiet, noStream bool, timeout time.Durati
 		used = append(used, "-timeout")
 	}
 	if len(used) > 0 {
-		return fmt.Errorf("%s requires -n or a prompt argument, e.g. dcode -q -n 'summarize README.md'", strings.Join(used, " and "))
+		return fmt.Errorf("%s requires -n or a prompt argument, e.g. quill -q -n 'summarize README.md'", strings.Join(used, " and "))
 	}
 	return nil
 }

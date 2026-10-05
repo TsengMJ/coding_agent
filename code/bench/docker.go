@@ -15,7 +15,7 @@ import (
 // ContainerSpec starts a long-lived task container.
 type ContainerSpec struct {
 	Image string
-	// Name is optional; dbench names containers so leftovers are findable.
+	// Name is optional; quillbench names containers so leftovers are findable.
 	Name      string
 	NoNetwork bool
 	CPUs      float64
@@ -42,7 +42,7 @@ type ExecResult struct {
 	TimedOut bool
 }
 
-// Docker is the subset of the docker CLI dbench needs; tests replace it.
+// Docker is the subset of the docker CLI quillbench needs; tests replace it.
 type Docker interface {
 	// EnsureImage pulls image if it is not present and returns its digest.
 	EnsureImage(ctx context.Context, image string) (string, error)
@@ -101,7 +101,7 @@ var keepAlive = []string{"--entrypoint", "sleep"}
 const keepAliveArg = "2147483647"
 
 func (d CLIDocker) Run(ctx context.Context, spec ContainerSpec) (string, error) {
-	args := []string{"run", "-d", "--label", "dbench=1", "--platform", "linux/amd64"}
+	args := []string{"run", "-d", "--label", "quillbench=1", "--platform", "linux/amd64"}
 	if spec.Name != "" {
 		args = append(args, "--name", spec.Name)
 	}
@@ -175,7 +175,7 @@ func (d CLIDocker) CopyFrom(ctx context.Context, id, src, dst string) error {
 }
 
 func (d CLIDocker) CopyOut(ctx context.Context, image, src, dst string) error {
-	id, err := d.run(ctx, "create", "--platform", "linux/amd64", "--label", "dbench=1", image)
+	id, err := d.run(ctx, "create", "--platform", "linux/amd64", "--label", "quillbench=1", image)
 	if err != nil {
 		return err
 	}

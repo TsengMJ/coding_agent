@@ -12,8 +12,8 @@ import (
 
 	"github.com/smallnest/langgraphgo/graph"
 
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/internal/notimpl"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // RemoveAllMessages is a message ID that, when present in an update, clears
@@ -21,7 +21,7 @@ import (
 // (LangGraph `REMOVE_ALL_MESSAGES`).
 const RemoveAllMessages = "__remove_all__"
 
-// State is the agent graph state (`AgentState` / `DeepAgentState`).
+// State is the agent graph state (`AgentState`).
 type State struct {
 	Messages []llm.Message `json:"messages,omitempty"`
 	// StructuredResponse holds the parsed structured output, if any.

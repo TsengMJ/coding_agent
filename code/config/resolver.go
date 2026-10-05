@@ -12,9 +12,9 @@ import (
 
 // Environment variables that override config.toml.
 const (
-	ModelEnvVar          = "DCODE_MODEL"
-	ServerEnvVar         = "DCODE_SERVER"
-	ShellAllowListEnvVar = "DEEPAGENTS_CODE_SHELL_ALLOW_LIST"
+	ModelEnvVar          = "QUILL_MODEL"
+	ServerEnvVar         = "QUILL_SERVER"
+	ShellAllowListEnvVar = "QUILL_SHELL_ALLOW_LIST"
 	// BraveAPIKeyEnvVar enables the web_search tool (shell env or .env).
 	BraveAPIKeyEnvVar = "BRAVE_API_KEY"
 	// Context7APIKeyEnvVar enables the Context7 documentation tools.

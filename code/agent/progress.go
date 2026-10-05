@@ -8,10 +8,10 @@ import (
 	"slices"
 	"strings"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/llm"
+	rt "github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // progressMarker starts every note the monitor adds to a tool result.

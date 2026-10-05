@@ -54,8 +54,8 @@ const SystemPrompt = `<agent_memory>
     Tool Call: edit_file(...) -> remembers that the user's google account email is john@example.com
 
     Example 2 (remembering implicit user preferences):
-    User: Can you write me an example for creating a deep agent in LangChain?
-    Agent: Sure, I'll write you an example for creating a deep agent in LangChain <example code in Python>
+    User: Can you write me an example for creating an agent in LangChain?
+    Agent: Sure, I'll write you an example for creating an agent in LangChain <example code in Python>
     User: Can you do this in JavaScript
     Agent: Let me save this to my memory.
     Tool Call: edit_file(...) -> remembers that the user prefers to get LangChain code examples in JavaScript

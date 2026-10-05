@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // Process holds the process metrics of one attempt. Attempts recorded

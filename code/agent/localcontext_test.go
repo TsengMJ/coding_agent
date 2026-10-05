@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/planmode"
+	rt "github.com/tsengmingchun/quill/runtime"
 )
 
 func TestLocalContextInGitRepo(t *testing.T) {

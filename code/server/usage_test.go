@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/cost"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
+	"github.com/tsengmingchun/quill/code/cost"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/subagents"
 )
 
 func replyWithUsage(text string, in, out, cached int) llm.Message {

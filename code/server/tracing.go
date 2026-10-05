@@ -5,7 +5,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
+	"github.com/tsengmingchun/quill/code/trace"
 )
 
 // runTrace connects one run to its thread's trace recorder. Records are
@@ -22,7 +22,7 @@ type runTrace struct {
 func (s *Service) startTrace(ctx context.Context, threadID string) (context.Context, *runTrace) {
 	rec, err := s.traces.Recorder(threadID)
 	if err != nil {
-		log.Printf("dcode: tracing is off for thread %s: %v", threadID, err)
+		log.Printf("quill: tracing is off for thread %s: %v", threadID, err)
 		return ctx, nil
 	}
 	t := &runTrace{rec: rec}
@@ -64,6 +64,6 @@ func (t *runTrace) subagentMessage(ev Event) {
 		return
 	}
 	if err := t.rec.RecordMessage(ev.Namespace, *ev.Message); err != nil {
-		log.Printf("dcode: trace: %v", err)
+		log.Printf("quill: trace: %v", err)
 	}
 }

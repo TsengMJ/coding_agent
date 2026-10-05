@@ -3,7 +3,7 @@ package runtime
 import (
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 func msg(id, text string) llm.Message {

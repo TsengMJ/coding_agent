@@ -10,10 +10,10 @@ import (
 
 	udiff "github.com/aymanbagabas/go-udiff"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 const applyPatchDescription = `Apply a multi-line or multi-file change in one call. Use edit_file for a small, exact replacement in one place; use apply_patch when a change spans several hunks or files, or adds, deletes or renames files.

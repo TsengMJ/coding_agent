@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
 )
 
 func actions(names ...string) []hitl.ActionRequest {

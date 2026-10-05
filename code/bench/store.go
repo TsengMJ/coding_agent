@@ -12,7 +12,7 @@ import (
 
 // Solvers.
 const (
-	SolverDcode  = "dcode"
+	SolverQuill  = "quill"
 	SolverOracle = "oracle"
 	SolverNop    = "nop"
 )
@@ -32,7 +32,7 @@ const (
 	PhaseDone      = "done"
 )
 
-// Run is one dbench invocation over a subset.
+// Run is one quillbench invocation over a subset.
 type Run struct {
 	ID              string
 	CreatedAt       time.Time

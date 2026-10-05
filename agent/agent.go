@@ -4,10 +4,10 @@ import (
 	"context"
 	"iter"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
-	"github.com/tsengmingchun/deepagents_golang/tracing"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
+	"github.com/tsengmingchun/quill/tracing"
 )
 
 // Config describes an agent (the arguments of langchain `create_agent`).

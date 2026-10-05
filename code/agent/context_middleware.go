@@ -3,9 +3,9 @@ package agent
 import (
 	"context"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/llm"
+	rt "github.com/tsengmingchun/quill/runtime"
 )
 
 // LiveContextSource marks the request-only message that carries the live

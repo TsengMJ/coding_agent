@@ -38,6 +38,6 @@ export function costText(u: ThreadUsage): string {
     return `${m.model}  ${calls} · ${input} · out ${humanTokens(m.output_tokens)} · ${price}`;
   });
   let total = `total ${usd(u.total_cost_usd)}`;
-  if (u.unpriced?.length) total += " (excluding unpriced models; add them to ~/.deepagents/prices.json)";
+  if (u.unpriced?.length) total += " (excluding unpriced models; add them to ~/.quill/prices.json)";
   return [...lines, total].join("\n");
 }

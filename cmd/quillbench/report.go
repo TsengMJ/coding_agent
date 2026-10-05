@@ -10,7 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/tsengmingchun/deepagents_golang/code/bench"
+	"github.com/tsengmingchun/quill/code/bench"
 )
 
 func taskMap(e env) (map[string]bench.Task, error) {
@@ -46,7 +46,7 @@ func runReport(ctx context.Context, e env, args []string, stdout, stderr io.Writ
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: dbench report <run-id>")
+		return errors.New("usage: quillbench report <run-id>")
 	}
 	tasks, err := taskMap(e)
 	if err != nil {
@@ -99,7 +99,7 @@ func runCompare(ctx context.Context, e env, args []string, stdout, stderr io.Wri
 			return err
 		}
 		if len(refs) == 0 {
-			return fmt.Errorf("no references for %s; import them with dbench refs import", *ref)
+			return fmt.Errorf("no references for %s; import them with quillbench refs import", *ref)
 		}
 		nameA, a = *ref, bench.ReferenceOutcomes(refs)
 		nameB = fs.Arg(0)
@@ -115,7 +115,7 @@ func runCompare(ctx context.Context, e env, args []string, stdout, stderr io.Wri
 			return err
 		}
 	default:
-		return errors.New("usage: dbench compare <base-run> <new-run> | dbench compare -ref <harness>/<model> <run>")
+		return errors.New("usage: quillbench compare <base-run> <new-run> | quillbench compare -ref <harness>/<model> <run>")
 	}
 	c := bench.Compare(a, b)
 	if c.Shared == 0 {
@@ -166,7 +166,7 @@ func runHistory(ctx context.Context, e env, args []string, stdout, stderr io.Wri
 
 func runRefs(ctx context.Context, e env, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || (args[0] != "import" && args[0] != "list") {
-		return errors.New("usage: dbench refs import -harness H -model M [-source S] <file> | dbench refs list")
+		return errors.New("usage: quillbench refs import -harness H -model M [-source S] <file> | quillbench refs list")
 	}
 	st, closeDB, err := openStore(ctx)
 	if err != nil {
@@ -195,7 +195,7 @@ func runRefs(ctx context.Context, e env, args []string, stdout, stderr io.Writer
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: dbench refs import -harness H -model M [-source S] <file>")
+		return errors.New("usage: quillbench refs import -harness H -model M [-source S] <file>")
 	}
 	data, err := os.ReadFile(fs.Arg(0))
 	if err != nil {

@@ -1,4 +1,4 @@
-module github.com/tsengmingchun/deepagents_golang
+module github.com/tsengmingchun/quill
 
 go 1.27.1
 

@@ -6,8 +6,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // Middleware must run last so it also removes middleware-injected tools.

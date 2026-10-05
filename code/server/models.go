@@ -6,9 +6,9 @@ import (
 	"iter"
 	"maps"
 
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/subagents"
 )
 
 // ModelNameKey is the reply Metadata key naming the "provider:model" spec

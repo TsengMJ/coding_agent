@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/permissions"
 )
 
 // newGuarded returns a middleware over a temp-dir backend seeded with

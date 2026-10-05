@@ -50,8 +50,8 @@ func TestResolverTracingIsOffByDefault(t *testing.T) {
 	if s := resolve(t, writeConfig(t, "")); s.LangSmithTracing || s.LangSmithProject != "" {
 		t.Errorf("settings = %+v", s)
 	}
-	s := resolve(t, writeConfig(t, "[tracing]\nlangsmith = true\nproject = \"dcode-dev\"\n"))
-	if !s.LangSmithTracing || s.LangSmithProject != "dcode-dev" {
+	s := resolve(t, writeConfig(t, "[tracing]\nlangsmith = true\nproject = \"quill-dev\"\n"))
+	if !s.LangSmithTracing || s.LangSmithProject != "quill-dev" {
 		t.Errorf("settings = %+v", s)
 	}
 }

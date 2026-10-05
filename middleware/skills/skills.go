@@ -18,9 +18,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 // Limits from the Agent Skills spec.

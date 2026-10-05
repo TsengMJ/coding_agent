@@ -20,10 +20,10 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"golang.org/x/net/idna"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/code/cache"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/code/cache"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // fetch_url limits.
@@ -32,7 +32,7 @@ const (
 	DefaultFetchMaxBytes  = 5 << 20
 	defaultFetchTimeout   = 30
 	maxFetchTimeout       = 120
-	fetchUserAgent        = "Mozilla/5.0 (compatible; DeepAgents/1.0)"
+	fetchUserAgent        = "Mozilla/5.0 (compatible; Quill/1.0)"
 	fetchURLDescription   = "Fetch a URL and return the page content as markdown (HTML is converted; plain text is returned as is)."
 	fetchURLArgumentDescr = "The URL to fetch (must be a valid HTTP/HTTPS URL)."
 	fetchPromptDescr      = "What you need from the page, e.g. \"the default value of max_connections and the version it changed\". A small model reads the page and returns only the answer, which keeps your context small; omit it only when you need the raw page."

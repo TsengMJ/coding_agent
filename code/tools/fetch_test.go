@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // fakeNet maps test hostnames to addresses and routes every dial to srv,

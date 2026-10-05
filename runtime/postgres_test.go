@@ -10,7 +10,7 @@ import (
 	"github.com/smallnest/langgraphgo/checkpoint/postgres"
 	"github.com/smallnest/langgraphgo/graph"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 func newTestPostgres(t *testing.T) *PostgresCheckpointer {

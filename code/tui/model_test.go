@@ -15,10 +15,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/storage"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/storage"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 func newTestModel(t *testing.T, srv server.Server, cwd string) *model {
@@ -400,7 +400,7 @@ func TestCompactCommandReportsResult(t *testing.T) {
 		drain(t, m, m.submit(text))
 	}
 	drain(t, m, m.submit("/compact"))
-	if !hasEntry(m, entryInfo, "/.deepagents/conversation_history/") {
+	if !hasEntry(m, entryInfo, "/.quill/conversation_history/") {
 		t.Fatalf("entries = %+v", m.entries)
 	}
 }

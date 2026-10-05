@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 func executeCall(cmd string) llm.ToolCall {

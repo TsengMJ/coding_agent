@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/tsengmingchun/deepagents_golang/code/client"
-	"github.com/tsengmingchun/deepagents_golang/code/server"
+	"github.com/tsengmingchun/quill/code/client"
+	"github.com/tsengmingchun/quill/code/server"
 )
 
 var (
@@ -71,7 +71,7 @@ type contentKey struct {
 }
 
 func (m *model) statusLine() string {
-	parts := []string{"dcode", filepath.Base(m.opts.Cwd), "thread " + m.thread}
+	parts := []string{"quill", filepath.Base(m.opts.Cwd), "thread " + m.thread}
 	if name := m.model.Current(); name != "" {
 		parts = append(parts, name)
 	}

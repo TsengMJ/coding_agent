@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }

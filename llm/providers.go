@@ -4,7 +4,7 @@ import (
 	"context"
 	"iter"
 
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+	"github.com/tsengmingchun/quill/internal/notimpl"
 )
 
 // ProviderConfig holds common construction options for built-in providers.

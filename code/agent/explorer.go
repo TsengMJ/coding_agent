@@ -3,11 +3,11 @@ package agent
 import (
 	"slices"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/code/codetools"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/code/codetools"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/subagents"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // ExplorerName is the read-only subagent that searches the codebase.

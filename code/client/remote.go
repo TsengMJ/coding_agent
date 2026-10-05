@@ -14,19 +14,19 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/trace"
 )
 
-// ServerEnvVar names the `dcode serve` URL clients connect to.
+// ServerEnvVar names the `quill serve` URL clients connect to.
 const ServerEnvVar = config.ServerEnvVar
 
 // maxEventBytes caps one NDJSON line (a message with large tool output).
 const maxEventBytes = 64 << 20
 
-// Remote talks to `dcode serve` over HTTP.
+// Remote talks to `quill serve` over HTTP.
 type Remote struct {
 	base *url.URL
 	hc   *http.Client
@@ -313,7 +313,7 @@ func (r *Remote) do(ctx context.Context, method, path string, q url.Values, body
 	}
 	resp, err := r.hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("dcode server %s: %w", r.base, err)
+		return nil, fmt.Errorf("quill server %s: %w", r.base, err)
 	}
 	return resp, nil
 }

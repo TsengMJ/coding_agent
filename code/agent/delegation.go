@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
+	"github.com/tsengmingchun/quill/middleware/subagents"
 )
 
 // subagentsSection tells the main agent when to delegate with `task` and

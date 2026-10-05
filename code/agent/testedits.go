@@ -8,17 +8,17 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/code/codetools"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/code/codetools"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 const gateKindTestEdit = "test_edit"
 
 // testEditsRef keeps the agent's test changes reachable while the original
 // tests run, so they survive even if restoring them fails.
-const testEditsRef = "refs/dcode/test-edits"
+const testEditsRef = "refs/quill/test-edits"
 
 // TestEdits runs the HEAD version of the existing test files the agent
 // changed against the agent's source changes. A test that fails there was
@@ -79,7 +79,7 @@ func (te TestEdits) runOriginal(ctx context.Context, files []string, last llm.To
 	}
 	pathspec := strings.Join(quoted, " ")
 	before, _ := b.git(ctx, "rev-parse -q --verify refs/stash")
-	if _, err := b.git(ctx, "stash push -q -m dcode-original-tests -- "+pathspec); err != nil {
+	if _, err := b.git(ctx, "stash push -q -m quill-original-tests -- "+pathspec); err != nil {
 		return nil, nil
 	}
 	sha, _ := b.git(ctx, "rev-parse -q --verify refs/stash")

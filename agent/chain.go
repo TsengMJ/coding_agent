@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // chainModel wraps inner with every WrapModelCallHook so that the first

@@ -1,9 +1,9 @@
 package commands
 
-// DCode lists the commands dcode implements. The TUI and line REPL register
+// Quill lists the commands quill implements. The TUI and line REPL register
 // handlers for all of them; the GUI reads this list (GET /commands) for
 // autocomplete and help.
-var DCode = []Command{
+var Quill = []Command{
 	{Name: "/new", Aliases: []string{"/clear"}, Description: "start a new thread"},
 	{Name: "/thread", Description: "show the current thread id"},
 	{Name: "/threads", Description: "list threads in this directory"},

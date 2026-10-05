@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // ErrUnpriced means the table has no price for the model; callers should

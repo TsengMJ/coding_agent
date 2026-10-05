@@ -6,9 +6,9 @@ import (
 	"iter"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/internal/notimpl"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // Model records every call to the wrapped model made under a ctx carrying

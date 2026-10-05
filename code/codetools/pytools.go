@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 const pyReportHint = " (is pytest installed? try pip install pytest, or run the tests with execute)"

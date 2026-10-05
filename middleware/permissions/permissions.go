@@ -11,9 +11,9 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
 )
 
 // Operation is a filesystem operation class a rule applies to. As in Python,

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
+	"github.com/tsengmingchun/quill/backend"
 )
 
 // Project languages run_tests and diagnostics understand.
@@ -31,7 +31,7 @@ const (
 
 const (
 	probeTimeout  = 30 * time.Second
-	packageMarker = "__DCODE_PKG__"
+	packageMarker = "__QUILL_PKG__"
 )
 
 // markerFiles are looked up at the project root.

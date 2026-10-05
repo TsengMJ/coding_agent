@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/code/askuser"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/quill/code/askuser"
+	"github.com/tsengmingchun/quill/middleware/hitl"
 )
 
 // ask shows each ask_user question with numbered options and reads one

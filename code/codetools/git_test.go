@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 func newShell(t *testing.T, dir string) *backend.LocalShellBackend {

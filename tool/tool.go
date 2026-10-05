@@ -7,8 +7,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 // Schema is a JSON Schema object describing tool arguments.

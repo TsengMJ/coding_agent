@@ -11,10 +11,10 @@ func TestDefaultPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.UserDir != filepath.Join("/home/tester", ".deepagents") {
+	if p.UserDir != filepath.Join("/home/tester", ".quill") {
 		t.Errorf("UserDir = %q", p.UserDir)
 	}
-	if p.ProjectDir != filepath.Join("/work/repo", ".deepagents") {
+	if p.ProjectDir != filepath.Join("/work/repo", ".quill") {
 		t.Errorf("ProjectDir = %q", p.ProjectDir)
 	}
 }

@@ -3,16 +3,16 @@ package subagents
 import (
 	"slices"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/summarization"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // ForkedContextKey is set on a forked subagent's own state, never on the
 // parent's, so its `task` tool refuses to delegate further.
-const ForkedContextKey = "_deepagents_forked_context"
+const ForkedContextKey = "_quill_forked_context"
 
 const forkRecursionRefusal = "You are a subagent and cannot delegate to another subagent. Complete this task yourself instead of calling this tool again."
 

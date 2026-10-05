@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/llm"
+	rt "github.com/tsengmingchun/quill/runtime"
 )
 
 // sentBudget runs one model call through b and returns the budget warning

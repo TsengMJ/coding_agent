@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	codesubagents "github.com/tsengmingchun/deepagents_golang/code/subagents"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+	core "github.com/tsengmingchun/quill/agent"
+	codesubagents "github.com/tsengmingchun/quill/code/subagents"
+	"github.com/tsengmingchun/quill/llm"
+	rt "github.com/tsengmingchun/quill/runtime"
 )
 
 func writeCustomAgent(t *testing.T, dir, folder, content string) {

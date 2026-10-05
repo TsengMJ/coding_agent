@@ -14,7 +14,7 @@ import (
 // RedisStoreOptions configures a RedisStore.
 type RedisStoreOptions struct {
 	// Prefix starts every key, separating stores that share a database;
-	// it must not contain "|". Default "deepagents".
+	// it must not contain "|". Default "quill".
 	Prefix string
 	// TTL expires each item this long after its last Put; 0 keeps items
 	// until deleted.
@@ -32,7 +32,7 @@ type RedisStore struct {
 // NewRedisStore returns a store on client. The caller owns the client.
 func NewRedisStore(client *redis.Client, opts RedisStoreOptions) *RedisStore {
 	if opts.Prefix == "" {
-		opts.Prefix = "deepagents"
+		opts.Prefix = "quill"
 	}
 	return &RedisStore{client: client, prefix: opts.Prefix, ttl: opts.TTL}
 }

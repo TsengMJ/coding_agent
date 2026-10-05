@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/askuser"
-	"github.com/tsengmingchun/deepagents_golang/code/commands"
-	"github.com/tsengmingchun/deepagents_golang/code/server"
+	"github.com/tsengmingchun/quill/code/askuser"
+	"github.com/tsengmingchun/quill/code/commands"
+	"github.com/tsengmingchun/quill/code/server"
 )
 
 type fakeSession struct {
@@ -37,10 +37,10 @@ func (s *fakeSession) ShowUsage(_ context.Context, format func(*server.ThreadUsa
 	s.Info(format(s.usage))
 }
 
-func TestCommandRegistryCoversEveryDCodeCommand(t *testing.T) {
+func TestCommandRegistryCoversEveryQuillCommand(t *testing.T) {
 	s := &fakeSession{}
 	reg := NewCommandRegistry(s, CommandOptions{HelpFooter: "keys: x"})
-	for _, c := range commands.DCode {
+	for _, c := range commands.Quill {
 		if _, _, ok := reg.Lookup(c.Name); !ok {
 			t.Errorf("%s not registered", c.Name)
 		}

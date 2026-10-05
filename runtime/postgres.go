@@ -13,7 +13,7 @@ import (
 )
 
 // postgresCheckpointTable is the langgraphgo checkpoint table for this process.
-const postgresCheckpointTable = "deepagents_checkpoints"
+const postgresCheckpointTable = "quill_checkpoints"
 
 // PostgresCheckpointer stores thread checkpoints in PostgreSQL
 // (langgraphgo `checkpoint/postgres`). connString is a postgres URL,

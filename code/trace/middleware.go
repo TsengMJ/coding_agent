@@ -3,9 +3,9 @@ package trace
 import (
 	"context"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/middleware/subagents"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // Middleware puts each task call's subagent run in its own namespace, the

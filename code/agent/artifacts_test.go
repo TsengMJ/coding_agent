@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+	rt "github.com/tsengmingchun/quill/runtime"
 )
 
 func TestProjectBackendRoutesArtifactsToStores(t *testing.T) {
@@ -24,7 +24,7 @@ func TestProjectBackendRoutesArtifactsToStores(t *testing.T) {
 		if res := b.Write(ctx, path, "saved"); res.Error != "" {
 			t.Fatalf("write %s: %s", path, res.Error)
 		}
-		items, err := store.Search(ctx, rt.Namespace{"dcode"}, rt.SearchOptions{})
+		items, err := store.Search(ctx, rt.Namespace{"quill"}, rt.SearchOptions{})
 		if err != nil || len(items) != 1 {
 			t.Fatalf("%s: store items = %+v, %v", path, items, err)
 		}
@@ -32,7 +32,7 @@ func TestProjectBackendRoutesArtifactsToStores(t *testing.T) {
 			t.Fatalf("read %s = %+v", path, got)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(cwd, ".deepagents")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cwd, ".quill")); !os.IsNotExist(err) {
 		t.Fatalf("artifacts written to the project tree: %v", err)
 	}
 	if res := b.Write(ctx, "/main.go", "package main\n"); res.Error != "" {
@@ -68,7 +68,7 @@ func TestNilArtifactsKeepFilesOnBackend(t *testing.T) {
 	if res := NewProjectBackend(cwd, nil).Write(context.Background(), ResultsDir+"/x", "one"); res.Error != "" {
 		t.Fatal(res.Error)
 	}
-	if _, err := os.Stat(filepath.Join(cwd, ".deepagents", "large_tool_results", "x")); err != nil {
+	if _, err := os.Stat(filepath.Join(cwd, ".quill", "large_tool_results", "x")); err != nil {
 		t.Fatal(err)
 	}
 }

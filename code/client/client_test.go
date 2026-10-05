@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 type fakeServer struct {

@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/tsengmingchun/deepagents_golang/tool"
+import "github.com/tsengmingchun/quill/tool"
 
 // ResponseFormat selects how structured output is produced
 // (langchain `ToolStrategy` / `ProviderStrategy` / `AutoStrategy`).

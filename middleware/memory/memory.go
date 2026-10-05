@@ -10,9 +10,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 // ContentsStateKey holds loaded memory keyed by source path (private).

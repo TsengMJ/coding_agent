@@ -1,6 +1,5 @@
 // Package agent builds the coding agent used by the CLI: system prompt,
-// tools, backend routes, subagents and CLI-specific middleware
-// (Python `deepagents_code/agent.py`).
+// tools, backend routes, subagents and CLI-specific middleware.
 package agent
 
 import (
@@ -14,24 +13,24 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang"
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/code/askuser"
-	"github.com/tsengmingchun/deepagents_golang/code/cache"
-	"github.com/tsengmingchun/deepagents_golang/code/codetools"
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
-	"github.com/tsengmingchun/deepagents_golang/middleware/skills"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
-	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
-	"github.com/tsengmingchun/deepagents_golang/tracing"
+	"github.com/tsengmingchun/quill"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/code/askuser"
+	"github.com/tsengmingchun/quill/code/cache"
+	"github.com/tsengmingchun/quill/code/codetools"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/internal/notimpl"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/planmode"
+	"github.com/tsengmingchun/quill/middleware/skills"
+	"github.com/tsengmingchun/quill/middleware/subagents"
+	"github.com/tsengmingchun/quill/middleware/todolist"
+	rt "github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
+	"github.com/tsengmingchun/quill/tracing"
 )
 
 //go:embed system_prompt.md
@@ -44,7 +43,7 @@ type Options struct {
 	AgentName string
 	// Cwd is the project root; file tools see it as "/" and commands run in it.
 	Cwd string
-	// UserDir is ~/.deepagents; its <agent>/AGENTS.md is loaded as memory.
+	// UserDir is ~/.quill; its <agent>/AGENTS.md is loaded as memory.
 	// Empty skips user-level memory.
 	UserDir string
 	// Backend defaults to a LocalShellBackend rooted at Cwd in virtual mode.
@@ -84,7 +83,7 @@ type Options struct {
 	OnBaseline func(verdict string, tests []string)
 }
 
-// CreateCLIAgent assembles the coding agent on top of deepagents.CreateDeepAgent.
+// CreateCLIAgent assembles the coding agent on top of quill.CreateAgent.
 func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if opts.Model == nil {
 		return nil, errors.New("code/agent.CreateCLIAgent: Model is required")
@@ -183,23 +182,23 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		mws = append(mws, pm, askuser.Middleware{})
 		interrupts[askuser.ToolName] = askuser.InterruptOn()
 	}
-	dopts := []deepagents.Option{
-		deepagents.WithModel(opts.Model),
-		deepagents.WithBackend(b),
-		deepagents.WithSystemPrompt(prompt),
-		deepagents.WithTools(append(tools, opts.ExtraTools...)...),
-		deepagents.WithMiddleware(append(mws, trace.Middleware{})...),
-		deepagents.WithCheckpointer(opts.Checkpointer),
-		deepagents.WithStore(opts.Store),
-		deepagents.WithName(opts.AgentName),
-		deepagents.WithSubAgents(subs...),
-		deepagents.WithBackgroundTasks(),
-		deepagents.WithTracer(opts.Tracer),
+	dopts := []quill.Option{
+		quill.WithModel(opts.Model),
+		quill.WithBackend(b),
+		quill.WithSystemPrompt(prompt),
+		quill.WithTools(append(tools, opts.ExtraTools...)...),
+		quill.WithMiddleware(append(mws, trace.Middleware{})...),
+		quill.WithCheckpointer(opts.Checkpointer),
+		quill.WithStore(opts.Store),
+		quill.WithName(opts.AgentName),
+		quill.WithSubAgents(subs...),
+		quill.WithBackgroundTasks(),
+		quill.WithTracer(opts.Tracer),
 	}
 	if len(interrupts) > 0 {
-		dopts = append(dopts, deepagents.WithInterruptOn(interrupts))
+		dopts = append(dopts, quill.WithInterruptOn(interrupts))
 	}
-	return deepagents.CreateDeepAgent(dopts...)
+	return quill.CreateAgent(dopts...)
 }
 
 // DefaultInterruptOn requires approval for tools that change files, run

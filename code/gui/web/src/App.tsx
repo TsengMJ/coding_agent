@@ -27,7 +27,7 @@ function newThreadID(): string {
 // The ID lets a reattached page tell this message from its replay.
 const userMessage = (text: string): Message => ({ id: `user-${newThreadID()}`, role: "user", content: [{ type: "text", text }] });
 
-const DRAWER_STORAGE_KEY = "dcode.inspectorWidth";
+const DRAWER_STORAGE_KEY = "quill.inspectorWidth";
 const SIDEBAR_WIDTH = 260;
 const RESIZE_HANDLE_WIDTH = 8;
 const DRAWER_MIN_WIDTH = 420;
@@ -99,7 +99,7 @@ export function App({ api }: { api: Api }) {
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [commands, setCommands] = useState<SlashCommand[]>([]);
-  // modelOverride is sent with every run (dcode -model or /model); threadModel
+  // modelOverride is sent with every run (quill -model or /model); threadModel
   // is the model the current thread last ran with.
   const [modelOverride, setModelOverride] = useState("");
   const [threadModels, setThreadModels] = useState<Record<string, string>>({});
@@ -352,8 +352,8 @@ export function App({ api }: { api: Api }) {
       .catch((e: Error) => {
         setFatal(
           e instanceof ApiError && e.status === 403
-            ? "This page needs the session token. Open the URL that dcode printed in the terminal."
-            : `Cannot reach dcode: ${e.message}`,
+            ? "This page needs the session token. Open the URL that quill printed in the terminal."
+            : `Cannot reach quill: ${e.message}`,
         );
       });
   }, [api, loadThread]);
@@ -440,7 +440,7 @@ export function App({ api }: { api: Api }) {
 
   const switchMode = useCallback((m: RunMode) => {
     setMode(m);
-    setNotice(m === "plan" ? "Plan mode on: dcode researches read-only and writes a plan for you to review; Build implements it." : "Plan mode off.");
+    setNotice(m === "plan" ? "Plan mode on: quill researches read-only and writes a plan for you to review; Build implements it." : "Plan mode off.");
   }, []);
 
   const newThread = useCallback(() => {
@@ -536,7 +536,7 @@ export function App({ api }: { api: Api }) {
           setNotice(helpText(commands));
           return;
         case "/quit":
-          setNotice("Close this tab to leave; the dcode process keeps running until you stop it in the terminal.");
+          setNotice("Close this tab to leave; the quill process keeps running until you stop it in the terminal.");
           return;
         case "/tokens":
         case "/context":
@@ -647,12 +647,12 @@ export function App({ api }: { api: Api }) {
   if (fatal) {
     return (
       <div className="empty-state">
-        <h2>dcode</h2>
+        <h2>quill</h2>
         <div>{fatal}</div>
       </div>
     );
   }
-  if (!info) return <div className="empty-state">Connecting to dcode…</div>;
+  if (!info) return <div className="empty-state">Connecting to quill…</div>;
 
   const lastStep = timeline.turns.at(-1)?.steps.at(-1);
   const waitingOnTools = lastStep?.tools.some((t) => t.status === "running") ?? false;

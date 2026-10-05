@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 func rule(mode Mode, ops []Operation, paths ...string) FilesystemPermission {

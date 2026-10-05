@@ -1,10 +1,10 @@
-# dcode GUI：下一輪優先順序
+# quill GUI：下一輪優先順序
 
 目前 GUI 已有 timeline、tool 詳情、LLM input/output、單次檔案 diff、核准卡片與模型／用量指令。本文件只列出日常 coding agent 工作仍欠缺的 GUI 能力。
 
 ## 已完成：thread 可接續與命名
 
-- 透過 `~/.deepagents/.env` 的 `DCODE_POSTGRES_CONN_STRING`，將 checkpoint 與 thread 清單保存在本機 Docker PostgreSQL。
+- 透過 `~/.quill/.env` 的 `QUILL_POSTGRES_CONN_STRING`，將 checkpoint 與 thread 清單保存在本機 Docker PostgreSQL。
 - 重啟 GUI 自動打開目前目錄最近有 checkpoint 的 thread，保留 `-thread` 與 `-r`。
 - 側欄可以更改已開始的 thread 名稱；名稱會跨重啟保留。
 - 執行中禁止從側欄切換 thread；切換時只採用最新一次載入的結果。

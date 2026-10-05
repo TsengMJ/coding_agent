@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
-	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
-	"github.com/tsengmingchun/deepagents_golang/code/bench"
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/code/cost"
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/code/storage"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	codeagent "github.com/tsengmingchun/quill/code/agent"
+	"github.com/tsengmingchun/quill/code/bench"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/cost"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/code/storage"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // subsetIDs resolves -subset and applies -limit (0 = all).
@@ -118,7 +118,7 @@ func executeRun(ctx context.Context, st bench.Store, r *bench.Runner, run *bench
 	return sum, err
 }
 
-// agentConfig is stored in bench_runs.config for dcode runs; -resume reuses it.
+// agentConfig is stored in bench_runs.config for quill runs; -resume reuses it.
 type agentConfig struct {
 	Limit         int     `json:"limit"`
 	Tasks         int     `json:"tasks"`
@@ -177,8 +177,8 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 		if run, err = st.Run(ctx, *resume); err != nil {
 			return err
 		}
-		if run.Solver != bench.SolverDcode {
-			return fmt.Errorf("run %s used solver %s; resume it with dbench gate", run.ID, run.Solver)
+		if run.Solver != bench.SolverQuill {
+			return fmt.Errorf("run %s used solver %s; resume it with quillbench gate", run.ID, run.Solver)
 		}
 		if err := json.Unmarshal(run.Config, &cfg); err != nil {
 			return fmt.Errorf("run %s config: %w", run.ID, err)
@@ -192,7 +192,7 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 	spec := resolveModel(e, *model)
 	if run == nil {
 		cfg.Tasks = len(ids)
-		if run, err = newRun(ctx, e, c, docker, bench.SolverDcode, *subset, spec, *trials, *concurrency, cfg); err != nil {
+		if run, err = newRun(ctx, e, c, docker, bench.SolverQuill, *subset, spec, *trials, *concurrency, cfg); err != nil {
 			return err
 		}
 		run.Notes = *notes
@@ -204,7 +204,7 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
-	solver := &bench.DcodeSolver{
+	solver := &bench.QuillSolver{
 		Settings: e.settings, Prices: prices, MaxSteps: cfg.MaxSteps, MaxCostUSD: cfg.MaxCostUSD,
 		Timeout: time.Duration(cfg.TimeoutSec * float64(time.Second)), KeepWorkspace: cfg.KeepWorkspace,
 		Disable: cfg.Disable, Traces: agentStore.Traces,
@@ -228,11 +228,11 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 	fmt.Fprintf(stdout, "run %s: %d/%d resolved, %d infra errors\n", run.ID, sum.Resolved, sum.Total, sum.Infra)
 	if err != nil {
 		if ctx.Err() != nil {
-			fmt.Fprintf(stdout, "interrupted; continue with: dbench run -resume %s\n", run.ID)
+			fmt.Fprintf(stdout, "interrupted; continue with: quillbench run -resume %s\n", run.ID)
 		}
 		return err
 	}
-	fmt.Fprintf(stdout, "report: dbench report %s\n", run.ID)
+	fmt.Fprintf(stdout, "report: quillbench report %s\n", run.ID)
 	return nil
 }
 
@@ -243,7 +243,7 @@ func runGrade(ctx context.Context, e env, args []string, stdout, stderr io.Write
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: dbench grade [flags] <run-id>")
+		return errors.New("usage: quillbench grade [flags] <run-id>")
 	}
 	c, err := bench.LoadCatalog(e.dataDir)
 	if err != nil {
@@ -370,7 +370,7 @@ func runGate(ctx context.Context, e env, args []string, stdout, stderr io.Writer
 		fmt.Fprintln(stdout, "gate:", v)
 	}
 	if !ok {
-		return fmt.Errorf("gate failed; inspect with: dbench report <run>")
+		return fmt.Errorf("gate failed; inspect with: quillbench report <run>")
 	}
 	fmt.Fprintln(stdout, "gate: PASS")
 	return nil

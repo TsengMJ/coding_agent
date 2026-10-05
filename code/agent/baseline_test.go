@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/llm"
+	rt "github.com/tsengmingchun/quill/runtime"
 )
 
 const mathGo = "package m\n\nfunc Add(a, b int) int { return a + b }\n\nfunc Sub(a, b int) int { return a - b }\n"

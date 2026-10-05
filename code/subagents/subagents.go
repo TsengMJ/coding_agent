@@ -1,5 +1,5 @@
 // Package subagents loads subagent definitions from markdown files with
-// frontmatter (Python `deepagents_code/subagents.py`).
+// frontmatter.
 //
 // A subagent lives at <dir>/<name>/AGENTS.md:
 //
@@ -24,7 +24,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 
-	"github.com/tsengmingchun/deepagents_golang/middleware/asyncsubagents"
+	"github.com/tsengmingchun/quill/middleware/asyncsubagents"
 )
 
 // FileName is the definition file inside a subagent's folder.
@@ -48,14 +48,14 @@ type Metadata struct {
 }
 
 // UserDir is the custom-subagent directory of an agent profile under
-// ~/.deepagents.
+// ~/.quill.
 func UserDir(userDir, agentName string) string {
 	return filepath.Join(userDir, agentName, "agents")
 }
 
 // ProjectDir is the project's custom-subagent directory.
 func ProjectDir(projectRoot string) string {
-	return filepath.Join(projectRoot, ".deepagents", "agents")
+	return filepath.Join(projectRoot, ".quill", "agents")
 }
 
 // List loads subagents from user and project directories; a project

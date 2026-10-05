@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/code/codetools"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/code/codetools"
 )
 
 // Features that Options.Disable can turn off, so a benchmark can measure

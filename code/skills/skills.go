@@ -1,10 +1,10 @@
 // Package skills discovers user, project and built-in skills for the CLI and
-// turns them into slash commands (Python `deepagents_code/skills/*`).
+// turns them into slash commands.
 package skills
 
 import (
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	core "github.com/tsengmingchun/deepagents_golang/middleware/skills"
+	"github.com/tsengmingchun/quill/internal/notimpl"
+	core "github.com/tsengmingchun/quill/middleware/skills"
 )
 
 // Location is where a skill was found.

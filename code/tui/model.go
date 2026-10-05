@@ -16,15 +16,15 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/tsengmingchun/deepagents_golang/code/askuser"
-	"github.com/tsengmingchun/deepagents_golang/code/client"
-	"github.com/tsengmingchun/deepagents_golang/code/commands"
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
+	"github.com/tsengmingchun/quill/code/askuser"
+	"github.com/tsengmingchun/quill/code/client"
+	"github.com/tsengmingchun/quill/code/commands"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/planmode"
+	"github.com/tsengmingchun/quill/middleware/subagents"
 )
 
 // Options configures the TUI.
@@ -207,7 +207,7 @@ type model struct {
 
 func newModel(ctx context.Context, opts Options) *model {
 	in := textarea.New()
-	in.Placeholder = "Ask dcode to write code... (Enter to send, /help for commands)"
+	in.Placeholder = "Ask quill to write code... (Enter to send, /help for commands)"
 	in.ShowLineNumbers = false
 	in.SetHeight(3)
 	in.CharLimit = 0
@@ -664,7 +664,7 @@ func (m *model) resetPlaceholder() {
 		m.input.Placeholder = "Plan mode: describe what to plan (read-only; /build implements the plan, /plan leaves)"
 		return
 	}
-	m.input.Placeholder = "Ask dcode to write code... (Enter to send, /help for commands)"
+	m.input.Placeholder = "Ask quill to write code... (Enter to send, /help for commands)"
 }
 
 func (m *model) decide(d hitl.Decision) {

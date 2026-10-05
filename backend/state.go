@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 // FilesStateKey is the graph-state key holding StateBackend files
@@ -19,7 +19,7 @@ import (
 const FilesStateKey = "files"
 
 // errNoRunContext explains how to use StateBackend outside a graph run.
-var errNoRunContext = errors.New("StateBackend must be used inside an agent run (e.g. via deepagents.CreateDeepAgent); " +
+var errNoRunContext = errors.New("StateBackend must be used inside an agent run (e.g. via quill.CreateAgent); " +
 	`to pre-populate files, pass them on invoke: agent.Input{Values: map[string]any{"files": ...}}`)
 
 // StateBackend stores files in the agent graph state under FilesStateKey.

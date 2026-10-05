@@ -1,9 +1,8 @@
-// Package tools holds CLI-only tools: web_search (Brave Search, where
-// Python uses Tavily), fetch_url with SSRF protection (Python
-// `deepagents_code/tools.py`) and the Context7 documentation tools.
+// Package tools holds CLI-only tools: web_search (Brave Search), fetch_url
+// with SSRF protection and the Context7 documentation tools.
 package tools
 
-import "github.com/tsengmingchun/deepagents_golang/tool"
+import "github.com/tsengmingchun/quill/tool"
 
 // Tool names.
 const (

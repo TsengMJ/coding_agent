@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/llm"
+	rt "github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 func names(ts []tool.Tool) []string {

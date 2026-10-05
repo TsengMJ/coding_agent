@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/storage"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/storage"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 func TestResolvePrompt(t *testing.T) {
@@ -90,8 +90,8 @@ func TestDefaultGUIThreadResumesSavedConversation(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		defer pool.Close()
-		_, _ = pool.Exec(context.Background(), "DELETE FROM deepagents_checkpoints WHERE execution_id = $1", thread)
-		_, _ = pool.Exec(context.Background(), "DELETE FROM dcode_threads WHERE thread_id = $1", thread)
+		_, _ = pool.Exec(context.Background(), "DELETE FROM quill_checkpoints WHERE execution_id = $1", thread)
+		_, _ = pool.Exec(context.Background(), "DELETE FROM quill_threads WHERE thread_id = $1", thread)
 	})
 	open := func() *server.Service {
 		st, err := storage.Open(ctx, conn, redisURL)
@@ -127,25 +127,25 @@ func TestDefaultGUIThreadResumesSavedConversation(t *testing.T) {
 }
 
 func TestStartupFailsWithoutRedis(t *testing.T) {
-	t.Setenv("DCODE_POSTGRES_CONN_STRING", "postgres://x@127.0.0.1:1/x")
-	t.Setenv("DCODE_REDIS_URL", "")
+	t.Setenv("QUILL_POSTGRES_CONN_STRING", "postgres://x@127.0.0.1:1/x")
+	t.Setenv("QUILL_REDIS_URL", "")
 	t.Setenv("REDIS_URL", "")
 	t.Setenv(config.ServerEnvVar, "")
 	var stdout, stderr bytes.Buffer
 	_, err := run(context.Background(), []string{"-n", "hi"}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "DCODE_REDIS_URL") {
+	if err == nil || !strings.Contains(err.Error(), "QUILL_REDIS_URL") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestStartupFailsWithoutPostgres(t *testing.T) {
-	t.Setenv("DCODE_POSTGRES_CONN_STRING", "")
+	t.Setenv("QUILL_POSTGRES_CONN_STRING", "")
 	t.Setenv("POSTGRES_CONN_STRING", "")
-	t.Setenv("DCODE_REDIS_URL", "redis://127.0.0.1:1/0")
+	t.Setenv("QUILL_REDIS_URL", "redis://127.0.0.1:1/0")
 	t.Setenv(config.ServerEnvVar, "")
 	var stdout, stderr bytes.Buffer
 	_, err := run(context.Background(), []string{"-n", "hi"}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "DCODE_POSTGRES_CONN_STRING") {
+	if err == nil || !strings.Contains(err.Error(), "QUILL_POSTGRES_CONN_STRING") {
 		t.Fatalf("err = %v", err)
 	}
 }

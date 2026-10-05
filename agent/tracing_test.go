@@ -6,10 +6,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
-	"github.com/tsengmingchun/deepagents_golang/tracing"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
+	"github.com/tsengmingchun/quill/tracing"
 )
 
 type recordedRun struct {
@@ -59,7 +59,7 @@ func TestTracerRecordsChainModelAndToolRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = a.Invoke(context.Background(), Input{Messages: []llm.Message{llm.NewUserMessage("go")}},
-		runtime.RunConfig{ThreadID: "th", Tags: []string{"dcode:resume"}, Metadata: map[string]any{"k": "v"}})
+		runtime.RunConfig{ThreadID: "th", Tags: []string{"quill:resume"}, Metadata: map[string]any{"k": "v"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestTracerRecordsChainModelAndToolRuns(t *testing.T) {
 		t.Fatalf("runs = %d, want chain + 2 llm + tool", len(tr.runs))
 	}
 	root := tr.runs[0]
-	if root.info.Type != tracing.RunChain || root.parent != nil || !root.ended || root.info.Tags[0] != "dcode:resume" {
+	if root.info.Type != tracing.RunChain || root.parent != nil || !root.ended || root.info.Tags[0] != "quill:resume" {
 		t.Fatalf("root = %+v", root)
 	}
 	md := root.info.Metadata

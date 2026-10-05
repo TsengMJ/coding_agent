@@ -5,8 +5,8 @@ package stubtool
 import (
 	"context"
 
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/internal/notimpl"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // New returns a tool named name that fails with notimpl on every call.

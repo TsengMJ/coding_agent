@@ -16,7 +16,7 @@ import (
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
 
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+	"github.com/tsengmingchun/quill/internal/notimpl"
 )
 
 // DefaultOpenAIBaseURL is used when neither ProviderConfig.BaseURL nor

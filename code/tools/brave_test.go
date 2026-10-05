@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/cache"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/code/cache"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // braveServer records requests and serves canned responses keyed by path.

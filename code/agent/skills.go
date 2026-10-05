@@ -7,17 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/middleware/skills"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/middleware/skills"
 )
 
-// SkillSources lists dcode's skill directories, lowest priority first: the
+// SkillSources lists quill's skill directories, lowest priority first: the
 // user agent's skills and ~/.agents/skills (host paths), then the project's
-// /.deepagents/skills and /.agents/skills (virtual paths). userDir is
-// ~/.deepagents; empty skips the user-level sources.
+// /.quill/skills and /.agents/skills (virtual paths). userDir is
+// ~/.quill; empty skips the user-level sources.
 func SkillSources(userDir, agentName string) []skills.Source {
 	return append(userSkillSources(userDir, agentName),
-		skills.Source{Path: "/.deepagents/skills", Label: "Project Deepagents"},
+		skills.Source{Path: "/.quill/skills", Label: "Project Quill"},
 		skills.Source{Path: "/.agents/skills", Label: "Project Agents"},
 	)
 }
@@ -30,7 +30,7 @@ func userSkillSources(userDir, agentName string) []skills.Source {
 		agentName = DefaultAgentName
 	}
 	return []skills.Source{
-		{Path: filepath.Join(userDir, agentName, "skills"), Label: "User Deepagents"},
+		{Path: filepath.Join(userDir, agentName, "skills"), Label: "User Quill"},
 		{Path: filepath.Join(filepath.Dir(userDir), ".agents", "skills"), Label: "User Agents"},
 	}
 }
@@ -56,9 +56,9 @@ func userSkillRoots(userDir, agentName string) []string {
 	return out
 }
 
-// ArtifactsRoot is where dcode offloads large tool results and messages,
-// next to /.deepagents/conversation_history.
-const ArtifactsRoot = "/.deepagents"
+// ArtifactsRoot is where quill offloads large tool results and messages,
+// next to /.quill/conversation_history.
+const ArtifactsRoot = "/.quill"
 
 // withHostRoutes mounts each existing host directory in roots as a read-only
 // CompositeBackend route at its own host path, so project file tools can

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/hitl"
 )
 
 func writeFile(t *testing.T, dir, name, content string) {

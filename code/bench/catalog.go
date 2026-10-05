@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Layout of the bench data directory (~/.deepagents/bench).
+// Layout of the bench data directory (~/.quill/bench).
 const (
 	tasksRepoDir = "SWE-bench_Pro-os"
 	metadataFile = "metadata.json"
@@ -79,8 +79,8 @@ func Prepare(ctx context.Context, dataDir string, hf HFClient) (*PrepareResult, 
 	return &PrepareResult{Catalog: c, Verified: n}, nil
 }
 
-// ErrNotPrepared means `dbench prepare` has not been run.
-var ErrNotPrepared = errors.New("bench: data not prepared; run `dbench prepare`")
+// ErrNotPrepared means `quillbench prepare` has not been run.
+var ErrNotPrepared = errors.New("bench: data not prepared; run `quillbench prepare`")
 
 // LoadCatalog reads the prepared task directories and metadata cache.
 func LoadCatalog(dataDir string) (*Catalog, error) {

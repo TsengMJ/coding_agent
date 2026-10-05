@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/code/cost"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/code/cost"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // hostDocker is a fake docker binary that runs `docker exec` commands on
@@ -48,7 +48,7 @@ func toolCall(id, name string, args map[string]any) llm.Message {
 		Usage: &llm.Usage{InputTokens: 1000, OutputTokens: 100}}
 }
 
-func TestDcodeSolverCapturesPatchAndMetrics(t *testing.T) {
+func TestQuillSolverCapturesPatchAndMetrics(t *testing.T) {
 	root := t.TempDir()
 	task, err := LoadTask(writeTask(t, root, "instance_a"))
 	if err != nil {
@@ -70,7 +70,7 @@ func TestDcodeSolverCapturesPatchAndMetrics(t *testing.T) {
 	work := filepath.Join(t.TempDir(), "work")
 	logDir := t.TempDir()
 	traces := trace.NewMemoryLog()
-	s := &DcodeSolver{
+	s := &QuillSolver{
 		NewModel:      func() (llm.ChatModel, error) { return model, nil },
 		Prices:        cost.Table{"fake:fake": {Input: 1, Output: 10}},
 		KeepWorkspace: true,
@@ -92,7 +92,7 @@ func TestDcodeSolverCapturesPatchAndMetrics(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(ws, "fix.txt")); err != nil || string(data) != "fixed\n" {
 		t.Fatalf("file tools should write the mounted workspace: %q %v", data, err)
 	}
-	if data, _ := os.ReadFile(filepath.Join(ws, ".git", "info", "exclude")); !strings.Contains(string(data), "/.deepagents/") {
+	if data, _ := os.ReadFile(filepath.Join(ws, ".git", "info", "exclude")); !strings.Contains(string(data), "/.quill/") {
 		t.Fatal("agent artifacts not excluded from the patch")
 	}
 	m := res.Metrics
@@ -117,11 +117,11 @@ func TestDcodeSolverCapturesPatchAndMetrics(t *testing.T) {
 	}
 }
 
-func TestDcodeSolverFallsBackToTestbed(t *testing.T) {
+func TestQuillSolverFallsBackToTestbed(t *testing.T) {
 	root := t.TempDir()
 	task, _ := LoadTask(writeTask(t, root, "instance_a"))
 	d := &copyOutFailDocker{fakeDocker: newFakeDocker(), fail: "/app/."}
-	s := &DcodeSolver{NewModel: func() (llm.ChatModel, error) { return llm.NewFakeModel(llm.NewAssistantMessage("done")), nil },
+	s := &QuillSolver{NewModel: func() (llm.ChatModel, error) { return llm.NewFakeModel(llm.NewAssistantMessage("done")), nil },
 		DockerBinary: hostDocker(t), Traces: trace.NewMemoryLog()}
 	if _, err := s.Solve(context.Background(), task, SolveEnv{RunID: "r", WorkDir: filepath.Join(t.TempDir(), "w"), Docker: d}); err != nil {
 		t.Fatal(err)
@@ -133,12 +133,12 @@ func TestDcodeSolverFallsBackToTestbed(t *testing.T) {
 	}
 }
 
-func TestDcodeSolverRefreshesGitIndexBeforeTheAgent(t *testing.T) {
+func TestQuillSolverRefreshesGitIndexBeforeTheAgent(t *testing.T) {
 	root := t.TempDir()
 	task, _ := LoadTask(writeTask(t, root, "instance_a"))
 	d := newFakeDocker()
 	model := llm.NewFakeModel(llm.NewAssistantMessage("done"))
-	s := &DcodeSolver{NewModel: func() (llm.ChatModel, error) { return model, nil },
+	s := &QuillSolver{NewModel: func() (llm.ChatModel, error) { return model, nil },
 		DockerBinary: hostDocker(t), Traces: trace.NewMemoryLog()}
 	if _, err := s.Solve(context.Background(), task, SolveEnv{RunID: "r", WorkDir: filepath.Join(t.TempDir(), "w"), Docker: d}); err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestDcodeSolverRefreshesGitIndexBeforeTheAgent(t *testing.T) {
 	}
 }
 
-func TestDcodeSolverFailsWhenGitIndexRefreshFails(t *testing.T) {
+func TestQuillSolverFailsWhenGitIndexRefreshFails(t *testing.T) {
 	root := t.TempDir()
 	task, _ := LoadTask(writeTask(t, root, "instance_a"))
 	d := newFakeDocker()
@@ -167,7 +167,7 @@ func TestDcodeSolverFailsWhenGitIndexRefreshFails(t *testing.T) {
 		}
 		return ExecResult{}, false
 	}
-	s := &DcodeSolver{NewModel: func() (llm.ChatModel, error) { return llm.NewFakeModel(llm.NewAssistantMessage("done")), nil },
+	s := &QuillSolver{NewModel: func() (llm.ChatModel, error) { return llm.NewFakeModel(llm.NewAssistantMessage("done")), nil },
 		DockerBinary: hostDocker(t), Traces: trace.NewMemoryLog()}
 	_, err := s.Solve(context.Background(), task, SolveEnv{RunID: "r", WorkDir: filepath.Join(t.TempDir(), "w"), Docker: d})
 	if err == nil || !strings.Contains(err.Error(), "not a git repository") {

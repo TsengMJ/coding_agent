@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/cache"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/code/cache"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 func newContext7(t *testing.T, h http.HandlerFunc) (resolve, query tool.Tool, hits *atomic.Int32) {

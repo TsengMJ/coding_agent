@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	codesubagents "github.com/tsengmingchun/deepagents_golang/code/subagents"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
+	"github.com/tsengmingchun/quill/code/config"
+	codesubagents "github.com/tsengmingchun/quill/code/subagents"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/subagents"
 )
 
 // builtinSubagents may not be redefined by a custom subagent.

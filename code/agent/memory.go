@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/middleware/memory"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/middleware/memory"
 )
 
-// DefaultAgentName names the user-level agent directory under ~/.deepagents.
+// DefaultAgentName names the user-level agent directory under ~/.quill.
 const DefaultAgentName = "agent"
 
 // memoryHeadlessPrompt is Python `_MEMORY_HEADLESS_SYSTEM_PROMPT`.
@@ -47,7 +47,7 @@ func MemorySources(userDir, agentName string) []string {
 		}
 		out = append(out, filepath.Join(userDir, agentName, "AGENTS.md"))
 	}
-	return append(out, "/.deepagents/AGENTS.md", "/AGENTS.md")
+	return append(out, "/.quill/AGENTS.md", "/AGENTS.md")
 }
 
 // newMemory reads user-level sources from the host filesystem and project

@@ -1,13 +1,13 @@
 package agent
 
 import (
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/langsmith"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/langsmith"
 )
 
-// DefaultLangSmithProject receives dcode's runs unless tracing.project or
+// DefaultLangSmithProject receives quill's runs unless tracing.project or
 // $LANGSMITH_PROJECT names another.
-const DefaultLangSmithProject = "dcode"
+const DefaultLangSmithProject = "quill"
 
 // NewLangSmith returns the LangSmith client when tracing.langsmith or
 // LANGSMITH_TRACING=true turns tracing on, nil when it is off, and an error

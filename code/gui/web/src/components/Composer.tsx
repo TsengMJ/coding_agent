@@ -94,8 +94,8 @@ export const Composer = forwardRef<
             blocked
               ? "Answer the approval above first"
               : mode === "plan"
-                ? "Describe what to plan — dcode researches read-only and writes a plan (/ for commands)"
-                : "Ask dcode… (/ for commands)"
+                ? "Describe what to plan — quill researches read-only and writes a plan (/ for commands)"
+                : "Ask quill… (/ for commands)"
           }
           value={text}
           onChange={(e) => {

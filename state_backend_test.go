@@ -1,4 +1,4 @@
-package deepagents
+package quill
 
 import (
 	"context"
@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 func toolCalls(calls ...llm.ToolCall) llm.Message {
@@ -34,7 +34,7 @@ func toolText(st *runtime.State, id string) string {
 	return ""
 }
 
-func TestCreateDeepAgentDefaultsToStateBackend(t *testing.T) {
+func TestCreateAgentDefaultsToStateBackend(t *testing.T) {
 	model := llm.NewFakeModel(
 		toolCalls(llm.ToolCall{ID: "w", Name: "write_file", Args: map[string]any{"file_path": "/notes/a.md", "content": "hello world\n"}}),
 		toolCalls(llm.ToolCall{ID: "e", Name: "edit_file", Args: map[string]any{"file_path": "/notes/a.md", "old_string": "world", "new_string": "state"}}),
@@ -43,7 +43,7 @@ func TestCreateDeepAgentDefaultsToStateBackend(t *testing.T) {
 		toolCalls(llm.ToolCall{ID: "d", Name: "delete", Args: map[string]any{"file_path": "/tmp"}}),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model))
+	a, err := CreateAgent(WithModel(model))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestStateFilesPersistAcrossInvokes(t *testing.T) {
 		toolCalls(llm.ToolCall{ID: "r", Name: "read_file", Args: map[string]any{"file_path": "/a.txt"}}),
 		llm.NewAssistantMessage("read"),
 	)
-	a, err := CreateDeepAgent(WithModel(model), WithCheckpointer(runtime.NewMemoryCheckpointer()))
+	a, err := CreateAgent(WithModel(model), WithCheckpointer(runtime.NewMemoryCheckpointer()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestParallelStateWritesToDifferentFilesAreAllKept(t *testing.T) {
 		),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model))
+	a, err := CreateAgent(WithModel(model))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestPrepopulatedStateFilesAreReadable(t *testing.T) {
 		toolCalls(llm.ToolCall{ID: "r", Name: "read_file", Args: map[string]any{"file_path": "/seed.txt"}}),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model))
+	a, err := CreateAgent(WithModel(model))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestSubagentStateFilesReachParent(t *testing.T) {
 		toolCalls(llm.ToolCall{ID: "r", Name: "read_file", Args: map[string]any{"file_path": "/report.md"}}),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model))
+	a, err := CreateAgent(WithModel(model))
 	if err != nil {
 		t.Fatal(err)
 	}

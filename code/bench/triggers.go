@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+	codeagent "github.com/tsengmingchun/quill/code/agent"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/llm"
+	rt "github.com/tsengmingchun/quill/runtime"
 )
 
 // Triggers counts how often each agent component visibly acted in an

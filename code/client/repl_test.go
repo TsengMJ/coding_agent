@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 func TestREPLKeepsThreadAcrossTurnsAndNewStartsAnother(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/smallnest/langgraphgo/graph"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // Checkpoint is a persisted snapshot of one thread's state.

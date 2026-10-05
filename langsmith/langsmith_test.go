@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang"
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/langsmith"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tracing"
+	"github.com/tsengmingchun/quill"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/langsmith"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tracing"
 )
 
 type sentRun struct {
@@ -125,7 +125,7 @@ func TestRunTreeWithSubagent(t *testing.T) {
 		llm.Message{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.TextBlock("sub report")}, Usage: &llm.Usage{InputTokens: 10, OutputTokens: 2}},
 		llm.NewAssistantMessage("all done"),
 	)
-	a, err := deepagents.CreateDeepAgent(deepagents.WithModel(model), deepagents.WithTracer(client), deepagents.WithName("main"))
+	a, err := quill.CreateAgent(quill.WithModel(model), quill.WithTracer(client), quill.WithName("main"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestFromEnvReadsLegacyNames(t *testing.T) {
 
 func TestNoTracerSendsNothing(t *testing.T) {
 	fake, _ := newFake(t, http.StatusAccepted)
-	a, err := deepagents.CreateDeepAgent(deepagents.WithModel(llm.NewFakeModel(llm.NewAssistantMessage("hi"))), deepagents.WithTracer(nil))
+	a, err := quill.CreateAgent(quill.WithModel(llm.NewFakeModel(llm.NewAssistantMessage("hi"))), quill.WithTracer(nil))
 	if err != nil {
 		t.Fatal(err)
 	}

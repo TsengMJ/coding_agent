@@ -3,9 +3,9 @@ package langsmith
 import (
 	"encoding/json"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/tracing"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/tracing"
 )
 
 // encodeInputs turns llm values into the OpenAI chat shapes LangSmith renders

@@ -6,7 +6,7 @@
 PKG ?= ./...
 # Extra arguments for go test. Example: make test ARGS='-count=1 -v'
 ARGS ?=
-# Prompt passed to dcode. Example: make run PROMPT='summarize README.md'
+# Prompt passed to quill. Example: make run PROMPT='summarize README.md'
 PROMPT ?=
 # Optional thread id for make run.
 THREAD ?=
@@ -34,21 +34,21 @@ fmt: ## Fail if any file is not gofmt-clean
 		exit 1; \
 	fi
 
-build: ## Build all packages and ./dcode
+build: ## Build all packages and ./quill
 	go build ./...
-	go build -o dcode ./cmd/dcode
+	go build -o quill ./cmd/quill
 
 check: fmt vet test ## Run fmt, vet, and tests
 
 run: ## Run one prompt: make run PROMPT="..."
 	@test -n "$(PROMPT)" || { echo 'usage: make run PROMPT="your prompt"'; exit 1; }
-	go run ./cmd/dcode $(if $(MODEL),-model=$(MODEL),) $(if $(THREAD),-thread=$(THREAD),) -n "$(PROMPT)"
+	go run ./cmd/quill $(if $(MODEL),-model=$(MODEL),) $(if $(THREAD),-thread=$(THREAD),) -n "$(PROMPT)"
 
 serve: ## Run the agent server: make serve [ADDR=127.0.0.1:8123] [MODEL=...]
-	go run ./cmd/dcode serve -addr=$(ADDR) $(if $(MODEL),-model=$(MODEL),)
+	go run ./cmd/quill serve -addr=$(ADDR) $(if $(MODEL),-model=$(MODEL),)
 
-install: ## Install dcode into $(go env GOPATH)/bin
-	go install ./cmd/dcode
+install: ## Install quill into $(go env GOPATH)/bin
+	go install ./cmd/quill
 
 web: ## Rebuild the GUI bundle into code/gui/dist (needs Node)
 	cd code/gui/web && npm ci && npm run build
@@ -57,10 +57,10 @@ web-test: ## Typecheck and test the GUI frontend (needs Node)
 	cd code/gui/web && npm ci && npm run typecheck && npm test
 
 bench-prepare: ## Fetch and verify SWE-bench Pro V2 tasks, fill bench_tasks (needs POSTGRES_CONN_STRING)
-	go run ./cmd/dbench prepare
+	go run ./cmd/quillbench prepare
 
 bench-gate: ## Grade gold (oracle) and empty (nop) patches on smoke50; all must pass / fail
-	go run ./cmd/dbench gate
+	go run ./cmd/quillbench gate
 
-bench-smoke: ## Run dcode on smoke50: make bench-smoke [MODEL=provider:model]
-	go run ./cmd/dbench run -subset smoke50 $(if $(MODEL),-model=$(MODEL),)
+bench-smoke: ## Run quill on smoke50: make bench-smoke [MODEL=provider:model]
+	go run ./cmd/quillbench run -subset smoke50 $(if $(MODEL),-model=$(MODEL),)

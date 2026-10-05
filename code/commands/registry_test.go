@@ -95,9 +95,9 @@ func TestRegisterRejectsDuplicatesAndBadNames(t *testing.T) {
 	}
 }
 
-func TestDCodeCommandsAreUnique(t *testing.T) {
+func TestQuillCommandsAreUnique(t *testing.T) {
 	r := NewRegistry()
-	for _, c := range DCode {
+	for _, c := range Quill {
 		if err := r.Register(c, func(context.Context, string) error { return nil }); err != nil {
 			t.Fatal(err)
 		}

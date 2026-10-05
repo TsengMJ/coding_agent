@@ -1,6 +1,5 @@
 // Package profiles tunes model construction (ProviderProfile) and harness
-// behavior (HarnessProfile) per provider or "provider:model" key
-// (Python `deepagents.profiles`).
+// behavior (HarnessProfile) per provider or "provider:model" key.
 package profiles
 
 import (
@@ -10,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // GeneralPurposeSubagentProfile adjusts the auto-added general-purpose subagent.

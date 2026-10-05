@@ -5,8 +5,8 @@ package sandbox
 import (
 	"context"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/internal/notimpl"
 )
 
 // Config selects and configures a sandbox.

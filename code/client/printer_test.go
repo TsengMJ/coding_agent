@@ -3,7 +3,7 @@ package client
 import (
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 func TestToolCallLineSummarizesWebTools(t *testing.T) {

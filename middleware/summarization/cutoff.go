@@ -1,7 +1,7 @@
 package summarization
 
 import (
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // defaultMessagesToKeep is the keep fallback when a fraction policy has no

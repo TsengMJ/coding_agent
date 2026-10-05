@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 const (

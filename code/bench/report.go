@@ -242,7 +242,7 @@ func Compare(a, b TaskOutcome) Comparison {
 // RenderReport formats a run summary as markdown.
 func RenderReport(run *Run, s Summary) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# dbench report: %s\n\n", run.ID)
+	fmt.Fprintf(&b, "# quillbench report: %s\n\n", run.ID)
 	fmt.Fprintf(&b, "| | |\n|---|---|\n")
 	fmt.Fprintf(&b, "| benchmark | %s / %s |\n| solver | %s |\n| model | %s |\n| trials | %d |\n", run.Benchmark, run.Subset, run.Solver, orDash(run.Model), run.Trials)
 	fmt.Fprintf(&b, "| status | %s |\n| started | %s |\n", run.Status, run.StartedAt.Format(time.RFC3339))
@@ -253,7 +253,7 @@ func RenderReport(run *Run, s Summary) string {
 	if run.GitDirty {
 		commit += " (dirty)"
 	}
-	fmt.Fprintf(&b, "| dcode commit | %s |\n| tasks commit | %s |\n", orDash(commit), orDash(run.TasksRepoCommit))
+	fmt.Fprintf(&b, "| quill commit | %s |\n| tasks commit | %s |\n", orDash(commit), orDash(run.TasksRepoCommit))
 	if run.Notes != "" {
 		fmt.Fprintf(&b, "| notes | %s |\n", run.Notes)
 	}

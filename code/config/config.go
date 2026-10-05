@@ -24,7 +24,7 @@ const (
 
 // Settings is the resolved configuration used by the CLI.
 type Settings struct {
-	// Model is the default "provider:model" (models.default, $DCODE_MODEL).
+	// Model is the default "provider:model" (models.default, $QUILL_MODEL).
 	Model string
 	// WebModel ("provider:model", models.web) reads fetched pages and runs
 	// the web-researcher; empty uses the run's model.
@@ -35,13 +35,13 @@ type Settings struct {
 	ApprovalMode string
 	AgentName    string
 	// ShellAllowList names commands that run without approval
-	// (shell.allow_list, $DEEPAGENTS_CODE_SHELL_ALLOW_LIST).
+	// (shell.allow_list, $QUILL_SHELL_ALLOW_LIST).
 	ShellAllowList []string
 	// ShellAllowAll approves every command (shell.allow_list = "all").
 	ShellAllowAll bool
 	// MaxRetries overrides llm.DefaultMaxRetries when non-nil (retries.max_retries).
 	MaxRetries *int
-	// ServerURL is the `dcode serve` URL clients use (server.url, $DCODE_SERVER).
+	// ServerURL is the `quill serve` URL clients use (server.url, $QUILL_SERVER).
 	ServerURL       string
 	Theme           string
 	SandboxProvider string
@@ -57,8 +57,8 @@ type Settings struct {
 	// LangSmithTracing sends run trees to LangSmith (tracing.langsmith,
 	// default false; LANGSMITH_TRACING=true also turns it on).
 	LangSmithTracing bool
-	// LangSmithProject is the LangSmith project for dcode's runs
-	// (tracing.project); empty uses $LANGSMITH_PROJECT, then "dcode".
+	// LangSmithProject is the LangSmith project for quill's runs
+	// (tracing.project); empty uses $LANGSMITH_PROJECT, then "quill".
 	LangSmithProject string
 	// Raw holds every key read from config.toml.
 	Raw map[string]any
@@ -77,7 +77,7 @@ type Source struct {
 	Err   error
 }
 
-// Paths locates CLI directories (~/.deepagents, project .deepagents, ...).
+// Paths locates CLI directories (~/.quill, project .quill, ...).
 type Paths struct {
 	Home       string
 	UserDir    string
@@ -97,14 +97,14 @@ type Resolver interface {
 }
 
 // DirName is the per-user and per-project configuration directory name.
-const DirName = ".deepagents"
+const DirName = ".quill"
 
 // ConfigFileName is the user configuration file inside the user DirName.
 const ConfigFileName = "config.toml"
 
 // DefaultPaths computes paths for the current user and working directory.
 // Profile-specific state directories are not modeled yet; everything lives
-// directly under ~/.deepagents.
+// directly under ~/.quill.
 func DefaultPaths(cwd string) (Paths, error) {
 	if cwd == "" {
 		return Paths{}, errors.New("config.DefaultPaths: cwd is required")

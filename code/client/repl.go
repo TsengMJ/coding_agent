@@ -9,10 +9,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/code/commands"
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/commands"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // InteractiveOptions configures the line REPL.
@@ -57,7 +57,7 @@ func RunInteractive(ctx context.Context, srv server.Server, opts InteractiveOpti
 	r := &repl{srv: srv, opts: opts, in: bufio.NewReader(opts.In), thread: opts.ThreadID, auto: opts.AutoApprove,
 		model: ModelChoice{Override: opts.Model, Default: opts.ModelName}}
 	r.cmds = NewCommandRegistry(r, CommandOptions{SaveDefaultModel: opts.SaveDefaultModel})
-	fmt.Fprintf(opts.Out, "dcode in %s — /help for commands, Ctrl-C cancels a run\n", opts.Cwd)
+	fmt.Fprintf(opts.Out, "quill in %s — /help for commands, Ctrl-C cancels a run\n", opts.Cwd)
 	if r.thread == "" {
 		r.thread = sessions.NewThreadID()
 		fmt.Fprintf(opts.Out, "thread %s (new)\n", r.thread)

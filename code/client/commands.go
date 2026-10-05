@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/code/commands"
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/commands"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // Session is the client state slash commands act on. The line REPL runs
@@ -48,7 +48,7 @@ type CommandOptions struct {
 	SaveDefaultModel func(spec string) error
 }
 
-// NewCommandRegistry binds every commands.DCode entry to s.
+// NewCommandRegistry binds every commands.Quill entry to s.
 func NewCommandRegistry(s Session, opts CommandOptions) *commands.Registry {
 	reg := commands.NewRegistry()
 	handlers := map[string]commands.Handler{
@@ -119,7 +119,7 @@ func NewCommandRegistry(s Session, opts CommandOptions) *commands.Registry {
 			return nil
 		},
 	}
-	for _, cmd := range commands.DCode {
+	for _, cmd := range commands.Quill {
 		h, ok := handlers[cmd.Name]
 		if !ok {
 			panic(fmt.Sprintf("client: no handler for %s", cmd.Name))

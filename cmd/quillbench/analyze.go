@@ -11,9 +11,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tsengmingchun/deepagents_golang/code/bench"
-	"github.com/tsengmingchun/deepagents_golang/code/cost"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
+	"github.com/tsengmingchun/quill/code/bench"
+	"github.com/tsengmingchun/quill/code/cost"
+	"github.com/tsengmingchun/quill/code/trace"
 )
 
 // runAnalyze recomputes process metrics from each attempt's trace and
@@ -24,7 +24,7 @@ func runAnalyze(ctx context.Context, e env, args []string, stdout, stderr io.Wri
 		return err
 	}
 	if fs.NArg() == 0 {
-		return errors.New("usage: dbench analyze <run-id>...")
+		return errors.New("usage: quillbench analyze <run-id>...")
 	}
 	tasks, err := taskMap(e)
 	if err != nil {

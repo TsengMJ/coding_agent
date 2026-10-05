@@ -164,11 +164,11 @@ func TestCompositeCapabilitiesFollowDefault(t *testing.T) {
 	if !SupportsDelete(state) {
 		t.Fatal("deleting default must offer delete")
 	}
-	shell := NewCompositeBackend(NewLocalShellBackend(LocalShellOptions{}), map[string]Backend{"/r/": fsAt(t, nil)}, "/.deepagents")
+	shell := NewCompositeBackend(NewLocalShellBackend(LocalShellOptions{}), map[string]Backend{"/r/": fsAt(t, nil)}, "/.quill")
 	if !SupportsExecution(shell) {
 		t.Fatal("sandbox default must offer execute")
 	}
-	if got := ArtifactsRoot(shell); got != "/.deepagents" {
+	if got := ArtifactsRoot(shell); got != "/.quill" {
 		t.Fatalf("artifacts root = %q", got)
 	}
 	if got := ArtifactsRoot(NewStateBackend()); got != "/" {

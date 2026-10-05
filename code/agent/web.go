@@ -9,12 +9,12 @@ import (
 
 	"golang.org/x/net/idna"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/code/cache"
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/code/tools"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/code/cache"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/tools"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // WebOptions configures WebTools.

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
+	"github.com/tsengmingchun/quill/middleware/todolist"
 )
 
 // PlanModePrompt is appended to the system prompt in plan mode.

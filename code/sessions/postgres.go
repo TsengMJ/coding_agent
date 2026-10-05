@@ -11,7 +11,7 @@ import (
 )
 
 const postgresSchema = `
-CREATE TABLE IF NOT EXISTS dcode_threads (
+CREATE TABLE IF NOT EXISTS quill_threads (
 	thread_id     TEXT PRIMARY KEY,
 	cwd           TEXT NOT NULL,
 	title         TEXT NOT NULL DEFAULT '',
@@ -19,11 +19,11 @@ CREATE TABLE IF NOT EXISTS dcode_threads (
 	updated_at    TIMESTAMPTZ NOT NULL,
 	message_count INTEGER NOT NULL DEFAULT 0
 );
-ALTER TABLE dcode_threads ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT '';
-CREATE INDEX IF NOT EXISTS dcode_threads_cwd_updated ON dcode_threads (cwd, updated_at DESC);
+ALTER TABLE quill_threads ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS quill_threads_cwd_updated ON quill_threads (cwd, updated_at DESC);
 `
 
-// PostgresStore keeps the catalog in the dcode_threads table.
+// PostgresStore keeps the catalog in the quill_threads table.
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
@@ -34,7 +34,7 @@ func NewPostgresStore(ctx context.Context, pool *pgxpool.Pool) (*PostgresStore, 
 		return nil, errors.New("sessions.NewPostgresStore: nil pool")
 	}
 	if _, err := pool.Exec(ctx, postgresSchema); err != nil {
-		return nil, fmt.Errorf("sessions: create dcode_threads: %w", err)
+		return nil, fmt.Errorf("sessions: create quill_threads: %w", err)
 	}
 	return &PostgresStore{pool: pool}, nil
 }
@@ -47,13 +47,13 @@ func (s *PostgresStore) Touch(ctx context.Context, info Info) error {
 		info.CreatedAt = info.UpdatedAt
 	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO dcode_threads (thread_id, cwd, title, created_at, updated_at, message_count, model)
+INSERT INTO quill_threads (thread_id, cwd, title, created_at, updated_at, message_count, model)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (thread_id) DO UPDATE SET
-	title = CASE WHEN dcode_threads.title = '' THEN EXCLUDED.title ELSE dcode_threads.title END,
+	title = CASE WHEN quill_threads.title = '' THEN EXCLUDED.title ELSE quill_threads.title END,
 	updated_at = EXCLUDED.updated_at,
 	message_count = EXCLUDED.message_count,
-	model = CASE WHEN EXCLUDED.model = '' THEN dcode_threads.model ELSE EXCLUDED.model END`,
+	model = CASE WHEN EXCLUDED.model = '' THEN quill_threads.model ELSE EXCLUDED.model END`,
 		info.ThreadID, info.Cwd, info.Title, info.CreatedAt, info.UpdatedAt, info.MessageCount, info.Model)
 	if err != nil {
 		return fmt.Errorf("sessions: touch %s: %w", info.ThreadID, err)
@@ -64,7 +64,7 @@ ON CONFLICT (thread_id) DO UPDATE SET
 func (s *PostgresStore) Get(ctx context.Context, threadID string) (*Info, error) {
 	row := s.pool.QueryRow(ctx, `
 SELECT thread_id, cwd, title, created_at, updated_at, message_count, model
-FROM dcode_threads WHERE thread_id = $1`, threadID)
+FROM quill_threads WHERE thread_id = $1`, threadID)
 	info, err := scanInfo(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -77,7 +77,7 @@ FROM dcode_threads WHERE thread_id = $1`, threadID)
 
 func (s *PostgresStore) SetTitle(ctx context.Context, threadID, title string) (*Info, error) {
 	row := s.pool.QueryRow(ctx, `
-UPDATE dcode_threads SET title = $2 WHERE thread_id = $1
+UPDATE quill_threads SET title = $2 WHERE thread_id = $1
 RETURNING thread_id, cwd, title, created_at, updated_at, message_count, model`, threadID, title)
 	info, err := scanInfo(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -96,7 +96,7 @@ func (s *PostgresStore) List(ctx context.Context, f Filter) ([]Info, error) {
 	}
 	rows, err := s.pool.Query(ctx, `
 SELECT thread_id, cwd, title, created_at, updated_at, message_count, model
-FROM dcode_threads
+FROM quill_threads
 WHERE $1 = '' OR cwd = $1
 ORDER BY updated_at DESC
 LIMIT NULLIF($2, -1)`, f.Cwd, limit)
@@ -116,7 +116,7 @@ LIMIT NULLIF($2, -1)`, f.Cwd, limit)
 }
 
 func (s *PostgresStore) Delete(ctx context.Context, threadID string) error {
-	if _, err := s.pool.Exec(ctx, `DELETE FROM dcode_threads WHERE thread_id = $1`, threadID); err != nil {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM quill_threads WHERE thread_id = $1`, threadID); err != nil {
 		return fmt.Errorf("sessions: delete %s: %w", threadID, err)
 	}
 	return nil

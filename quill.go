@@ -1,24 +1,23 @@
-// Package deepagents assembles a "deep agent": a model/tool loop preloaded
-// with filesystem, subagent, summarization and other harness middleware
-// (Python `deepagents.graph.create_deep_agent`).
-package deepagents
+// Package quill assembles a Quill agent: a model/tool loop preloaded
+// with filesystem, subagent, summarization and other harness middleware.
+package quill
 
 import (
 	"errors"
 	"fmt"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/langsmith"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/filesystem"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
-	"github.com/tsengmingchun/deepagents_golang/profiles"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
-	"github.com/tsengmingchun/deepagents_golang/tracing"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/langsmith"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/filesystem"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/permissions"
+	"github.com/tsengmingchun/quill/middleware/subagents"
+	"github.com/tsengmingchun/quill/profiles"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
+	"github.com/tsengmingchun/quill/tracing"
 )
 
 // Version is the Go port version.
@@ -116,7 +115,7 @@ func WithResponseFormat(f agent.ResponseFormat) Option {
 	return func(o *Options) { o.ResponseFormat = f }
 }
 
-// CreateDeepAgent builds a deep agent.
+// CreateAgent builds a Quill agent.
 //
 // Without WithBackend, files live in agent state (backend.StateBackend).
 //
@@ -135,7 +134,7 @@ func WithResponseFormat(f agent.ResponseFormat) Option {
 //
 // Response formats, async subagents, prompt caching
 // and unsupported-content handling are not implemented yet.
-func CreateDeepAgent(opts ...Option) (agent.Agent, error) {
+func CreateAgent(opts ...Option) (agent.Agent, error) {
 	var o Options
 	for _, opt := range opts {
 		opt(&o)
@@ -181,7 +180,7 @@ func resolveTracer(o Options) (tracing.Tracer, error) {
 	}
 	c, err := langsmith.Default()
 	if err != nil {
-		return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+		return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 	}
 	if c == nil {
 		return nil, nil
@@ -194,7 +193,7 @@ func resolveModel(o Options) (llm.ChatModel, error) {
 		return o.Model, nil
 	}
 	if o.ModelSpec == "" {
-		return nil, errors.New("deepagents.CreateDeepAgent: WithModel or WithModelSpec is required")
+		return nil, errors.New("quill.CreateAgent: WithModel or WithModelSpec is required")
 	}
 	return llm.InitChatModel(o.ModelSpec, nil)
 }

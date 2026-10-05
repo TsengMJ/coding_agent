@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/askuser"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/quill/code/askuser"
+	"github.com/tsengmingchun/quill/middleware/hitl"
 )
 
 func TestPromptApproverAnswersAskUserAndApprovesTheRest(t *testing.T) {

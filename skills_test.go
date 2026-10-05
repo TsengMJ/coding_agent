@@ -1,15 +1,15 @@
-package deepagents
+package quill
 
 import (
 	"context"
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/subagents"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 func skillFiles(t *testing.T, skills map[string]string) map[string]any {
@@ -28,7 +28,7 @@ func skillFiles(t *testing.T, skills map[string]string) map[string]any {
 
 func TestWithSkillsListsSkillsInMainPrompt(t *testing.T) {
 	model := llm.NewFakeModel(llm.NewAssistantMessage("done"))
-	a, err := CreateDeepAgent(WithModel(model), WithSkills("/skills/"))
+	a, err := CreateAgent(WithModel(model), WithSkills("/skills/"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestGeneralPurposeSubagentGetsMainSkills(t *testing.T) {
 		llm.NewAssistantMessage("sub done"),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model), WithSkills("/skills/"))
+	a, err := CreateAgent(WithModel(model), WithSkills("/skills/"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestDeclarativeSubagentUsesOwnSkills(t *testing.T) {
 		llm.NewAssistantMessage("sub done"),
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model), WithSkills("/main/"),
+	a, err := CreateAgent(WithModel(model), WithSkills("/main/"),
 		WithSubAgents(subagents.SubAgent{Name: "writer", Description: "writes", SystemPrompt: "write", Skills: []string{"/writer/"}}))
 	if err != nil {
 		t.Fatal(err)

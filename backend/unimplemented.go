@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+	"github.com/tsengmingchun/quill/internal/notimpl"
 )
 
 // unimplemented satisfies Backend, Deleter and the execute half of

@@ -7,8 +7,8 @@ import (
 
 	udiff "github.com/aymanbagabas/go-udiff"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // WrapBackend returns b with writes, edits and deletes made under a ctx

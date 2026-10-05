@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/code/commands"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/storage"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/commands"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/storage"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // funcServer runs fn for every Run; the other methods are unused here.
@@ -359,7 +359,7 @@ func TestServeStopsRunWhenClientStopsReading(t *testing.T) {
 	}
 }
 
-func TestCommandsRouteListsVisibleDCodeCommands(t *testing.T) {
+func TestCommandsRouteListsVisibleQuillCommands(t *testing.T) {
 	rec := httptest.NewRecorder()
 	NewHandler(funcServer{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/commands", nil))
 	if rec.Code != http.StatusOK {
@@ -369,7 +369,7 @@ func TestCommandsRouteListsVisibleDCodeCommands(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != len(commands.Visible(commands.DCode)) {
+	if len(got) != len(commands.Visible(commands.Quill)) {
 		t.Fatalf("got %d commands", len(got))
 	}
 	for _, c := range got {

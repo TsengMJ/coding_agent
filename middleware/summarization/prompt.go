@@ -1,8 +1,7 @@
 package summarization
 
-// DefaultSummaryPrompt is langchain `DEFAULT_SUMMARY_PROMPT`. The media
-// reference addendum of `DEEPAGENTS_DEFAULT_SUMMARY_PROMPT` is left out
-// because inline media is not offloaded yet.
+// DefaultSummaryPrompt is langchain `DEFAULT_SUMMARY_PROMPT`. It has no
+// media reference addendum because inline media is not offloaded yet.
 const DefaultSummaryPrompt = `<role>
 Context Extraction Assistant
 </role>

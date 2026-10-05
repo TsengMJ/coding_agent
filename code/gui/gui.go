@@ -1,5 +1,5 @@
-// Package gui serves the dcode web UI: the embedded single-page app plus
-// the agent API under /api, guarded so that only the browser tab dcode
+// Package gui serves the quill web UI: the embedded single-page app plus
+// the agent API under /api, guarded so that only the browser tab quill
 // opened can drive the agent.
 package gui
 
@@ -21,14 +21,14 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 //go:embed all:dist
 var dist embed.FS
 
 // TokenHeader carries the session token on every API request.
-const TokenHeader = "X-Dcode-Token"
+const TokenHeader = "X-Quill-Token"
 
 // Info is what the page needs to start: GET /api/info.
 type Info struct {
@@ -36,7 +36,7 @@ type Info struct {
 	ThreadID string `json:"thread_id"`
 	// Model names the server default model, for display.
 	Model string `json:"model"`
-	// ModelOverride is sent with every run until /model changes it (dcode -model).
+	// ModelOverride is sent with every run until /model changes it (quill -model).
 	ModelOverride string `json:"model_override,omitempty"`
 	AutoApprove   bool   `json:"auto_approve"`
 	Version       string `json:"version"`
@@ -119,7 +119,7 @@ func saveDefaultModel(w http.ResponseWriter, r *http.Request, save func(string) 
 func requireLoopbackHost(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isLoopbackHost(r.Host) {
-			http.Error(w, "dcode GUI only answers requests addressed to localhost", http.StatusForbidden)
+			http.Error(w, "quill GUI only answers requests addressed to localhost", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -149,7 +149,7 @@ func requireToken(token string, next http.Handler) http.Handler {
 		}
 		got := r.Header.Get(TokenHeader)
 		if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
-			http.Error(w, "missing or wrong session token; open the URL dcode printed", http.StatusForbidden)
+			http.Error(w, "missing or wrong session token; open the URL quill printed", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -179,7 +179,7 @@ func spa(static fs.FS) http.Handler {
 	})
 }
 
-// RemoteAPI forwards API requests to a `dcode serve` at base, streaming
+// RemoteAPI forwards API requests to a `quill serve` at base, streaming
 // run events as they arrive.
 func RemoteAPI(base string) (http.Handler, error) {
 	u, err := url.Parse(strings.TrimRight(base, "/"))

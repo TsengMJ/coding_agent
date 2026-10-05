@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
+	"github.com/tsengmingchun/quill/backend"
 )
 
 // execResult is a backend command split back into its streams.

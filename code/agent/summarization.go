@@ -5,18 +5,18 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/summarization"
 )
 
 // HistoryPathPrefix is where summarized history is offloaded, relative to
 // the project root, so it stays out of the way but readable by file tools.
-const HistoryPathPrefix = "/.deepagents/conversation_history"
+const HistoryPathPrefix = "/.quill/conversation_history"
 
 // NewBackend is the default project backend: a LocalShellBackend rooted at
 // cwd in virtual mode. Shell commands inherit the environment minus
-// credential-named variables, since dcode loads ~/.deepagents/.env into it.
+// credential-named variables, since quill loads ~/.quill/.env into it.
 func NewBackend(cwd string) backend.Backend {
 	return backend.NewLocalShellBackend(backend.LocalShellOptions{
 		FilesystemOptions: backend.FilesystemOptions{RootDir: cwd, VirtualMode: true, RespectGitignore: true},
@@ -28,7 +28,7 @@ func NewBackend(cwd string) backend.Backend {
 
 // ShellPassEnvVar lists, comma-separated, credential variables that shell
 // commands may still see (for example GITHUB_TOKEN for gh).
-const ShellPassEnvVar = "DEEPAGENTS_CODE_SHELL_PASS_ENV"
+const ShellPassEnvVar = "QUILL_SHELL_PASS_ENV"
 
 func passEnv(list string) []string {
 	var out []string

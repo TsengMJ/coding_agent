@@ -11,16 +11,16 @@ import (
 	"sync"
 	"time"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/code/cost"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tracing"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	codeagent "github.com/tsengmingchun/quill/code/agent"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/cost"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/internal/notimpl"
+	"github.com/tsengmingchun/quill/llm"
+	rt "github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tracing"
 )
 
 // ErrBudgetExceeded stops an agent that spent its -max-cost.
@@ -33,9 +33,9 @@ const captureCommand = "git add -A && git diff --cached; rc=$?; git reset -q; ex
 // captureTimeout bounds setup and patch capture commands.
 const captureTimeout = 5 * time.Minute
 
-// DcodeSolver runs the dcode agent offline against a copy of the task
+// QuillSolver runs the quill agent offline against a copy of the task
 // repository mounted into the task image.
-type DcodeSolver struct {
+type QuillSolver struct {
 	Settings *config.Settings
 	// NewModel builds a fresh model per attempt.
 	NewModel func() (llm.ChatModel, error)
@@ -59,16 +59,16 @@ type DcodeSolver struct {
 }
 
 // TracePrefix starts SolveResult.TracePath; the rest is the trace thread ID.
-const TracePrefix = "dcode_trace_records:"
+const TracePrefix = "quill_trace_records:"
 
 // traceThread names one attempt's trace.
 func traceThread(env SolveEnv, task Task) string {
 	return fmt.Sprintf("bench/%s/%s/%d", env.RunID, task.InstanceID, env.Trial)
 }
 
-func (*DcodeSolver) Name() string { return SolverDcode }
+func (*QuillSolver) Name() string { return SolverQuill }
 
-func (s *DcodeSolver) Solve(ctx context.Context, task Task, env SolveEnv) (SolveResult, error) {
+func (s *QuillSolver) Solve(ctx context.Context, task Task, env SolveEnv) (SolveResult, error) {
 	d := env.Docker
 	ws := filepath.Join(env.WorkDir, "workspace")
 	if err := os.RemoveAll(env.WorkDir); err != nil {
@@ -121,12 +121,12 @@ func (s *DcodeSolver) Solve(ctx context.Context, task Task, env SolveEnv) (Solve
 	return res, nil
 }
 
-// runAgent runs dcode until it finishes or hits a budget; the outcome is
+// runAgent runs quill until it finishes or hits a budget; the outcome is
 // described by Category and Error rather than returned as an error.
-func (s *DcodeSolver) runAgent(ctx context.Context, task Task, container, ws, repoDir, threadID, logDir string) SolveResult {
+func (s *QuillSolver) runAgent(ctx context.Context, task Task, container, ws, repoDir, threadID, logDir string) SolveResult {
 	var res SolveResult
 	if s.Traces == nil {
-		res.Category, res.Error = CategoryAgentError, "bench.DcodeSolver: Traces is required"
+		res.Category, res.Error = CategoryAgentError, "bench.QuillSolver: Traces is required"
 		return res
 	}
 	timeout := s.Timeout
@@ -229,7 +229,7 @@ func classifyAgentError(err error, runCtx context.Context, m *meteredModel) stri
 	return CategoryAgentError
 }
 
-// excludeArtifacts keeps the agent's /.deepagents files out of the patch.
+// excludeArtifacts keeps the agent's /.quill files out of the patch.
 func excludeArtifacts(ws string) error {
 	path := filepath.Join(ws, ".git", "info", "exclude")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -239,12 +239,12 @@ func excludeArtifacts(ws string) error {
 	if err != nil {
 		return err
 	}
-	_, err = f.WriteString("\n/.deepagents/\n")
+	_, err = f.WriteString("\n/.quill/\n")
 	return errors.Join(err, f.Close())
 }
 
 func containerName(kind, runID, instance string, trial int) string {
-	name := fmt.Sprintf("dbench-%s-%s-%s-t%d", kind, runID, instance, trial)
+	name := fmt.Sprintf("quillbench-%s-%s-%s-t%d", kind, runID, instance, trial)
 	name = strings.Map(func(r rune) rune {
 		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
 			return r

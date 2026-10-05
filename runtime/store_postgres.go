@@ -14,8 +14,8 @@ import (
 // The advisory lock serializes concurrent CREATE TABLE IF NOT EXISTS, which
 // otherwise races on pg_type and fails.
 const postgresStoreSchema = `
-SELECT pg_advisory_xact_lock(hashtext('deepagents_store_schema'));
-CREATE TABLE IF NOT EXISTS deepagents_store (
+SELECT pg_advisory_xact_lock(hashtext('quill_store_schema'));
+CREATE TABLE IF NOT EXISTS quill_store (
 	prefix     TEXT NOT NULL,
 	key        TEXT NOT NULL,
 	value      JSONB NOT NULL,
@@ -23,10 +23,10 @@ CREATE TABLE IF NOT EXISTS deepagents_store (
 	updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 	PRIMARY KEY (prefix, key)
 );
-CREATE INDEX IF NOT EXISTS deepagents_store_prefix ON deepagents_store (prefix text_pattern_ops);
+CREATE INDEX IF NOT EXISTS quill_store_prefix ON quill_store (prefix text_pattern_ops);
 `
 
-// PostgresStore keeps items in the deepagents_store table; they never expire.
+// PostgresStore keeps items in the quill_store table; they never expire.
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
@@ -37,7 +37,7 @@ func NewPostgresStore(ctx context.Context, pool *pgxpool.Pool) (*PostgresStore, 
 		return nil, errors.New("runtime.NewPostgresStore: nil pool")
 	}
 	if _, err := pool.Exec(ctx, postgresStoreSchema); err != nil {
-		return nil, fmt.Errorf("store: create deepagents_store: %w", err)
+		return nil, fmt.Errorf("store: create quill_store: %w", err)
 	}
 	return &PostgresStore{pool: pool}, nil
 }
@@ -46,7 +46,7 @@ func (s *PostgresStore) Get(ctx context.Context, ns Namespace, key string) (*Ite
 	if err := ValidateNamespace(ns); err != nil {
 		return nil, err
 	}
-	row := s.pool.QueryRow(ctx, `SELECT prefix, key, value, created_at, updated_at FROM deepagents_store WHERE prefix = $1 AND key = $2`,
+	row := s.pool.QueryRow(ctx, `SELECT prefix, key, value, created_at, updated_at FROM quill_store WHERE prefix = $1 AND key = $2`,
 		joinNamespace(ns), key)
 	it, err := scanStoreItem(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -67,7 +67,7 @@ func (s *PostgresStore) Put(ctx context.Context, ns Namespace, key string, value
 		return fmt.Errorf("store: encode value: %w", err)
 	}
 	_, err = s.pool.Exec(ctx, `
-INSERT INTO deepagents_store (prefix, key, value) VALUES ($1, $2, $3)
+INSERT INTO quill_store (prefix, key, value) VALUES ($1, $2, $3)
 ON CONFLICT (prefix, key) DO UPDATE SET value = EXCLUDED.value, updated_at = clock_timestamp()`,
 		joinNamespace(ns), key, raw)
 	if err != nil {
@@ -80,7 +80,7 @@ func (s *PostgresStore) Delete(ctx context.Context, ns Namespace, key string) er
 	if err := ValidateNamespace(ns); err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(ctx, `DELETE FROM deepagents_store WHERE prefix = $1 AND key = $2`, joinNamespace(ns), key); err != nil {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM quill_store WHERE prefix = $1 AND key = $2`, joinNamespace(ns), key); err != nil {
 		return fmt.Errorf("store: delete %s/%s: %w", joinNamespace(ns), key, err)
 	}
 	return nil
@@ -92,7 +92,7 @@ func (s *PostgresStore) Search(ctx context.Context, prefix Namespace, opts Searc
 	}
 	p := joinNamespace(prefix)
 	rows, err := s.pool.Query(ctx, `
-SELECT prefix, key, value, created_at, updated_at FROM deepagents_store
+SELECT prefix, key, value, created_at, updated_at FROM quill_store
 WHERE $1 = '' OR prefix = $1 OR prefix LIKE $2 ESCAPE '\'`, p, escapeLike(p)+namespaceSep+"%")
 	if err != nil {
 		return nil, fmt.Errorf("store: search %s: %w", p, err)

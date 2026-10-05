@@ -13,20 +13,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/code/cost"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/storage"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
-	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
-	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tracing"
+	"github.com/tsengmingchun/quill/agent"
+	codeagent "github.com/tsengmingchun/quill/code/agent"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/cost"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/storage"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/planmode"
+	"github.com/tsengmingchun/quill/middleware/summarization"
+	"github.com/tsengmingchun/quill/middleware/todolist"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tracing"
 )
 
 // AutoApproveKey is the RunConfig.Configurable key that disables review.
@@ -36,7 +36,7 @@ const AutoApproveKey = hitl.AutoApproveKey
 type Config struct {
 	Settings *config.Settings
 	Paths    config.Paths
-	// ModelSpec ("provider:model") takes precedence over DCODE_MODEL and
+	// ModelSpec ("provider:model") takes precedence over QUILL_MODEL and
 	// Settings.Model.
 	ModelSpec string
 	// Model overrides ModelSpec with a constructed model.
@@ -55,7 +55,7 @@ type Config struct {
 // ResumeTraceTag marks the run of a turn that resumes after an approval, so
 // LangSmith views can fold a turn's rounds back together (Python
 // `RESUME_TRACE_TAG`; an external contract, do not rename).
-const ResumeTraceTag = "dcode:resume"
+const ResumeTraceTag = "quill:resume"
 
 // Service runs the coding agent for many threads and working directories.
 type Service struct {

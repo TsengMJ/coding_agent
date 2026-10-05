@@ -1,30 +1,30 @@
-package deepagents
+package quill
 
 import (
 	"fmt"
 	"slices"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/asyncsubagents"
-	"github.com/tsengmingchun/deepagents_golang/middleware/filesystem"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/memory"
-	"github.com/tsengmingchun/deepagents_golang/middleware/patchtoolcalls"
-	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
-	"github.com/tsengmingchun/deepagents_golang/middleware/skills"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
-	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
-	"github.com/tsengmingchun/deepagents_golang/middleware/toolexclusion"
-	"github.com/tsengmingchun/deepagents_golang/profiles"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/internal/notimpl"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/asyncsubagents"
+	"github.com/tsengmingchun/quill/middleware/filesystem"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/memory"
+	"github.com/tsengmingchun/quill/middleware/patchtoolcalls"
+	"github.com/tsengmingchun/quill/middleware/permissions"
+	"github.com/tsengmingchun/quill/middleware/skills"
+	"github.com/tsengmingchun/quill/middleware/subagents"
+	"github.com/tsengmingchun/quill/middleware/summarization"
+	"github.com/tsengmingchun/quill/middleware/toolexclusion"
+	"github.com/tsengmingchun/quill/profiles"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
 )
 
-// assembly carries what every stack of one CreateDeepAgent call shares.
+// assembly carries what every stack of one CreateAgent call shares.
 type assembly struct {
 	o       Options
 	model   llm.ChatModel
@@ -42,7 +42,7 @@ func newAssembly(o Options, model llm.ChatModel) (*assembly, error) {
 	}
 	profile, err := profiles.HarnessProfileFor(model, spec)
 	if err != nil {
-		return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+		return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 	}
 	if err := validateExcluded(profile); err != nil {
 		return nil, err
@@ -62,9 +62,9 @@ func validateExcluded(p profiles.HarnessProfile) error {
 	for _, name := range p.ExcludedMiddleware {
 		switch {
 		case slices.Contains(RequiredMiddleware, name):
-			return fmt.Errorf("deepagents.CreateDeepAgent: harness profile cannot exclude %q; core features depend on it", name)
+			return fmt.Errorf("quill.CreateAgent: harness profile cannot exclude %q; core features depend on it", name)
 		case strings.HasPrefix(name, "_"):
-			return fmt.Errorf("deepagents.CreateDeepAgent: harness profile cannot exclude private middleware %q", name)
+			return fmt.Errorf("quill.CreateAgent: harness profile cannot exclude private middleware %q", name)
 		}
 	}
 	return nil
@@ -107,14 +107,14 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 			Background:      o.BackgroundTasks,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+			return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 		}
 		stack = append(stack, sub)
 	}
 	if o.Backend != nil {
 		summ, err := summarization.NewForModel(a.model, o.Backend)
 		if err != nil {
-			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+			return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 		}
 		stack = append(stack, summ)
 	}
@@ -122,7 +122,7 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 	if len(async) > 0 {
 		am, err := asyncsubagents.New(async, asyncsubagents.Options{})
 		if err != nil {
-			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+			return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 		}
 		stack = append(stack, am)
 	}
@@ -131,17 +131,17 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 	stack = append(stack, a.profile.Materialize()...)
 	if len(o.Memory) > 0 {
 		if o.Backend == nil {
-			return nil, fmt.Errorf("deepagents.CreateDeepAgent: WithMemory requires WithBackend")
+			return nil, fmt.Errorf("quill.CreateAgent: WithMemory requires WithBackend")
 		}
 		mem, err := memory.New(memory.Options{Backend: o.Backend, Sources: o.Memory})
 		if err != nil {
-			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+			return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 		}
 		stack = append(stack, mem)
 	}
 	generated, err := permissions.BuildInterruptOn(o.Permissions)
 	if err != nil {
-		return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+		return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 	}
 	if interruptOn := hitl.Merge(generated, o.InterruptOn); len(interruptOn) > 0 {
 		stack = append(stack, hitl.New(interruptOn))
@@ -167,7 +167,7 @@ func (a *assembly) buildMiddleware() ([]agent.Middleware, error) {
 func (a *assembly) skills(sources []string) (*skills.Middleware, error) {
 	sk, err := skills.New(skills.Options{Backend: a.o.Backend, Sources: skills.SourcesFromPaths(sources)})
 	if err != nil {
-		return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+		return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 	}
 	return sk, nil
 }
@@ -179,7 +179,7 @@ func (a *assembly) filesystem(b backend.Backend) (*filesystem.Middleware, error)
 		Permissions:            a.o.Permissions,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+		return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 	}
 	return fs, nil
 }
@@ -206,7 +206,7 @@ func (a *assembly) subagentSpecs() ([]subagents.Spec, []asyncsubagents.AsyncSubA
 			async = append(async, s)
 			continue
 		default:
-			return nil, nil, notimpl.Err(fmt.Sprintf("deepagents.CreateDeepAgent(WithSubAgents: %T %q)", spec, spec.SubAgentName()))
+			return nil, nil, notimpl.Err(fmt.Sprintf("quill.CreateAgent(WithSubAgents: %T %q)", spec, spec.SubAgentName()))
 		}
 		hasGP = hasGP || spec.SubAgentName() == subagents.GeneralPurposeName
 	}
@@ -298,7 +298,7 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 	if model == nil && s.ModelSpec != "" {
 		m, err := llm.InitChatModel(s.ModelSpec, nil)
 		if err != nil {
-			return s, fmt.Errorf("deepagents.CreateDeepAgent: subagent %q: %w", s.Name, err)
+			return s, fmt.Errorf("quill.CreateAgent: subagent %q: %w", s.Name, err)
 		}
 		model, spec = m, s.ModelSpec
 	}
@@ -307,7 +307,7 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 	}
 	profile, err := profiles.HarnessProfileFor(model, spec)
 	if err != nil {
-		return s, fmt.Errorf("deepagents.CreateDeepAgent: subagent %q: %w", s.Name, err)
+		return s, fmt.Errorf("quill.CreateAgent: subagent %q: %w", s.Name, err)
 	}
 	if err := validateExcluded(profile); err != nil {
 		return s, err
@@ -323,7 +323,7 @@ func (a *assembly) resolveSubAgent(s subagents.SubAgent) (subagents.SubAgent, er
 		if len(a.o.Memory) > 0 && a.o.Backend != nil {
 			mem, err := memory.New(memory.Options{Backend: a.o.Backend, Sources: a.o.Memory})
 			if err != nil {
-				return s, fmt.Errorf("deepagents.CreateDeepAgent: subagent %q: %w", s.Name, err)
+				return s, fmt.Errorf("quill.CreateAgent: subagent %q: %w", s.Name, err)
 			}
 			mw = append(mw, mem)
 		}
@@ -399,11 +399,11 @@ func (a *assembly) subagentBase(model llm.ChatModel, profile profiles.HarnessPro
 			Permissions:            permissions.InterruptAsDeny(perms),
 		})
 		if err != nil {
-			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+			return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 		}
 		summ, err := summarization.NewForModel(model, b)
 		if err != nil {
-			return nil, fmt.Errorf("deepagents.CreateDeepAgent: %w", err)
+			return nil, fmt.Errorf("quill.CreateAgent: %w", err)
 		}
 		mw = append(mw, fs, summ)
 	}
@@ -442,7 +442,7 @@ func (a *assembly) exclude(stack []agent.Middleware, coreLen int) ([]agent.Middl
 func (a *assembly) verifyExcludedCoverage() error {
 	for _, name := range a.profile.ExcludedMiddleware {
 		if !a.matched[name] {
-			return fmt.Errorf("deepagents.CreateDeepAgent: harness profile excludes middleware %q, which is not in any stack", name)
+			return fmt.Errorf("quill.CreateAgent: harness profile excludes middleware %q, which is not in any stack", name)
 		}
 	}
 	return nil
@@ -458,7 +458,7 @@ func mergeMiddleware(stack, extra []agent.Middleware, coreLen int) ([]agent.Midd
 	for _, m := range extra {
 		name := m.Name()
 		if seen[name] {
-			return nil, fmt.Errorf("deepagents.CreateDeepAgent: duplicate middleware %q", name)
+			return nil, fmt.Errorf("quill.CreateAgent: duplicate middleware %q", name)
 		}
 		seen[name] = true
 		if i := slices.IndexFunc(out, func(b agent.Middleware) bool { return b.Name() == name }); i >= 0 {

@@ -1,4 +1,4 @@
-package deepagents
+package quill
 
 import (
 	"context"
@@ -9,24 +9,24 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/asyncsubagents"
-	"github.com/tsengmingchun/deepagents_golang/middleware/filesystem"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/memory"
-	"github.com/tsengmingchun/deepagents_golang/middleware/patchtoolcalls"
-	"github.com/tsengmingchun/deepagents_golang/middleware/promptcaching"
-	"github.com/tsengmingchun/deepagents_golang/middleware/rubric"
-	"github.com/tsengmingchun/deepagents_golang/middleware/skills"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
-	"github.com/tsengmingchun/deepagents_golang/middleware/summarization"
-	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
-	"github.com/tsengmingchun/deepagents_golang/middleware/toolexclusion"
-	"github.com/tsengmingchun/deepagents_golang/middleware/unsupportedcontent"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/asyncsubagents"
+	"github.com/tsengmingchun/quill/middleware/filesystem"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/memory"
+	"github.com/tsengmingchun/quill/middleware/patchtoolcalls"
+	"github.com/tsengmingchun/quill/middleware/promptcaching"
+	"github.com/tsengmingchun/quill/middleware/rubric"
+	"github.com/tsengmingchun/quill/middleware/skills"
+	"github.com/tsengmingchun/quill/middleware/subagents"
+	"github.com/tsengmingchun/quill/middleware/summarization"
+	"github.com/tsengmingchun/quill/middleware/todolist"
+	"github.com/tsengmingchun/quill/middleware/toolexclusion"
+	"github.com/tsengmingchun/quill/middleware/unsupportedcontent"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // Hook conformance: each middleware exposes the hooks its Python counterpart overrides.
@@ -67,7 +67,7 @@ var (
 	_ subagents.Spec = asyncsubagents.AsyncSubAgent{}
 )
 
-func TestCreateDeepAgentRunsToolRoundTrip(t *testing.T) {
+func TestCreateAgentRunsToolRoundTrip(t *testing.T) {
 	model := llm.NewFakeModel(
 		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "add"}}},
 		llm.NewAssistantMessage("the answer is 3"),
@@ -78,7 +78,7 @@ func TestCreateDeepAgentRunsToolRoundTrip(t *testing.T) {
 			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("3")}}, nil
 		},
 	}
-	a, err := CreateDeepAgent(WithModel(model), WithTools(add), WithSystemPrompt("you add numbers"))
+	a, err := CreateAgent(WithModel(model), WithTools(add), WithSystemPrompt("you add numbers"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestCancelledToolCallIsPatchedOnNextTurn(t *testing.T) {
 			return nil, ctx.Err()
 		},
 	}
-	a, err := CreateDeepAgent(WithModel(model), WithTools(slow), WithCheckpointer(runtime.NewMemoryCheckpointer()))
+	a, err := CreateAgent(WithModel(model), WithTools(slow), WithCheckpointer(runtime.NewMemoryCheckpointer()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestWithResponseFormatReturnsStructuredResponse(t *testing.T) {
 	args := map[string]any{"answer": "3"}
 	model := llm.NewFakeModel(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "s", Name: "Answer", Args: args}}})
 	schema := tool.Schema{"title": "Answer", "type": "object", "properties": map[string]any{"answer": map[string]any{"type": "string"}}}
-	a, err := CreateDeepAgent(WithModel(model), WithResponseFormat(agent.ToolStrategy{Schema: schema}))
+	a, err := CreateAgent(WithModel(model), WithResponseFormat(agent.ToolStrategy{Schema: schema}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestForkSubagentInheritsParentPrompt(t *testing.T) {
 			Args: map[string]any{"subagent_type": "f", "description": "go on"}}}},
 		llm.NewAssistantMessage("done"),
 	)
-	a, err := CreateDeepAgent(WithModel(model), WithSystemPrompt("parent rules"),
+	a, err := CreateAgent(WithModel(model), WithSystemPrompt("parent rules"),
 		WithSubAgents(subagents.SubAgent{Name: "f", Description: "Fork", Mode: subagents.ModeFork, SystemPrompt: "fork extra", Model: sub}))
 	if err != nil {
 		t.Fatal(err)
@@ -175,9 +175,9 @@ func TestForkSubagentInheritsParentPrompt(t *testing.T) {
 	}
 }
 
-func TestCreateDeepAgentOffersAsyncSubAgentTools(t *testing.T) {
+func TestCreateAgentOffersAsyncSubAgentTools(t *testing.T) {
 	model := llm.NewFakeModel(llm.NewAssistantMessage("ok"))
-	a, err := CreateDeepAgent(WithModel(model), WithSubAgents(asyncsubagents.AsyncSubAgent{
+	a, err := CreateAgent(WithModel(model), WithSubAgents(asyncsubagents.AsyncSubAgent{
 		Name: "remote", Description: "Remote", GraphID: "g", URL: "http://127.0.0.1:1"}))
 	if err != nil {
 		t.Fatal(err)
@@ -194,15 +194,15 @@ func TestCreateDeepAgentOffersAsyncSubAgentTools(t *testing.T) {
 			t.Fatalf("tools = %v, missing %s", names, want)
 		}
 	}
-	if _, err := CreateDeepAgent(WithModel(llm.NewFakeModel()), WithSubAgents(asyncsubagents.AsyncSubAgent{Name: "remote", GraphID: "g"})); err == nil {
+	if _, err := CreateAgent(WithModel(llm.NewFakeModel()), WithSubAgents(asyncsubagents.AsyncSubAgent{Name: "remote", GraphID: "g"})); err == nil {
 		t.Fatal("an async subagent without a url must be rejected")
 	}
 }
 
-func TestCreateDeepAgentWithBackendExposesFilesystemTools(t *testing.T) {
+func TestCreateAgentWithBackendExposesFilesystemTools(t *testing.T) {
 	model := llm.NewFakeModel(llm.NewAssistantMessage("ok"))
 	b := backend.NewFilesystemBackend(backend.FilesystemOptions{RootDir: t.TempDir(), VirtualMode: true})
-	a, err := CreateDeepAgent(WithModel(model), WithBackend(b))
+	a, err := CreateAgent(WithModel(model), WithBackend(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestCreateDeepAgentWithBackendExposesFilesystemTools(t *testing.T) {
 
 func TestWithBackgroundTasksAddsTaskOutput(t *testing.T) {
 	model := llm.NewFakeModel(llm.NewAssistantMessage("ok"))
-	a, err := CreateDeepAgent(WithModel(model), WithBackgroundTasks())
+	a, err := CreateAgent(WithModel(model), WithBackgroundTasks())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,14 +256,14 @@ func TestFilesystemExposesDefaultToolsWithShellBackend(t *testing.T) {
 	}
 }
 
-func TestCreateDeepAgentWithMemoryInjectsAgentsMD(t *testing.T) {
+func TestCreateAgentWithMemoryInjectsAgentsMD(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("always run tests"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	model := llm.NewFakeModel(llm.NewAssistantMessage("ok"))
 	b := backend.NewFilesystemBackend(backend.FilesystemOptions{RootDir: dir, VirtualMode: true})
-	a, err := CreateDeepAgent(WithModel(model), WithBackend(b), WithMemory("/AGENTS.md"))
+	a, err := CreateAgent(WithModel(model), WithBackend(b), WithMemory("/AGENTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

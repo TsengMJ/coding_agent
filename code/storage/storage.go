@@ -1,4 +1,4 @@
-// Package storage opens everything dcode persists. Content that must survive
+// Package storage opens everything quill persists. Content that must survive
 // a restart (threads, sessions, plans, traces, conversation history) goes to
 // Postgres; content that can be recomputed (evicted tool results, fetched
 // pages, search and docs caches) goes to Redis with a TTL.
@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/tsengmingchun/deepagents_golang/code/cache"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/code/cache"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/middleware/planmode"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 // Kinds reported by Storage.Kind.
@@ -25,14 +25,14 @@ const (
 	KindMemory   = "memory"
 )
 
-// PostgresConnFromEnv returns $DCODE_POSTGRES_CONN_STRING, else
+// PostgresConnFromEnv returns $QUILL_POSTGRES_CONN_STRING, else
 // $POSTGRES_CONN_STRING.
 func PostgresConnFromEnv() string {
-	return firstEnv("DCODE_POSTGRES_CONN_STRING", "POSTGRES_CONN_STRING")
+	return firstEnv("QUILL_POSTGRES_CONN_STRING", "POSTGRES_CONN_STRING")
 }
 
-// RedisURLFromEnv returns $DCODE_REDIS_URL, else $REDIS_URL.
-func RedisURLFromEnv() string { return firstEnv("DCODE_REDIS_URL", "REDIS_URL") }
+// RedisURLFromEnv returns $QUILL_REDIS_URL, else $REDIS_URL.
+func RedisURLFromEnv() string { return firstEnv("QUILL_REDIS_URL", "REDIS_URL") }
 
 func firstEnv(names ...string) string {
 	for _, n := range names {
@@ -43,8 +43,8 @@ func firstEnv(names ...string) string {
 	return ""
 }
 
-// redisPrefix starts every Redis key dcode writes.
-const redisPrefix = "dcode"
+// redisPrefix starts every Redis key quill writes.
+const redisPrefix = "quill"
 
 // Storage holds the stores of one process.
 type Storage struct {
@@ -78,10 +78,10 @@ func (s *Storage) Close() {
 // required: an empty or unreachable one is an error.
 func Open(ctx context.Context, postgresConn, redisURL string) (*Storage, error) {
 	if postgresConn == "" {
-		return nil, errors.New("storage: Postgres is not configured; set DCODE_POSTGRES_CONN_STRING (or POSTGRES_CONN_STRING)")
+		return nil, errors.New("storage: Postgres is not configured; set QUILL_POSTGRES_CONN_STRING (or POSTGRES_CONN_STRING)")
 	}
 	if redisURL == "" {
-		return nil, errors.New("storage: Redis is not configured; set DCODE_REDIS_URL (or REDIS_URL), e.g. redis://localhost:6379/0")
+		return nil, errors.New("storage: Redis is not configured; set QUILL_REDIS_URL (or REDIS_URL), e.g. redis://localhost:6379/0")
 	}
 	ropts, err := redis.ParseURL(redisURL)
 	if err != nil {

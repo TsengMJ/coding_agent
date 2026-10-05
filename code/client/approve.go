@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/code/askuser"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/quill/code/askuser"
+	"github.com/tsengmingchun/quill/middleware/hitl"
 )
 
 // previewMaxLines caps how many lines of file content or diff a preview shows.

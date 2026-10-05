@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+	"github.com/tsengmingchun/quill/internal/notimpl"
 )
 
 // Output limits for sandbox shell-based file operations.

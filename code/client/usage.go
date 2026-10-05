@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/code/server"
+	"github.com/tsengmingchun/quill/code/server"
 )
 
 // FormatTokens is the /tokens line: context used of the window and model.
@@ -48,7 +48,7 @@ func FormatCost(u *server.ThreadUsage) string {
 	}
 	total := "total " + formatUSD(u.TotalCostUSD)
 	if len(u.Unpriced) > 0 {
-		total += " (excluding unpriced models; add them to ~/.deepagents/" + server.PricesFile + ")"
+		total += " (excluding unpriced models; add them to ~/.quill/" + server.PricesFile + ")"
 	}
 	return strings.Join(append(lines, total), "\n")
 }

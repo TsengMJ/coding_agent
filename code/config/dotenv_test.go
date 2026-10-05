@@ -60,7 +60,7 @@ func writeFile(t *testing.T, path, content string) {
 
 func TestResolveDotEnvPrecedence(t *testing.T) {
 	root := t.TempDir()
-	global := filepath.Join(root, "home", ".deepagents", ".env")
+	global := filepath.Join(root, "home", ".quill", ".env")
 	writeFile(t, global, "A=global\nB=global\nC=global\n")
 	writeFile(t, filepath.Join(root, "repo", ".env"), "B=project\nC=project\n")
 	cwd := filepath.Join(root, "repo", "sub")

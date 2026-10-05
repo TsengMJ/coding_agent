@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"slices"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/code/tools"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/subagents"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/code/tools"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/subagents"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // WebResearcherName is the subagent that does multi-step web research.

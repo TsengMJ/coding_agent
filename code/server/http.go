@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/code/commands"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
+	"github.com/tsengmingchun/quill/code/commands"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/trace"
 )
 
-// DefaultAddr is where `dcode serve` listens by default.
+// DefaultAddr is where `quill serve` listens by default.
 const DefaultAddr = "127.0.0.1:8123"
 
 // maxRequestBytes caps a POST /runs body.
@@ -45,7 +45,7 @@ var (
 //	GET  /threads/{id}/trace/llm/{seq} -> trace.LLMCallDetail (404 when unknown)
 //	POST /threads/{id}/compact -> CompactResult (404 unknown, 409 busy/pending/too short)
 //	GET  /threads/{id}/usage -> ThreadUsage (404 when unknown)
-//	GET  /commands        -> []commands.Command (dcode slash commands, hidden ones omitted)
+//	GET  /commands        -> []commands.Command (quill slash commands, hidden ones omitted)
 func NewHandler(srv Server) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -56,7 +56,7 @@ func NewHandler(srv Server) http.Handler {
 		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("GET /commands", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, commands.Visible(commands.DCode))
+		writeJSON(w, http.StatusOK, commands.Visible(commands.Quill))
 	})
 	runs := newLiveRuns()
 	mux.HandleFunc("POST /runs", func(w http.ResponseWriter, r *http.Request) {
@@ -311,7 +311,7 @@ func writeJSONMeasured(w http.ResponseWriter, status int, v any) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Dcode-Response-Bytes", strconv.Itoa(len(b)))
+	w.Header().Set("X-Quill-Response-Bytes", strconv.Itoa(len(b)))
 	w.WriteHeader(status)
 	_, _ = w.Write(append(b, '\n'))
 }

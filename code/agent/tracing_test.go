@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/langsmith"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/langsmith"
 )
 
 func clearLangSmithEnv(t *testing.T) {

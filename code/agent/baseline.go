@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/code/codetools"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/code/codetools"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // baselineRef keeps the stashed changes reachable while the baseline runs,
 // so they survive even if restoring them fails.
-const baselineRef = "refs/dcode/baseline"
+const baselineRef = "refs/quill/baseline"
 
 // gitTimeout bounds each git command of the baseline.
 const gitTimeout = 2 * time.Minute
@@ -63,7 +63,7 @@ type verdict struct {
 // Baseline reruns a failing check on the unchanged HEAD: it stashes the
 // working tree (untracked files included), runs the check, then restores
 // the changes. It only suits a workspace no one else edits during the run,
-// so dcode uses it for headless runs.
+// so quill uses it for headless runs.
 type Baseline struct {
 	Workspace backend.SandboxBackend
 	// RunTests reruns run_tests checks; execute checks rerun as commands.
@@ -129,7 +129,7 @@ func (b *Baseline) confirm(ctx context.Context, call llm.ToolCall, tests []strin
 // atHead runs the check with the working tree stashed and restores it.
 func (b *Baseline) atHead(ctx context.Context, call llm.ToolCall) (res *checkResult, err error) {
 	before, _ := b.git(ctx, "rev-parse -q --verify refs/stash")
-	if _, err := b.git(ctx, "stash push --include-untracked -q -m dcode-baseline"); err != nil {
+	if _, err := b.git(ctx, "stash push --include-untracked -q -m quill-baseline"); err != nil {
 		return nil, fmt.Errorf("could not stash the changes: %w", err)
 	}
 	sha, _ := b.git(ctx, "rev-parse -q --verify refs/stash")

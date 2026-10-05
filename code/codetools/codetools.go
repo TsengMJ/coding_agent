@@ -1,8 +1,7 @@
-// Package codetools holds dcode-only coding tools that turn noisy command
+// Package codetools holds quill-only coding tools that turn noisy command
 // output into structured JSON for the model: git_status, git_diff,
-// apply_patch, run_tests and diagnostics. Python deepagents has no
-// equivalent. Commands run through the backend's Execute, so the tools work
-// wherever `execute` does (host shell or the dbench container).
+// apply_patch, run_tests and diagnostics. Commands run through the backend's Execute, so the tools work
+// wherever `execute` does (host shell or the quillbench container).
 package codetools
 
 import (
@@ -10,9 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // Tool names.

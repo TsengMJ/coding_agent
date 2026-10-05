@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 // NamespaceFactory derives the store namespace for a run (e.g. per user).

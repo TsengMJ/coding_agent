@@ -50,7 +50,7 @@ func (m *MemoryLog) Lines(threadID string) [][]byte {
 	return append([][]byte(nil), m.lines[threadID]...)
 }
 
-// FileLog reads a trace.jsonl written by earlier dcode versions, which kept
+// FileLog reads a trace.jsonl written by earlier quill versions, which kept
 // one file per thread. It is read-only and ignores the thread ID.
 type FileLog struct{ Path string }
 
@@ -81,24 +81,24 @@ func (f FileLog) Each(_ context.Context, _ string, fn func([]byte) bool) error {
 // which JSONB rejects. The advisory lock serializes concurrent CREATE TABLE IF
 // NOT EXISTS, which otherwise races on pg_type and fails.
 const postgresLogSchema = `
-SELECT pg_advisory_xact_lock(hashtext('dcode_trace_schema'));
-CREATE TABLE IF NOT EXISTS dcode_trace_blobs (
+SELECT pg_advisory_xact_lock(hashtext('quill_trace_schema'));
+CREATE TABLE IF NOT EXISTS quill_trace_blobs (
 	hash TEXT PRIMARY KEY,
 	line BYTEA NOT NULL
 );
-CREATE TABLE IF NOT EXISTS dcode_trace_records (
+CREATE TABLE IF NOT EXISTS quill_trace_records (
 	id         BIGSERIAL PRIMARY KEY,
 	thread_id  TEXT NOT NULL,
 	type       TEXT NOT NULL,
-	blob_hash  TEXT REFERENCES dcode_trace_blobs (hash),
+	blob_hash  TEXT REFERENCES quill_trace_blobs (hash),
 	data       BYTEA,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS dcode_trace_records_thread ON dcode_trace_records (thread_id, id);
+CREATE INDEX IF NOT EXISTS quill_trace_records_thread ON quill_trace_records (thread_id, id);
 `
 
-// PostgresLog keeps traces in dcode_trace_records. A blob line goes to
-// dcode_trace_blobs once per hash, shared by every thread, and the thread
+// PostgresLog keeps traces in quill_trace_records. A blob line goes to
+// quill_trace_blobs once per hash, shared by every thread, and the thread
 // keeps a row pointing at it.
 type PostgresLog struct {
 	pool *pgxpool.Pool
@@ -131,17 +131,17 @@ func (p *PostgresLog) Append(ctx context.Context, threadID string, lines [][]byt
 				return fmt.Errorf("decode record: %w", err)
 			}
 			if head.Blob != nil && head.Blob.Hash != "" {
-				if _, err := tx.Exec(ctx, `INSERT INTO dcode_trace_blobs (hash, line) VALUES ($1, $2) ON CONFLICT (hash) DO NOTHING`,
+				if _, err := tx.Exec(ctx, `INSERT INTO quill_trace_blobs (hash, line) VALUES ($1, $2) ON CONFLICT (hash) DO NOTHING`,
 					head.Blob.Hash, l); err != nil {
 					return err
 				}
-				if _, err := tx.Exec(ctx, `INSERT INTO dcode_trace_records (thread_id, type, blob_hash) VALUES ($1, $2, $3)`,
+				if _, err := tx.Exec(ctx, `INSERT INTO quill_trace_records (thread_id, type, blob_hash) VALUES ($1, $2, $3)`,
 					threadID, head.Type, head.Blob.Hash); err != nil {
 					return err
 				}
 				continue
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO dcode_trace_records (thread_id, type, data) VALUES ($1, $2, $3)`,
+			if _, err := tx.Exec(ctx, `INSERT INTO quill_trace_records (thread_id, type, data) VALUES ($1, $2, $3)`,
 				threadID, head.Type, l); err != nil {
 				return err
 			}
@@ -152,8 +152,8 @@ func (p *PostgresLog) Append(ctx context.Context, threadID string, lines [][]byt
 
 func (p *PostgresLog) Each(ctx context.Context, threadID string, fn func([]byte) bool) error {
 	rows, err := p.pool.Query(ctx, `
-SELECT COALESCE(b.line, r.data) FROM dcode_trace_records r
-LEFT JOIN dcode_trace_blobs b ON b.hash = r.blob_hash
+SELECT COALESCE(b.line, r.data) FROM quill_trace_records r
+LEFT JOIN quill_trace_blobs b ON b.hash = r.blob_hash
 WHERE r.thread_id = $1 ORDER BY r.id`, threadID)
 	if err != nil {
 		return err
@@ -176,7 +176,7 @@ WHERE r.thread_id = $1 ORDER BY r.id`, threadID)
 // tool schemas or tool-output blobs.
 func (p *PostgresLog) EachType(ctx context.Context, threadID string, types []string, fn func([]byte) bool) error {
 	rows, err := p.pool.Query(ctx, `
-SELECT data FROM dcode_trace_records
+SELECT data FROM quill_trace_records
 WHERE thread_id = $1 AND type = ANY($2)
 ORDER BY id`, threadID, types)
 	if err != nil {
@@ -200,7 +200,7 @@ func (p *PostgresLog) Blobs(ctx context.Context, hashes []string) (map[string]js
 	if len(hashes) == 0 {
 		return out, nil
 	}
-	rows, err := p.pool.Query(ctx, `SELECT hash, line FROM dcode_trace_blobs WHERE hash = ANY($1)`, hashes)
+	rows, err := p.pool.Query(ctx, `SELECT hash, line FROM quill_trace_blobs WHERE hash = ANY($1)`, hashes)
 	if err != nil {
 		return nil, err
 	}
@@ -224,6 +224,6 @@ func (p *PostgresLog) Blobs(ctx context.Context, hashes []string) (map[string]js
 
 // DeleteThread removes threadID's records; shared blobs stay.
 func (p *PostgresLog) DeleteThread(ctx context.Context, threadID string) error {
-	_, err := p.pool.Exec(ctx, `DELETE FROM dcode_trace_records WHERE thread_id = $1`, threadID)
+	_, err := p.pool.Exec(ctx, `DELETE FROM quill_trace_records WHERE thread_id = $1`, threadID)
 	return err
 }

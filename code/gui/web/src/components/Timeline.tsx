@@ -63,7 +63,7 @@ export const Timeline = forwardRef<VirtuosoHandle, {
       return (
         <div className="timeline empty-state">
           <h2>Start a conversation</h2>
-          <div>Ask dcode to read, search, edit or run things in this directory.</div>
+          <div>Ask quill to read, search, edit or run things in this directory.</div>
           <div className="hint">Every step can be clicked to see the exact command, output and model input.</div>
         </div>
       );

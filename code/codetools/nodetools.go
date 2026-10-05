@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 const nodeReportHint = " (are the dependencies installed? try npm ci or npm install, or run the tests with execute)"

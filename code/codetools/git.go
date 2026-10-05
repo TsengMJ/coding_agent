@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 const (
@@ -15,7 +15,7 @@ const (
 	// gitEnv keeps read-only git commands from taking the index lock.
 	gitEnv = "export GIT_OPTIONAL_LOCKS=0 LC_ALL=C; "
 	// gitSplit separates the outputs of two git commands in one Execute call.
-	gitSplit = "__DCODE_GIT_SPLIT__"
+	gitSplit = "__QUILL_GIT_SPLIT__"
 
 	maxFileDiffBytes  = 16_000
 	maxTotalDiffBytes = 64_000

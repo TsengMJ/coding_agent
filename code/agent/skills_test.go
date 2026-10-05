@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/llm"
+	rt "github.com/tsengmingchun/quill/runtime"
 )
 
 func writeSkill(t *testing.T, dir, name, desc string) string {
@@ -28,11 +28,11 @@ func writeSkill(t *testing.T, dir, name, desc string) string {
 }
 
 func TestSkillSourcesOrder(t *testing.T) {
-	got := SkillSources("/home/u/.deepagents", "")
+	got := SkillSources("/home/u/.quill", "")
 	want := []string{
-		"/home/u/.deepagents/agent/skills",
+		"/home/u/.quill/agent/skills",
 		"/home/u/.agents/skills",
-		"/.deepagents/skills",
+		"/.quill/skills",
 		"/.agents/skills",
 	}
 	if len(got) != len(want) {
@@ -93,7 +93,7 @@ func TestHostRoutesSetArtifactsRootAndSkipMissingDirs(t *testing.T) {
 
 func TestCLIAgentListsAndReadsUserAndProjectSkills(t *testing.T) {
 	home := t.TempDir()
-	userDir := filepath.Join(home, ".deepagents")
+	userDir := filepath.Join(home, ".quill")
 	userSkill := writeSkill(t, filepath.Join(userDir, DefaultAgentName, "skills"), "user-skill", "From the user")
 	cwd := t.TempDir()
 	writeSkill(t, filepath.Join(cwd, ".agents", "skills"), "project-skill", "From the project")
@@ -115,7 +115,7 @@ func TestCLIAgentListsAndReadsUserAndProjectSkills(t *testing.T) {
 			t.Errorf("system prompt missing %q", want)
 		}
 	}
-	if strings.Contains(sys, "skill_load_warnings") || strings.Contains(sys, "/.deepagents/skills") {
+	if strings.Contains(sys, "skill_load_warnings") || strings.Contains(sys, "/.quill/skills") {
 		t.Error("missing skill directories must be skipped, not warned about")
 	}
 	msgs := model.Requests()[1].Messages

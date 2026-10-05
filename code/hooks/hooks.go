@@ -5,7 +5,7 @@ package hooks
 import (
 	"context"
 
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+	"github.com/tsengmingchun/quill/internal/notimpl"
 )
 
 // Event is a lifecycle point hooks can attach to.

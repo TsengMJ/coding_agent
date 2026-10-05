@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 func needGo(t *testing.T) {

@@ -20,7 +20,7 @@ const DotEnvFile = ".env"
 // ProjectDeniedEnvPrefixes are variables a project .env may not set: it
 // travels with a cloned repository, which must not be able to turn on
 // LangSmith tracing or point it at another endpoint or account. The shell
-// and the global ~/.deepagents/.env may set them.
+// and the global ~/.quill/.env may set them.
 var ProjectDeniedEnvPrefixes = []string{"LANGSMITH_", "LANGCHAIN_"}
 
 func projectDenied(key string) bool {
@@ -34,7 +34,7 @@ func projectDenied(key string) bool {
 }
 
 // LoadDotEnv sets environment variables from the nearest project .env
-// (searching upward from cwd) and the global ~/.deepagents/.env. Variables
+// (searching upward from cwd) and the global ~/.quill/.env. Variables
 // already present in the environment are never overridden.
 func LoadDotEnv(p Paths, cwd string) error {
 	values, ignored, err := resolveDotEnv(p, cwd, os.LookupEnv)
@@ -42,7 +42,7 @@ func LoadDotEnv(p Paths, cwd string) error {
 		return err
 	}
 	if len(ignored) > 0 {
-		log.Printf("dcode: ignoring %s from the project .env; set them in the shell or %s", strings.Join(ignored, ", "), p.GlobalDotEnv)
+		log.Printf("quill: ignoring %s from the project .env; set them in the shell or %s", strings.Join(ignored, ", "), p.GlobalDotEnv)
 	}
 	for k, v := range values {
 		if err := os.Setenv(k, v); err != nil {

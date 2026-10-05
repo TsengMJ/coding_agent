@@ -9,8 +9,8 @@ import (
 
 	udiff "github.com/aymanbagabas/go-udiff"
 
-	"github.com/tsengmingchun/deepagents_golang/code/codetools"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
+	"github.com/tsengmingchun/quill/code/codetools"
+	"github.com/tsengmingchun/quill/middleware/hitl"
 )
 
 // diffMaxLines caps how many diff lines an approval preview shows.

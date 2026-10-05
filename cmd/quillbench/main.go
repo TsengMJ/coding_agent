@@ -1,4 +1,4 @@
-// Command dbench evaluates dcode on SWE-bench Pro V2 and records every run
+// Command quillbench evaluates quill on SWE-bench Pro V2 and records every run
 // in PostgreSQL ($POSTGRES_CONN_STRING).
 package main
 
@@ -15,19 +15,19 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tsengmingchun/deepagents_golang/code/bench"
-	"github.com/tsengmingchun/deepagents_golang/code/config"
+	"github.com/tsengmingchun/quill/code/bench"
+	"github.com/tsengmingchun/quill/code/config"
 )
 
 const postgresEnvVar = "POSTGRES_CONN_STRING"
 
-const usage = `usage: dbench <command> [flags]
+const usage = `usage: quillbench <command> [flags]
 
 commands:
   prepare   check out the pinned V2 tasks, verify SHA256SUMS, cache metadata, fill bench_tasks
   subset    print a stratified subset (used to generate subsets/smoke50.txt)
   gate      grade the reference patch (oracle) and the empty patch (nop) on a subset
-  run       run dcode on a subset and grade every patch
+  run       run quill on a subset and grade every patch
   grade     re-grade a run's captured patches
   report    summarize a run
   analyze   recompute process metrics from traces and classify failures
@@ -41,7 +41,7 @@ func main() {
 	defer stop()
 	context.AfterFunc(ctx, stop)
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil && !errors.Is(err, flag.ErrHelp) {
-		fmt.Fprintln(os.Stderr, "dbench:", err)
+		fmt.Fprintln(os.Stderr, "quillbench:", err)
 		os.Exit(1)
 	}
 }
@@ -116,7 +116,7 @@ func loadEnv() (env, error) {
 func openStore(ctx context.Context) (bench.Store, func(), error) {
 	conn := os.Getenv(postgresEnvVar)
 	if conn == "" {
-		return nil, nil, errors.New(postgresEnvVar + " is not set; dbench records every run in PostgreSQL")
+		return nil, nil, errors.New(postgresEnvVar + " is not set; quillbench records every run in PostgreSQL")
 	}
 	pool, err := pgxpool.New(ctx, conn)
 	if err != nil {
@@ -131,7 +131,7 @@ func openStore(ctx context.Context) (bench.Store, func(), error) {
 }
 
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
-	fs := flag.NewFlagSet("dbench "+name, flag.ContinueOnError)
+	fs := flag.NewFlagSet("quillbench "+name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	return fs
 }

@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"path/filepath"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	rt "github.com/tsengmingchun/deepagents_golang/runtime"
+	"github.com/tsengmingchun/quill/backend"
+	rt "github.com/tsengmingchun/quill/runtime"
 )
 
 // Artifact directories under ArtifactsRoot.
@@ -48,7 +48,7 @@ func artifactRoutes(cwd string, a *Artifacts) map[string]backend.Backend {
 		if s == nil {
 			return
 		}
-		b := backend.NewStoreBackend(backend.StaticNamespace(rt.Namespace{"dcode", key, kind}), s)
+		b := backend.NewStoreBackend(backend.StaticNamespace(rt.Namespace{"quill", key, kind}), s)
 		if hint != "" {
 			b = b.WithNotFoundHint(hint)
 		}

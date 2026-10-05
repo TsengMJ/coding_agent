@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 const (
@@ -18,9 +18,9 @@ const (
 	maxGoTimeout     = 1800
 	maxRunPattern    = 500
 
-	noGoMarker   = "__DCODE_NO_GO__"
-	noModMarker  = "__DCODE_NO_GO_MODULE__"
-	exitMarker   = "__DCODE_EXIT__"
+	noGoMarker   = "__QUILL_NO_GO__"
+	noModMarker  = "__QUILL_NO_GO_MODULE__"
+	exitMarker   = "__QUILL_EXIT__"
 	maxRawOutput = 4000
 )
 
@@ -33,7 +33,7 @@ const goModuleCheck = `command -v go >/dev/null 2>&1 || { echo ` + noGoMarker + 
 // parser needs, so large suites fit the backend's output limit: result
 // events without timestamps, build output, non-JSON lines, and the output of
 // failed tests and failed packages.
-const goTestFilter = `tmp=$(mktemp 2>/dev/null || echo /tmp/dcode-gotest-$$); ` +
+const goTestFilter = `tmp=$(mktemp 2>/dev/null || echo /tmp/quill-gotest-$$); ` +
 	`go test -json %s > "$tmp" 2>&1; code=$?; ` +
 	`grep -E '"Action":"(pass|fail|skip|build-output|build-fail)"' "$tmp" | sed -E 's/"Time":"[^"]*",//; s/,"Elapsed":[-0-9.e+]+//'; ` +
 	`{ grep '"Action":"fail"' "$tmp" | sed -n -E 's/.*("Package":"[^"]*","Test":"[^"]*").*/\1/p'; ` +
@@ -354,7 +354,7 @@ func diagnosticsResult(t target, diags []Diagnostic, truncated bool) *tool.Resul
 	})
 	diags, capped := dedupeDiagnostics(diags)
 	if capped || truncated {
-		diags = append(diags, Diagnostic{Severity: "info", Source: "dcode", Message: "more diagnostics were omitted; narrow packages or files to see them"})
+		diags = append(diags, Diagnostic{Severity: "info", Source: "quill", Message: "more diagnostics were omitted; narrow packages or files to see them"})
 	}
 	return jsonResult(diags)
 }

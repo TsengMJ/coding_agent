@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 type scopeKey struct{}

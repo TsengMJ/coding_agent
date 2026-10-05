@@ -5,8 +5,8 @@ package unsupportedcontent
 import (
 	"context"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/internal/notimpl"
 )
 
 // Middleware filters request messages against the model profile.

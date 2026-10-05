@@ -8,13 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	codeagent "github.com/tsengmingchun/deepagents_golang/code/agent"
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/storage"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
+	codeagent "github.com/tsengmingchun/quill/code/agent"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/storage"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/runtime"
 )
 
 func init() {
@@ -549,14 +549,14 @@ func TestServiceCompactSummarizesOlderMessagesForLaterRuns(t *testing.T) {
 	if !strings.Contains(res.Summary, "SUMMARY-OF-EARLY-WORK") {
 		t.Fatalf("summary = %q", res.Summary)
 	}
-	if !strings.HasPrefix(res.FilePath, "/.deepagents/conversation_history/") {
+	if !strings.HasPrefix(res.FilePath, "/.quill/conversation_history/") {
 		t.Fatalf("file path = %q", res.FilePath)
 	}
 	history := codeagent.NewProjectBackend(cwd, svc.artifacts).Read(context.Background(), res.FilePath, 0, 1000)
 	if history.Error != "" || history.FileData == nil || !strings.Contains(history.FileData.Content, "first task") {
 		t.Fatalf("history = %+v", history)
 	}
-	if _, err := os.Stat(filepath.Join(cwd, ".deepagents")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cwd, ".quill")); !os.IsNotExist(err) {
 		t.Fatalf("history written to the project tree: %v", err)
 	}
 

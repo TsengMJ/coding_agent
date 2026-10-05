@@ -1,5 +1,5 @@
 // Package server runs the coding agent for clients, either in-process or
-// behind `dcode serve` (Python `server_graph.py`, `client/launch/server*.py`).
+// behind `quill serve` (Python `server_graph.py`, `client/launch/server*.py`).
 package server
 
 import (
@@ -8,16 +8,16 @@ import (
 	"iter"
 	"os"
 
-	"github.com/tsengmingchun/deepagents_golang/code/config"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/code/trace"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/planmode"
-	"github.com/tsengmingchun/deepagents_golang/middleware/todolist"
+	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/code/trace"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/planmode"
+	"github.com/tsengmingchun/quill/middleware/todolist"
 )
 
-// DefaultModelSpec is used when neither Config.ModelSpec nor DCODE_MODEL is set.
+// DefaultModelSpec is used when neither Config.ModelSpec nor QUILL_MODEL is set.
 const DefaultModelSpec = "openai:gpt-5.5"
 
 // ModelEnvVar overrides the default model spec.
@@ -178,7 +178,7 @@ type Server interface {
 }
 
 // resolveModelSpec picks the model: Config.ModelSpec (flag), then
-// DCODE_MODEL, then models.default from config.toml, then DefaultModelSpec.
+// QUILL_MODEL, then models.default from config.toml, then DefaultModelSpec.
 func resolveModelSpec(cfg Config) string {
 	if cfg.ModelSpec != "" {
 		return cfg.ModelSpec

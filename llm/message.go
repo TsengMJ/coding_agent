@@ -1,7 +1,7 @@
 // Package llm defines chat messages and the chat-model abstraction.
 //
 // It mirrors the subset of `langchain_core.messages` and
-// `langchain_core.language_models.BaseChatModel` that Deep Agents relies on.
+// `langchain_core.language_models.BaseChatModel` that the agent relies on.
 package llm
 
 import "strings"

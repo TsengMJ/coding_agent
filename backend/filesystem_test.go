@@ -373,11 +373,11 @@ func TestLocalShellExecuteRunsInRoot(t *testing.T) {
 }
 
 func TestLocalShellHidesSecretEnv(t *testing.T) {
-	t.Setenv("DCODE_TEST_API_KEY", "hidden-value")
-	t.Setenv("DCODE_TEST_GH_TOKEN", "passed-value")
-	t.Setenv("DCODE_TEST_PLAIN", "plain-value")
-	b := newShell(t, LocalShellOptions{HideSecretEnv: true, PassEnv: []string{"DCODE_TEST_GH_TOKEN"}})
-	res := b.Execute(context.Background(), `echo "$DCODE_TEST_API_KEY|$DCODE_TEST_GH_TOKEN|$DCODE_TEST_PLAIN"`, nil)
+	t.Setenv("QUILL_TEST_API_KEY", "hidden-value")
+	t.Setenv("QUILL_TEST_GH_TOKEN", "passed-value")
+	t.Setenv("QUILL_TEST_PLAIN", "plain-value")
+	b := newShell(t, LocalShellOptions{HideSecretEnv: true, PassEnv: []string{"QUILL_TEST_GH_TOKEN"}})
+	res := b.Execute(context.Background(), `echo "$QUILL_TEST_API_KEY|$QUILL_TEST_GH_TOKEN|$QUILL_TEST_PLAIN"`, nil)
 	if res.Output != "|passed-value|plain-value\n" {
 		t.Fatalf("output = %q", res.Output)
 	}

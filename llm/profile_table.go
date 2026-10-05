@@ -31,7 +31,7 @@ var contextWindows = map[string]int{
 	"mistral-large":  128000,
 }
 
-// KnownProfile returns the profile dcode knows for a model name, from the
+// KnownProfile returns the profile quill knows for a model name, from the
 // built-in context-window table.
 func KnownProfile(model string) (ModelProfile, bool) {
 	if i := strings.LastIndex(model, "/"); i >= 0 {

@@ -46,7 +46,7 @@ describe("usage formatting", () => {
     expect(costText(u).split("\n")).toEqual([
       "openai:gpt-4o  3 calls · in 20k (5k cached) · out 1.5k · $0.0625",
       "x:y  1 call · in 100 · out 10 · unpriced",
-      "total $0.0625 (excluding unpriced models; add them to ~/.deepagents/prices.json)",
+      "total $0.0625 (excluding unpriced models; add them to ~/.quill/prices.json)",
     ]);
     expect(costText(base)).toBe("no model calls yet");
   });

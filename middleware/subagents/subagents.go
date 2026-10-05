@@ -10,14 +10,14 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/middleware/hitl"
-	"github.com/tsengmingchun/deepagents_golang/middleware/permissions"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/internal/notimpl"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
+	"github.com/tsengmingchun/quill/middleware/permissions"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 // TaskToolName is the delegation tool exposed to the parent agent.
@@ -61,7 +61,7 @@ const (
 	modeHandoff Mode = "handoff"
 )
 
-// Spec is implemented by every subagent kind accepted by CreateDeepAgent
+// Spec is implemented by every subagent kind accepted by CreateAgent
 // (SubAgent, CompiledSubAgent and asyncsubagents.AsyncSubAgent).
 type Spec interface {
 	SubAgentName() string
@@ -83,9 +83,9 @@ type SubAgent struct {
 	Middleware  []agent.Middleware
 	InterruptOn map[string]hitl.InterruptOnConfig
 	// Skills are skill source paths; like Permissions, they are applied by
-	// deepagents.CreateDeepAgent and rejected when used directly here.
+	// quill.CreateAgent and rejected when used directly here.
 	Skills []string
-	// Permissions are applied by deepagents.CreateDeepAgent to the
+	// Permissions are applied by quill.CreateAgent to the
 	// subagent's filesystem middleware; used directly here they are rejected.
 	Permissions    []permissions.FilesystemPermission
 	ResponseFormat agent.ResponseFormat
@@ -142,7 +142,7 @@ type Middleware struct {
 
 // New returns a subagent middleware. Declarative specs must already be fully
 // resolved (model, tools, middleware, prompt) by the caller, as
-// CreateDeepAgent does: nil Tools means no tools here.
+// CreateAgent does: nil Tools means no tools here.
 func New(opts Options) (*Middleware, error) {
 	if len(opts.SubAgents) == 0 {
 		return nil, errors.New("subagents.New: at least one subagent is required")

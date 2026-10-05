@@ -32,7 +32,7 @@ type countingSolver struct {
 	err   error
 }
 
-func (s *countingSolver) Name() string { return SolverDcode }
+func (s *countingSolver) Name() string { return SolverQuill }
 
 func (s *countingSolver) Solve(context.Context, Task, SolveEnv) (SolveResult, error) {
 	s.calls.Add(1)
@@ -91,7 +91,7 @@ func TestRunnerResumesAndSkipsDone(t *testing.T) {
 	d.verify = passWhenPatched
 	st := NewMemoryStore()
 	ctx := context.Background()
-	run := newRun("resume", SolverDcode)
+	run := newRun("resume", SolverQuill)
 	_ = st.CreateRun(ctx, run)
 	// instance_a finished; instance_b has a patch awaiting grading.
 	_ = st.SaveAttempt(ctx, &Attempt{RunID: run.ID, InstanceID: "instance_a", Phase: PhaseDone, Resolved: true,
@@ -118,7 +118,7 @@ func TestRunnerInfraErrorsAreRetryable(t *testing.T) {
 	d.imageErr = errors.New("pull failed")
 	st := NewMemoryStore()
 	ctx := context.Background()
-	run := newRun("infra", SolverDcode)
+	run := newRun("infra", SolverQuill)
 	_ = st.CreateRun(ctx, run)
 	solver := &countingSolver{res: SolveResult{Patch: "diff --git a/x b/x"}}
 	r := &Runner{Store: st, Docker: d, Catalog: cat, Solver: solver, LogRoot: t.TempDir()}
@@ -149,7 +149,7 @@ func TestRunnerAgentCategoryAndPrune(t *testing.T) {
 	d := newFakeDocker()
 	st := NewMemoryStore()
 	ctx := context.Background()
-	run := newRun("timeout", SolverDcode)
+	run := newRun("timeout", SolverQuill)
 	run.Trials = 2
 	_ = st.CreateRun(ctx, run)
 	solver := &countingSolver{res: SolveResult{Patch: "diff --git a/src/a.js b/src/a.js\n", Category: CategoryAgentTimeout}}
@@ -177,7 +177,7 @@ func TestResetForRegradeGradesStoredPatchesAgain(t *testing.T) {
 	d := newFakeDocker()
 	st := NewMemoryStore()
 	ctx := context.Background()
-	run := newRun("regrade", SolverDcode)
+	run := newRun("regrade", SolverQuill)
 	_ = st.CreateRun(ctx, run)
 	_ = st.SaveAttempt(ctx, &Attempt{RunID: run.ID, InstanceID: "instance_a", Phase: PhaseDone, Patch: "diff --git a/x b/x",
 		FailureCategory: CategoryIncompleteFix, F2PTotal: 1})
@@ -211,7 +211,7 @@ func TestRunnerStopsOnCancel(t *testing.T) {
 	d := newFakeDocker()
 	st := NewMemoryStore()
 	ctx, cancel := context.WithCancel(context.Background())
-	run := newRun("cancel", SolverDcode)
+	run := newRun("cancel", SolverQuill)
 	_ = st.CreateRun(ctx, run)
 	solver := &cancelSolver{cancel: cancel}
 	r := &Runner{Store: st, Docker: d, Catalog: cat, Solver: solver, LogRoot: t.TempDir()}
@@ -228,7 +228,7 @@ type cancelSolver struct {
 	calls  int
 }
 
-func (s *cancelSolver) Name() string { return SolverDcode }
+func (s *cancelSolver) Name() string { return SolverQuill }
 
 func (s *cancelSolver) Solve(context.Context, Task, SolveEnv) (SolveResult, error) {
 	s.calls++

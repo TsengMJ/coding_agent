@@ -50,7 +50,7 @@ export function Sidebar({
   return (
     <nav className="sidebar">
       <div className="sidebar-head">
-        <span className="brand">dcode</span>
+        <span className="brand">quill</span>
         <button className="btn" onClick={onNew} title="Start a new thread">
           + New
         </button>
@@ -102,7 +102,7 @@ export function Sidebar({
           </div>
         ))}
       </div>
-      <div className="sidebar-foot">dcode (go) {version}</div>
+      <div className="sidebar-foot">quill (go) {version}</div>
     </nav>
   );
 }

@@ -52,7 +52,7 @@ func TestStoresRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			now := time.Now().UTC().Truncate(time.Millisecond)
-			if err := st.CreateRun(ctx, &Run{ID: runID, Benchmark: Benchmark, Subset: SubsetSmoke, Solver: SolverDcode,
+			if err := st.CreateRun(ctx, &Run{ID: runID, Benchmark: Benchmark, Subset: SubsetSmoke, Solver: SolverQuill,
 				Model: "m", Trials: 1, Concurrency: 1, TasksRepoCommit: TasksRepoCommit, Status: RunRunning,
 				StartedAt: now, Meta: []byte(`{"prompt_template_sha256": "abc"}`)}); err != nil {
 				t.Fatal(err)

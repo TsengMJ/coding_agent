@@ -4,7 +4,7 @@
 // which never reach thread state.
 //
 // Each thread is an append-only sequence of JSON records kept in a Log
-// (Postgres in dcode). System prompts, messages and tool lists repeat
+// (Postgres in quill). System prompts, messages and tool lists repeat
 // across model calls, so each distinct one is stored once as a blob and
 // model calls refer to blobs by hash.
 package trace
@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // ErrNotFound is returned when a model call is not in the trace.
@@ -515,7 +515,7 @@ func (r *Recorder) write(lines [][]byte) error {
 // dropped so an unreachable database does not flood the terminal.
 func (r *Recorder) warn(err error) {
 	r.warnOnce.Do(func() {
-		log.Printf("dcode: trace recording failed, details for this thread may be incomplete: %v", err)
+		log.Printf("quill: trace recording failed, details for this thread may be incomplete: %v", err)
 	})
 }
 

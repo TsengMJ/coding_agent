@@ -10,8 +10,8 @@ const DefaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
 
 // Default OpenRouter app attribution (https://openrouter.ai/docs/app-attribution).
 const (
-	defaultOpenRouterAppURL   = "https://github.com/tsengmingchun/deepagents_golang"
-	defaultOpenRouterAppTitle = "Deep Agents Go"
+	defaultOpenRouterAppURL   = "https://github.com/tsengmingchun/quill"
+	defaultOpenRouterAppTitle = "Quill"
 )
 
 func init() {

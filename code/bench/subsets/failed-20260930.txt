@@ -1,5 +1,5 @@
 # Tasks that failed or hit errors in the gpt-6-luna-pro smoke50 runs
-# 20260930-160724-dcode-smoke50 and 20260930-160743-dcode-smoke50 (first 10 tasks):
+# 20260930-160724-quill-smoke50 and 20260930-160743-quill-smoke50 (first 10 tasks):
 # b398321a and bd80d36e failed in both runs; 8168c6c4 resolved but the
 # attempt ended with a summarization empty-response error.
 instance_NodeBB__NodeBB-b398321a5eb913666f903a794219833926881a8f-vd59a5728dfc977f44533186ace531248c2917516

@@ -1,10 +1,10 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
-// `npm run dev` proxies the API to a running `dcode -no-open`; set
-// DCODE_GUI_URL to the address it printed (without the #token part) and
+// `npm run dev` proxies the API to a running `quill -no-open`; set
+// QUILL_GUI_URL to the address it printed (without the #token part) and
 // open the Vite URL with the same #token=... fragment.
-const target = process.env.DCODE_GUI_URL ?? "http://127.0.0.1:8124";
+const target = process.env.QUILL_GUI_URL ?? "http://127.0.0.1:8124";
 
 export default defineConfig({
   plugins: [react()],

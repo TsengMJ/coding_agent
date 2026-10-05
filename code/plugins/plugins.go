@@ -2,7 +2,7 @@
 // MCP servers from marketplaces (Python `plugins/*`).
 package plugins
 
-import "github.com/tsengmingchun/deepagents_golang/internal/notimpl"
+import "github.com/tsengmingchun/quill/internal/notimpl"
 
 // Manifest is a plugin's plugin.json.
 type Manifest struct {

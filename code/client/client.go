@@ -9,10 +9,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/tsengmingchun/deepagents_golang/code/server"
-	"github.com/tsengmingchun/deepagents_golang/code/sessions"
-	"github.com/tsengmingchun/deepagents_golang/internal/notimpl"
-	"github.com/tsengmingchun/deepagents_golang/llm"
+	"github.com/tsengmingchun/quill/code/server"
+	"github.com/tsengmingchun/quill/code/sessions"
+	"github.com/tsengmingchun/quill/internal/notimpl"
+	"github.com/tsengmingchun/quill/llm"
 )
 
 // OutputFormat selects headless output.
@@ -23,7 +23,7 @@ const (
 	OutputJSON OutputFormat = "json"
 )
 
-// NonInteractiveOptions configures a headless run (`dcode -n "prompt"`).
+// NonInteractiveOptions configures a headless run (`quill -n "prompt"`).
 type NonInteractiveOptions struct {
 	Prompt string
 	// ThreadID continues a thread; empty starts a new one.

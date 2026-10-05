@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsengmingchun/deepagents_golang/agent"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/runtime"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/runtime"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 func numberedLines(n, width int) string {
@@ -129,14 +129,14 @@ func TestWriteFailureFallsBackToTruncation(t *testing.T) {
 }
 
 func TestEvictionUsesArtifactsRootAndStateFiles(t *testing.T) {
-	composite := backend.NewCompositeBackend(backend.NewStateBackend(), nil, "/.deepagents")
+	composite := backend.NewCompositeBackend(backend.NewStateBackend(), nil, "/.quill")
 	m, _ := New(Options{Backend: composite, ToolTokenLimitBeforeEvict: 5})
 	state, _ := invoke(t, m, []tool.Tool{textTool("big", numberedLines(3, 30))}, "go", call("c9", "big", nil))
-	if got := toolMessage(state, "c9").Text(); !strings.Contains(got, "/.deepagents/large_tool_results/c9") {
+	if got := toolMessage(state, "c9").Text(); !strings.Contains(got, "/.quill/large_tool_results/c9") {
 		t.Fatalf("stub = %q", got)
 	}
 	files, _ := state.Values[backend.FilesStateKey].(map[string]backend.FileData)
-	if _, ok := files["/.deepagents/large_tool_results/c9"]; !ok {
+	if _, ok := files["/.quill/large_tool_results/c9"]; !ok {
 		t.Fatalf("StateBackend files = %v", files)
 	}
 }

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/tsengmingchun/deepagents_golang/backend"
-	"github.com/tsengmingchun/deepagents_golang/llm"
-	"github.com/tsengmingchun/deepagents_golang/tool"
+	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/tool"
 )
 
 func newRecorder(t *testing.T) (*Store, *Recorder) {
@@ -47,7 +47,7 @@ func call(msgs ...llm.Message) LLMCallInput {
 
 func TestLLMCallDetailRestoresFullRequest(t *testing.T) {
 	s, r := newRecorder(t)
-	sys, user := llm.NewSystemMessage("you are dcode"), llm.NewUserMessage("find handlers")
+	sys, user := llm.NewSystemMessage("you are quill"), llm.NewUserMessage("find handlers")
 	seq, err := r.RecordLLMCall(call(sys, user))
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestLLMCallDetailRestoresFullRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Messages) != 2 || d.Messages[0].Text() != "you are dcode" || d.Messages[1].Text() != "find handlers" {
+	if len(d.Messages) != 2 || d.Messages[0].Text() != "you are quill" || d.Messages[1].Text() != "find handlers" {
 		t.Fatalf("messages = %+v", d.Messages)
 	}
 	if len(d.Tools) != 1 || d.Tools[0].Name != "grep" {
@@ -69,7 +69,7 @@ func TestLLMCallDetailRestoresFullRequest(t *testing.T) {
 
 func TestDetailsReturnsEveryCallInOrder(t *testing.T) {
 	s, r := newRecorder(t)
-	sys, user := llm.NewSystemMessage("you are dcode"), llm.NewUserMessage("find handlers")
+	sys, user := llm.NewSystemMessage("you are quill"), llm.NewUserMessage("find handlers")
 	for _, msgs := range [][]llm.Message{{sys, user}, {sys, user, llm.NewUserMessage("again")}} {
 		if _, err := r.RecordLLMCall(call(msgs...)); err != nil {
 			t.Fatal(err)
