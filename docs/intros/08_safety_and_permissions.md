@@ -146,7 +146,7 @@ Stage 18e：專案目錄的 `.env` **不能設定** `LANGSMITH_*` / `LANGCHAIN_*
 
 ## 12. OS 層 Process Sandbox
 
-實作：[backend/ossandbox](../../backend/ossandbox/)（policy、Seatbelt、bubblewrap、proxy）、[code/agent/sandbox.go](../../code/agent/sandbox.go)、[code/agent/sandbox_escape.go](../../code/agent/sandbox_escape.go)。
+實作：[backend/ossandbox](../../backend/ossandbox/)（policy、Seatbelt、bubblewrap、proxy）、[code/agent/sandbox.go](../../code/agent/sandbox.go)、[code/agent/sandbox_escape.go](../../code/agent/sandbox_escape.go)。使用與設定見 [docs/sandbox.md](../sandbox.md)；本節講設計。
 
 **架構**：跨平台的 `Policy`（Mode、WritableRoots、DenyWrite、DenyRead、Network、Proxy）加上 `Sandbox` interface（產生包好的 `*exec.Cmd`）；`LocalShellBackend.Execute` 透過它建立指令。只包 shell 子程序，agent 行程本身不受限（它要連 LLM、Postgres、Redis）。
 

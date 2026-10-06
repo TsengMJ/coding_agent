@@ -83,7 +83,28 @@ go run ./cmd/quill summarize README.md
 
 ### Shell 沙箱
 
-`execute`、`run_tests`、`diagnostics` 的 shell 子程序在 OS 層沙箱內執行（macOS Seatbelt `sandbox-exec`，Linux bubblewrap `bwrap`），做法對標 Claude Code、Codex CLI 與 Cursor。quill 本身不進沙箱，只包住 shell 指令。
+`execute`、`run_tests`、`diagnostics` 的 shell 子程序在 OS 層沙箱內執行（macOS Seatbelt `sandbox-exec`，Linux bubblewrap `bwrap`），做法對標 Claude Code、Codex CLI 與 Cursor。quill 本身不進沙箱，只包住 shell 指令。完整的使用與設定說明見 [docs/sandbox.md](docs/sandbox.md)。
+
+#### 快速開始
+
+macOS 不用任何設定，沙箱預設就開著；Linux 先裝 bubblewrap（`sudo apt install bubblewrap`）。GUI、TUI、`-n` 都套用同一套沙箱：
+
+```sh
+cd 你的專案
+quill sandbox -- touch ~/x          # 先確認：應該被擋（Operation not permitted / Read-only file system）
+quill sandbox -- go test ./...      # 專案內的建置、測試照常
+quill                               # GUI（-tui 終端介面、-n '...' 單次執行）
+quill -sandbox read-only            # 這次只讀：模型不能改任何檔案
+```
+
+需要讓 agent 安裝套件（`go get`、`npm install`、`pip install`）時，在 `~/.quill/config.toml` 加上：
+
+```toml
+[sandbox]
+network = "allowlist"
+```
+
+#### 模式與網路
 
 | `sandbox.mode` | 寫入 | 讀取 |
 |---|---|---|
@@ -97,14 +118,36 @@ go run ./cmd/quill summarize README.md
 | `allowlist` | 只能透過 quill 內建的 HTTP proxy 連到允許的網域：預設 `proxy.golang.org`、`sum.golang.org`、`github.com`、`registry.npmjs.org`、`pypi.org`、`files.pythonhosted.org`，`sandbox.allowed_domains` 可擴充（`*.example.com` 代表子網域）；解析到內網、loopback、link-local 的位址一律拒絕。指令透過 `HTTP(S)_PROXY` 環境變數使用 proxy（go、npm、pip、git、curl 都支援） |
 | `full` | 不限制 |
 
+#### 行為
+
 - 核准：沙箱開啟時 `execute`、`run_tests`、`diagnostics` 不再逐一詢問（對標 Claude Code 的 `autoAllowBashIfSandboxed`）；破壞性指令仍一律要核准。
 - 逃生口：指令被沙箱擋下時，結果會附上 `[sandbox]` 說明；模型可以對 `execute` 傳 `"sandbox": false` 請求在沙箱外執行，**一律要你核准**（核准框標示 OUTSIDE the sandbox）；`-n` 搭配自動核准時沒人能核准，直接拒絕。`sandbox.allow_unsandboxed = false` 完全關掉逃生口。
 - Trace：每個 `execute` 結果記錄沙箱模式（或 `unsandboxed`）與是否疑似被擋。
-- 一次性切換：`quill -sandbox workspace-write ...`、`quill serve -sandbox ...` 或 `QUILL_SANDBOX_MODE`。
-- 試跑：`quill sandbox -- touch ~/x`（應該失敗）、`quill sandbox -- go test ./...`、`quill sandbox -network allowlist -- npm install`；`-print-policy` 印出實際規則。
-- Linux 需要安裝 bubblewrap（`apt install bubblewrap`）且允許 unprivileged user namespace；無法使用時預設拒絕啟動並說明原因（設 `sandbox.mode = "full-access"` 關掉沙箱，或 `sandbox.on_unavailable = "warn"` 改成不受限執行，並在每個指令結果中警告）。
 - 沙箱擋的是 shell；檔案工具本來就鎖在專案目錄內（virtual mode），`.git/hooks`、`.git/config` 也同樣不可寫。
-- 只有 `~/.quill/config.toml` 能設定沙箱，專案目錄裡的設定改不了它。
+
+#### 設定
+
+只有 `~/.quill/config.toml` 的 `[sandbox]` 能設定沙箱，專案目錄裡的設定改不了它（完整範例見下方「設定檔」）。優先順序：flag > 環境變數 > config.toml > 預設。
+
+| 設定 | 預設 | 其他覆寫方式 |
+|---|---|---|
+| `mode` | macOS、Linux `workspace-write`；其他平台 `full-access` | `-sandbox <mode>`（`quill`、`quill serve`）、`QUILL_SANDBOX_MODE` |
+| `network` | `none` | `quill sandbox -network <n>`（只影響這個試跑指令） |
+| `allowed_domains` | 空（只用內建清單） | — |
+| `writable_roots` | 空 | — |
+| `deny_read` | 空 | — |
+| `on_unavailable` | `error` | — |
+| `allow_unsandboxed` | `true` | — |
+
+用 `quill serve` + `quill -server URL` 時，沙箱由 server 端的設定與 `quill serve -sandbox` 決定。
+
+#### 確認與除錯
+
+- `quill sandbox [-mode m] [-network n] [-print-policy] -- 指令`：用 agent 同一套規則跑一個指令，`-print-policy` 印出可寫 / 不可寫 / 不可讀的路徑（macOS 另外印出 Seatbelt profile）。
+- 寫入被擋、但那個目錄確實需要寫：加到 `writable_roots`（必須是絕對路徑或 `~/` 開頭）。
+- 要連網：`network = "allowlist"`，被擋的網域加到 `allowed_domains`；proxy 回 403 代表網域不在清單內。
+- Linux 啟動失敗說找不到 bwrap：安裝 bubblewrap；說無法建立 namespace：允許 unprivileged user namespace（Ubuntu 24.04+ 為 `sysctl kernel.apparmor_restrict_unprivileged_userns=0`），或在 Docker 裡要 `--privileged`。暫時不想處理時設 `mode = "full-access"`（關掉沙箱），或 `on_unavailable = "warn"`（不受限執行，每個指令結果都會警告）。
+- 更多狀況見 [docs/sandbox.md](docs/sandbox.md#常見問題)。
 
 ### 腳本與 CI
 
