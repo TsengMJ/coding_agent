@@ -109,6 +109,33 @@ func TestSandboxedShellRunsApprovedEscapeUnconfined(t *testing.T) {
 	if a := res.Artifact.(backend.ExecuteArtifact); a.Sandbox != unsandboxedLabel {
 		t.Fatalf("artifact = %+v", a)
 	}
+	if res.Metadata["sandbox"] != unsandboxedLabel {
+		t.Fatalf("metadata = %v", res.Metadata)
+	}
+}
+
+func TestSandboxedShellTagsRunnerTools(t *testing.T) {
+	m := sandboxedShell{mode: ossandbox.WorkspaceWrite}
+	for _, name := range []string{codetools.RunTestsName, codetools.DiagnosticsName} {
+		res, _ := m.WrapToolCall(context.Background(), &core.ToolCallRequest{ToolCall: llm.ToolCall{ID: "c", Name: name}},
+			func(context.Context, *core.ToolCallRequest) (*tool.Result, error) {
+				return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock(`{"status":"passed"}`)}, Artifact: struct{}{}}, nil
+			})
+		if res.Metadata["sandbox"] != string(ossandbox.WorkspaceWrite) {
+			t.Errorf("%s metadata = %v", name, res.Metadata)
+		}
+	}
+}
+
+func TestSandboxedShellLeavesOtherToolsUntagged(t *testing.T) {
+	m := sandboxedShell{mode: ossandbox.WorkspaceWrite}
+	res, _ := m.WrapToolCall(context.Background(), &core.ToolCallRequest{ToolCall: llm.ToolCall{ID: "c", Name: "read_file"}},
+		func(context.Context, *core.ToolCallRequest) (*tool.Result, error) {
+			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("x")}}, nil
+		})
+	if res.Metadata != nil {
+		t.Fatalf("metadata = %v", res.Metadata)
+	}
 }
 
 func TestSandboxedShellExplainsDenials(t *testing.T) {
@@ -117,6 +144,9 @@ func TestSandboxedShellExplainsDenials(t *testing.T) {
 	a := res.Artifact.(backend.ExecuteArtifact)
 	if !a.SandboxBlocked || a.Sandbox != string(ossandbox.WorkspaceWrite) {
 		t.Fatalf("artifact = %+v", a)
+	}
+	if res.Metadata["sandbox"] != string(ossandbox.WorkspaceWrite) || res.Metadata["sandbox_blocked"] != true {
+		t.Fatalf("metadata = %v", res.Metadata)
 	}
 	if hint := res.Content[len(res.Content)-1].Text; !strings.Contains(hint, "[sandbox]") || !strings.Contains(hint, `"sandbox": false`) {
 		t.Fatalf("hint = %q", hint)

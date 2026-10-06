@@ -50,6 +50,8 @@ type Result struct {
 	Update *runtime.Update
 	// Artifact is attached to the ToolMessage but not sent to the model.
 	Artifact any
+	// Metadata is merged into the ToolMessage metadata; not sent to the model.
+	Metadata map[string]any
 	IsError  bool
 }
 

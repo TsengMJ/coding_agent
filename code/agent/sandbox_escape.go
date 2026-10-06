@@ -8,6 +8,7 @@ import (
 	core "github.com/tsengmingchun/quill/agent"
 	"github.com/tsengmingchun/quill/backend"
 	"github.com/tsengmingchun/quill/backend/ossandbox"
+	"github.com/tsengmingchun/quill/code/codetools"
 	"github.com/tsengmingchun/quill/llm"
 	"github.com/tsengmingchun/quill/tool"
 )
@@ -55,7 +56,15 @@ func (m sandboxedShell) WrapModelCall(ctx context.Context, req *core.ModelReques
 }
 
 func (m sandboxedShell) WrapToolCall(ctx context.Context, req *core.ToolCallRequest, next core.ToolHandler) (*tool.Result, error) {
-	if req.ToolCall.Name != executeToolName {
+	switch req.ToolCall.Name {
+	case executeToolName:
+	case codetools.RunTestsName, codetools.DiagnosticsName:
+		res, err := next(ctx, req)
+		if err == nil {
+			tagSandbox(res, string(m.mode), false)
+		}
+		return res, err
+	default:
 		return next(ctx, req)
 	}
 	if isUnsandboxedCall(req.ToolCall) {
@@ -140,12 +149,30 @@ func tagExecute(res *tool.Result, sandbox string, blocked bool) {
 	if res == nil {
 		return
 	}
+	tagSandbox(res, sandbox, blocked)
 	a, ok := res.Artifact.(backend.ExecuteArtifact)
 	if !ok {
 		return
 	}
 	a.Sandbox, a.SandboxBlocked = sandbox, blocked
 	res.Artifact = a
+}
+
+// tagSandbox records the sandbox mode in the tool message metadata, where
+// the GUI reads it for every shell-backed tool.
+func tagSandbox(res *tool.Result, sandbox string, blocked bool) {
+	if res == nil {
+		return
+	}
+	md := maps.Clone(res.Metadata)
+	if md == nil {
+		md = map[string]any{}
+	}
+	md["sandbox"] = sandbox
+	if blocked {
+		md["sandbox_blocked"] = true
+	}
+	res.Metadata = md
 }
 
 // escapableExecute shows the model execute's schema with the sandbox

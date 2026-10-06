@@ -632,3 +632,21 @@ func TestLoopRecordsModelAndToolTiming(t *testing.T) {
 		t.Fatalf("parallel calls must overlap: [%v, %v] and [%v, %v]", a.Start, a.End(), b.Start, b.End())
 	}
 }
+
+func TestToolMessageMergesMetadataWithArtifact(t *testing.T) {
+	msg := toolMessage(llm.ToolCall{ID: "c", Name: "x"}, &tool.Result{
+		Content:  []llm.ContentBlock{llm.TextBlock("ok")},
+		Artifact: "art",
+		Metadata: map[string]any{"sandbox": "workspace-write"},
+	})
+	if msg.Metadata["sandbox"] != "workspace-write" || msg.Metadata["artifact"] != "art" {
+		t.Fatalf("metadata = %v", msg.Metadata)
+	}
+}
+
+func TestToolMessageWithoutMetadataHasNone(t *testing.T) {
+	msg := toolMessage(llm.ToolCall{ID: "c", Name: "x"}, &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("ok")}})
+	if msg.Metadata != nil {
+		t.Fatalf("metadata = %v", msg.Metadata)
+	}
+}

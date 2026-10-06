@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -807,8 +808,14 @@ func toolMessage(call llm.ToolCall, res *tool.Result) llm.Message {
 	if res.IsError {
 		msg.Status = llm.ToolStatusError
 	}
-	if res.Artifact != nil {
-		msg.Metadata = map[string]any{"artifact": res.Artifact}
+	if res.Artifact != nil || len(res.Metadata) > 0 {
+		msg.Metadata = maps.Clone(res.Metadata)
+		if msg.Metadata == nil {
+			msg.Metadata = map[string]any{}
+		}
+		if res.Artifact != nil {
+			msg.Metadata["artifact"] = res.Artifact
+		}
 	}
 	return msg
 }
