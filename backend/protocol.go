@@ -188,6 +188,11 @@ type ExecuteResponse struct {
 type ExecuteArtifact struct {
 	ExitCode *int   `json:"exit_code,omitempty"`
 	Path     string `json:"path,omitempty"`
+	// Sandbox is the sandbox mode the command ran under, or "unsandboxed"
+	// for an approved escape; empty when no sandbox is configured.
+	Sandbox string `json:"sandbox,omitempty"`
+	// SandboxBlocked marks a failure that looks like a sandbox denial.
+	SandboxBlocked bool `json:"sandbox_blocked,omitempty"`
 }
 
 // ExecuteOffloadResult is an execute whose full output was captured to a file.

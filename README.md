@@ -91,6 +91,9 @@ go run ./cmd/quill summarize README.md
 | `workspace-write` | 專案目錄、暫存目錄、建置 cache（Go、npm、pip ...）與 `sandbox.writable_roots`；但 `.git/hooks`、`.git/config`、`.quill/` 不可寫 | 整台機器，但 `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.config/gh`、`~/.netrc`、`~/.quill/.env`、docker socket 等不可讀 | 只有 localhost |
 | `read-only` | 都不可寫（`write_file`、`edit_file`、`apply_patch`、`delete` 也一併拒絕） | 同上 | 只有 localhost |
 
+- 核准：沙箱開啟時 `execute`、`run_tests`、`diagnostics` 不再逐一詢問（對標 Claude Code 的 `autoAllowBashIfSandboxed`）；破壞性指令仍一律要核准。
+- 逃生口：指令被沙箱擋下時，結果會附上 `[sandbox]` 說明；模型可以對 `execute` 傳 `"sandbox": false` 請求在沙箱外執行，**一律要你核准**（核准框標示 OUTSIDE the sandbox）；`-n` 搭配自動核准時沒人能核准，直接拒絕。`sandbox.allow_unsandboxed = false` 完全關掉逃生口。
+- Trace：每個 `execute` 結果記錄沙箱模式（或 `unsandboxed`）與是否疑似被擋。
 - 一次性切換：`quill -sandbox workspace-write ...`、`quill serve -sandbox ...` 或 `QUILL_SANDBOX_MODE`。
 - 試跑：`quill sandbox -- touch ~/x`（應該失敗）、`quill sandbox -- go test ./...`；`-print-policy` 印出實際規則。
 - Linux 需要安裝 bubblewrap 且允許 unprivileged user namespace；無法使用時預設拒絕啟動（`sandbox.on_unavailable = "warn"` 改成不受限執行，並在每個指令結果中警告）。
@@ -135,6 +138,7 @@ mode = "workspace-write"                   # read-only / workspace-write / full-
 writable_roots = ["~/scratch"]             # workspace-write 額外可寫的目錄
 deny_read = ["~/.config/secret-tool"]      # 額外不可讀的路徑
 on_unavailable = "error"                   # 平台沙箱無法使用時：error（預設，拒絕啟動）或 warn
+allow_unsandboxed = true                   # 允許模型請求（經核准）在沙箱外執行單一指令
 ```
 
 allow-list 只比對每段指令（以 `|`、`;`、`&&`、`||` 切開）的第一個字；含 `$(`、反引號、`$VAR`、`${`、重導向（`>`、`<`、`>>`、`<<`）、背景 `&`、換行或 tab 的指令一律要核准。例如 `ls | grep x` 免核准，`ls "$(rm -rf /)"` 與 `ls &` 仍會問。

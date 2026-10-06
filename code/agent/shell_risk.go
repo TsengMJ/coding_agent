@@ -50,10 +50,14 @@ func isDestructiveCall(call llm.ToolCall) bool {
 // ones say why they need a closer look.
 func describeExecute(call llm.ToolCall) string {
 	command, _ := call.Args["command"].(string)
-	if reason := DestructiveCommand(command); reason != "" {
-		return fmt.Sprintf("Destructive command: %s.\n\n%s", reason, command)
+	outside := ""
+	if isUnsandboxedCall(call) {
+		outside = " OUTSIDE the sandbox (full access to this machine and the network)"
 	}
-	return "Run shell command\n\n" + command
+	if reason := DestructiveCommand(command); reason != "" {
+		return fmt.Sprintf("Destructive command%s: %s.\n\n%s", outside, reason, command)
+	}
+	return "Run shell command" + outside + "\n\n" + command
 }
 
 // destructiveOnly reviews only destructive shell commands, also in

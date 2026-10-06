@@ -101,6 +101,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 			return nil, fmt.Errorf("code/agent.CreateCLIAgent: %w", err)
 		}
 	}
+	sandboxed := shellSandboxed(b)
 	b = withHostRoutes(b, userSkillRoots(opts.UserDir, opts.AgentName), opts.Artifacts, opts.Cwd)
 	skillSources := existingSkillSources(ctx, b, SkillSources(opts.UserDir, opts.AgentName))
 	b = backend.WithVersionGuard(trace.WrapBackend(b))
@@ -166,10 +167,23 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	switch {
 	case !opts.AutoApprove:
 		interrupts = InterruptOn(opts.Settings)
+		if sandboxed {
+			reviewSandboxedShell(interrupts)
+		}
 	case opts.Interactive:
 		interrupts["execute"] = destructiveOnly()
+		if sandboxed {
+			interrupts["execute"] = sandboxedExecuteReview()
+		}
 	default:
 		mws = append(mws, destructiveGuard{})
+	}
+	if sandboxed {
+		mws = append(mws, sandboxedShell{
+			mode:             opts.Settings.Sandbox.Mode,
+			allowUnsandboxed: opts.Settings.Sandbox.AllowUnsandboxed,
+			noReviewer:       opts.AutoApprove && !opts.Interactive,
+		})
 	}
 	if opts.Interactive {
 		var readOnly []string

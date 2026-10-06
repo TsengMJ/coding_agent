@@ -262,8 +262,21 @@ func errorResponse(msg string, code int) ExecuteResponse {
 	return ExecuteResponse{Output: msg, ExitCode: &code}
 }
 
+type withoutSandboxKey struct{}
+
+// WithoutSandbox marks ctx so a sandboxed LocalShellBackend runs the
+// command unconfined. Callers must have had the command approved.
+func WithoutSandbox(ctx context.Context) context.Context {
+	return context.WithValue(ctx, withoutSandboxKey{}, true)
+}
+
+func sandboxBypassed(ctx context.Context) bool {
+	v, _ := ctx.Value(withoutSandboxKey{}).(bool)
+	return v
+}
+
 func (b *LocalShellBackend) command(ctx context.Context, command string) (*exec.Cmd, error) {
-	if b.opts.Sandbox == nil {
+	if b.opts.Sandbox == nil || sandboxBypassed(ctx) {
 		return exec.CommandContext(ctx, "sh", "-c", command), nil
 	}
 	return b.opts.Sandbox.Command(ctx, b.opts.Policy, command)

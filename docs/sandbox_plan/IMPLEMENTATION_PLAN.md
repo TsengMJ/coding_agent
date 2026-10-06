@@ -47,7 +47,7 @@ shell 子程序（`execute`、`run_tests`、`diagnostics`）在 OS 層 sandbox �
 **Goal**: sandbox 啟用時 `execute`、`run_tests`、`diagnostics` 免核准（破壞性指令仍一律核准）；`execute` 的 `sandbox: false` 逃生口一律核准、headless 自動核准時拒絕、可用 `sandbox.allow_unsandboxed = false` 關掉；被 sandbox 擋下時附提示；trace 記錄 sandbox 狀態。
 **Success Criteria**: `make check` 通過。
 **Tests**: HITL 設定矩陣；逃生口在 manual / headless 下的行為；擋下提示（含不誤判）。
-**Status**: Not Started
+**Status**: Complete（`make check`、`make test-sandbox`、`make test-sandbox-linux` 通過）。沙箱開啟時 `execute`/`run_tests`/`diagnostics` 自動放行，破壞性指令與 `sandbox: false` 逃生口一律核准；`-n` 無人核准時拒絕逃生口；`allow_unsandboxed = false` 關掉逃生口。被擋判斷用輸出關鍵字（EPERM、read-only file system、DNS 失敗等），屬啟發式；`ExecuteArtifact` 記錄 `sandbox`、`sandbox_blocked`。
 
 ## Stage S5: 網路 allowlist、驗證、預設開啟
 **Goal**: quill 行程內的 HTTP CONNECT proxy 依 domain allowlist 放行並擋內網；Seatbelt 只允許連 proxy port；bwrap 用 unix socket + `quill __netbridge` 轉接；`sandbox.network`、`sandbox.allowed_domains`；驗證後把預設改成 workspace-write。

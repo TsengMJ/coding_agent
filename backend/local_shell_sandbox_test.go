@@ -42,6 +42,15 @@ func TestLocalShellRoutesThroughSandbox(t *testing.T) {
 	}
 }
 
+func TestLocalShellWithoutSandboxBypassesIt(t *testing.T) {
+	sb := &stubSandbox{}
+	b := newShell(t, LocalShellOptions{Sandbox: sb, Policy: ossandbox.Policy{Mode: ossandbox.WorkspaceWrite}})
+	res := b.Execute(WithoutSandbox(context.Background()), "echo direct", nil)
+	if sb.got != "" || strings.TrimSpace(res.Output) != "direct" {
+		t.Fatalf("sandbox got %q, output %q", sb.got, res.Output)
+	}
+}
+
 func TestLocalShellReportsSandboxError(t *testing.T) {
 	b := newShell(t, LocalShellOptions{Sandbox: failingSandbox{}, Policy: ossandbox.Policy{Mode: ossandbox.WorkspaceWrite}})
 	res := b.Execute(context.Background(), "echo hi", nil)

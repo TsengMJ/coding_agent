@@ -7,10 +7,12 @@ import (
 	"strings"
 
 	core "github.com/tsengmingchun/quill/agent"
+	"github.com/tsengmingchun/quill/backend"
 	"github.com/tsengmingchun/quill/backend/ossandbox"
 	"github.com/tsengmingchun/quill/code/codetools"
 	"github.com/tsengmingchun/quill/code/config"
 	"github.com/tsengmingchun/quill/llm"
+	"github.com/tsengmingchun/quill/middleware/hitl"
 	"github.com/tsengmingchun/quill/tool"
 )
 
@@ -37,6 +39,34 @@ func NewShellSandbox(s *config.Settings, cwd string) (ossandbox.Sandbox, ossandb
 		return nil, policy, err
 	}
 	return sb, policy, nil
+}
+
+// shellSandboxed reports whether b's shell commands run in a sandbox that
+// actually confines them (not one that degraded to warnings).
+func shellSandboxed(b backend.Backend) bool {
+	s, ok := b.(interface{ Sandboxed() bool })
+	return ok && s.Sandboxed()
+}
+
+// reviewSandboxedShell drops review of commands the sandbox contains, as
+// Claude Code's autoAllowBashIfSandboxed does: execute, run_tests and
+// diagnostics run without asking, except destructive commands and
+// requests to leave the sandbox.
+func reviewSandboxedShell(cfg map[string]hitl.InterruptOnConfig) {
+	cfg[executeToolName] = sandboxedExecuteReview()
+	for name := range runnerTools {
+		delete(cfg, name)
+	}
+}
+
+// sandboxedExecuteReview reviews only destructive commands and sandbox
+// escapes, also in auto-approved runs.
+func sandboxedExecuteReview() hitl.InterruptOnConfig {
+	return hitl.InterruptOnConfig{
+		When:       func(llm.ToolCall) bool { return false },
+		AlwaysWhen: func(call llm.ToolCall) bool { return isDestructiveCall(call) || isUnsandboxedCall(call) },
+		Describe:   describeExecute,
+	}
 }
 
 // fileWriteTools change files through the backend rather than the shell.
