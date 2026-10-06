@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/code/config"
 	"github.com/tsengmingchun/quill/llm"
 	"github.com/tsengmingchun/quill/middleware/summarization"
 )
@@ -18,12 +19,28 @@ const HistoryPathPrefix = "/.quill/conversation_history"
 // cwd in virtual mode. Shell commands inherit the environment minus
 // credential-named variables, since quill loads ~/.quill/.env into it.
 func NewBackend(cwd string) backend.Backend {
-	return backend.NewLocalShellBackend(backend.LocalShellOptions{
+	return backend.NewLocalShellBackend(shellOptions(cwd))
+}
+
+// NewSandboxedBackend is NewBackend with shell commands confined by the
+// sandbox s configures (see NewShellSandbox).
+func NewSandboxedBackend(cwd string, s *config.Settings) (backend.Backend, error) {
+	sb, policy, err := NewShellSandbox(s, cwd)
+	if err != nil {
+		return nil, err
+	}
+	opts := shellOptions(cwd)
+	opts.Sandbox, opts.Policy = sb, policy
+	return backend.NewLocalShellBackend(opts), nil
+}
+
+func shellOptions(cwd string) backend.LocalShellOptions {
+	return backend.LocalShellOptions{
 		FilesystemOptions: backend.FilesystemOptions{RootDir: cwd, VirtualMode: true, RespectGitignore: true},
 		InheritEnv:        true,
 		HideSecretEnv:     true,
 		PassEnv:           passEnv(os.Getenv(ShellPassEnvVar)),
-	})
+	}
 }
 
 // ShellPassEnvVar lists, comma-separated, credential variables that shell

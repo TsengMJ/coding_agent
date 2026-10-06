@@ -57,7 +57,7 @@ web-test: ## Typecheck and test the GUI frontend (needs Node)
 	cd code/gui/web && npm ci && npm run typecheck && npm test
 
 test-sandbox: ## Run the shell sandbox integration tests on this machine (real sandbox-exec / bwrap)
-	QUILL_SANDBOX_IT=1 go test -count=1 -run Sandbox ./backend/ossandbox/ ./backend/
+	QUILL_SANDBOX_IT=1 go test -count=1 -run Sandbox ./backend/ossandbox/ ./backend/ ./code/agent/
 
 test-sandbox-linux: ## Run the Linux (bubblewrap) sandbox integration tests in a Docker container
 	./scripts/test_sandbox_linux.sh

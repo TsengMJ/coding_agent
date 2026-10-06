@@ -41,7 +41,7 @@ shell 子程序（`execute`、`run_tests`、`diagnostics`）在 OS 層 sandbox �
 **Goal**: `sandbox.mode`、`sandbox.writable_roots`、`sandbox.deny_read`、`sandbox.on_unavailable` 設定與 `-sandbox` flag；read-only 模式下檔案寫入工具也拒絕；`NewBackend` 組出 policy；更新 `--help` 與 README。
 **Success Criteria**: `make check`、`make test-sandbox`、`make test-sandbox-linux` 通過；verify gate 在 workspace-write 下可正常 stash / reset。
 **Tests**: config 解析；模式到 policy 的對應；read-only 檔案工具錯誤；sandbox 內的 git stash / reset。
-**Status**: Not Started
+**Status**: Complete（`make check`、`make test-sandbox`、`make test-sandbox-linux` 通過；`TestSandboxVerifyGateBaseline` 在兩個平台的 sandbox 內跑 HEAD baseline）。只有 `~/.quill/config.toml` 能設定 `[sandbox]`；read-only 以 permissions 擋檔案工具，`apply_patch` 另由 `readOnlyGuard` 擋；workspace-write 下檔案工具同樣不可寫 `.git/hooks`、`.git/config`。
 
 ## Stage S4: 和核准機制連動
 **Goal**: sandbox 啟用時 `execute`、`run_tests`、`diagnostics` 免核准（破壞性指令仍一律核准）；`execute` 的 `sandbox: false` 逃生口一律核准、headless 自動核准時拒絕、可用 `sandbox.allow_unsandboxed = false` 關掉；被 sandbox 擋下時附提示；trace 記錄 sandbox 狀態。

@@ -32,7 +32,7 @@ func resolve(t *testing.T, p Paths) *Settings {
 }
 
 func clearEnv(t *testing.T) {
-	for _, k := range []string{ModelEnvVar, ServerEnvVar, ShellAllowListEnvVar, BraveAPIKeyEnvVar, Context7APIKeyEnvVar} {
+	for _, k := range []string{ModelEnvVar, ServerEnvVar, ShellAllowListEnvVar, BraveAPIKeyEnvVar, Context7APIKeyEnvVar, SandboxModeEnvVar} {
 		t.Setenv(k, "")
 	}
 }

@@ -23,6 +23,14 @@ func TestSandboxCommandRejectsUnknownMode(t *testing.T) {
 	}
 }
 
+func TestSandboxFlagRejectsUnknownMode(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	_, err := run(context.Background(), []string{"-sandbox", "yolo", "-n", "hi"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "-sandbox") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestSandboxCommandFullAccessPassesExitCode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code, err := run(context.Background(), []string{"sandbox", "-mode", "full-access", "--", "sh", "-c", "echo hi; exit 3"}, &stdout, &stderr)

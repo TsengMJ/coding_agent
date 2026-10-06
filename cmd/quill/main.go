@@ -19,6 +19,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/tsengmingchun/quill"
+	"github.com/tsengmingchun/quill/backend/ossandbox"
 	codeagent "github.com/tsengmingchun/quill/code/agent"
 	"github.com/tsengmingchun/quill/code/client"
 	"github.com/tsengmingchun/quill/code/config"
@@ -31,8 +32,10 @@ import (
 )
 
 const (
-	modelFlagUsage  = "model as provider:model (default $" + config.ModelEnvVar + ", models.default in config.toml, or " + server.DefaultModelSpec + ")"
-	serverFlagUsage = "quill serve URL (default $" + config.ServerEnvVar + " or server.url in config.toml)"
+	modelFlagUsage   = "model as provider:model (default $" + config.ModelEnvVar + ", models.default in config.toml, or " + server.DefaultModelSpec + ")"
+	serverFlagUsage  = "quill serve URL (default $" + config.ServerEnvVar + " or server.url in config.toml)"
+	sandboxFlagUsage = "shell sandbox for this run: read-only, workspace-write or full-access (default $" +
+		config.SandboxModeEnvVar + " or sandbox.mode in config.toml)"
 )
 
 func main() {
@@ -99,6 +102,21 @@ func (e env) serverURL(fs *flag.FlagSet, flagValue string) string {
 		return flagValue
 	}
 	return e.settings.ServerURL
+}
+
+// applySandbox overrides sandbox.mode with the -sandbox flag when given and
+// checks that the configured sandbox can run, so a missing bwrap fails at
+// startup rather than on the first command.
+func (e env) applySandbox(flagValue string) error {
+	if flagValue != "" {
+		m, err := ossandbox.ParseMode(flagValue)
+		if err != nil {
+			return fmt.Errorf("-sandbox: %w", err)
+		}
+		e.settings.Sandbox.Mode = m
+	}
+	_, _, err := codeagent.NewShellSandbox(e.settings, e.cwd)
+	return err
 }
 
 func flagWasSet(fs *flag.FlagSet, name string) bool {
@@ -177,6 +195,7 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 	quiet := fs.Bool("q", false, "with -n: print only the agent's reply (no thread ID or tool lines)")
 	noStream := fs.Bool("no-stream", false, "with -n: print the reply once complete instead of token by token")
 	timeout := fs.Duration("timeout", 0, "with -n: cancel after this long (e.g. 10m) and exit 124")
+	sandboxMode := fs.String("sandbox", "", sandboxFlagUsage)
 	version := fs.Bool("version", false, "print version and exit")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage:\n"+
@@ -191,7 +210,10 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 			"%s, tools that change files (write_file, edit_file, apply_patch, delete) or run\n"+
 			"commands (execute, run_tests, diagnostics) ask first (-y skips it for one run;\n"+
 			"shell.allow_list lets matching commands skip it; allowing go covers run_tests and diagnostics).\n"+
-			"Shell commands run in the current directory and are not sandboxed.\n\n", "~/.quill/config.toml")
+			"Shell commands run in the current directory. With sandbox.mode = \"workspace-write\" (or -sandbox)\n"+
+			"they run in an OS sandbox (macOS Seatbelt, Linux bubblewrap) that can write only the project,\n"+
+			"temp and build caches, cannot read credential directories such as ~/.ssh, and has no network;\n"+
+			"\"read-only\" blocks all writes. In \"full-access\" mode (the default) they are not sandboxed.\n\n", "~/.quill/config.toml")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -216,6 +238,11 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 		return 1, err
 	}
 	serverURL := e.serverURL(fs, *serverFlag)
+	if serverURL == "" {
+		if err := e.applySandbox(*sandboxMode); err != nil {
+			return 1, err
+		}
+	}
 	srv, err := connect(ctx, e, serverURL, *model)
 	if err != nil {
 		return 1, err
@@ -375,11 +402,15 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	addr := fs.String("addr", server.DefaultAddr, "listen address (loopback only)")
 	model := fs.String("model", "", modelFlagUsage)
+	sandboxMode := fs.String("sandbox", "", sandboxFlagUsage)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	e, err := loadEnv()
 	if err != nil {
+		return err
+	}
+	if err := e.applySandbox(*sandboxMode); err != nil {
 		return err
 	}
 	svc, err := newService(ctx, e, *model)

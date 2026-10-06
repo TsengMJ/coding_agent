@@ -62,6 +62,40 @@ func TestSecretPathsCoverCredentials(t *testing.T) {
 	}
 }
 
+func TestConfines(t *testing.T) {
+	ws := Policy{Mode: WorkspaceWrite}
+	cases := []struct {
+		sb   Sandbox
+		p    Policy
+		want bool
+	}{
+		{nil, ws, false},
+		{None(), ws, false},
+		{Unconfined("no bwrap"), ws, false},
+		{Seatbelt{}, ws, true},
+		{Bwrap{}, Policy{Mode: ReadOnly}, true},
+		{Seatbelt{}, Policy{Mode: FullAccess}, false},
+	}
+	for _, c := range cases {
+		if got := Confines(c.sb, c.p); got != c.want {
+			t.Errorf("Confines(%T, %s) = %v", c.sb, c.p.Mode, got)
+		}
+	}
+}
+
+func TestUnconfinedWarnsOnStderr(t *testing.T) {
+	cmd, err := Unconfined("bwrap missing").Command(t.Context(), Policy{}, "echo out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil || string(out) != "out\n" || !strings.Contains(stderr.String(), "not sandboxed: bwrap missing") {
+		t.Fatalf("out %q, stderr %q, err %v", out, stderr.String(), err)
+	}
+}
+
 func TestShellJoin(t *testing.T) {
 	got := ShellJoin([]string{"echo", "a b", "it's", "x=1", ""})
 	want := `echo 'a b' 'it'\''s' x=1 ''`

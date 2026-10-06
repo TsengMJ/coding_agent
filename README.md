@@ -79,7 +79,23 @@ go run ./cmd/quill summarize README.md
 
 核准框會顯示 `write_file` / `edit_file` / `apply_patch` 對照磁碟上現有檔案的 unified diff。
 
-> **注意**：shell 指令沒有沙箱，核准後可以存取整台機器；`-y` 等於沒有保護。請在可以放心讓它改動的目錄下使用。
+> **注意**：預設（`sandbox.mode = "full-access"`）shell 指令沒有沙箱，核准後可以存取整台機器；`-y` 等於沒有保護。建議開啟 OS 沙箱（見下方「Shell 沙箱」），或只在可以放心讓它改動的目錄下使用。
+
+### Shell 沙箱
+
+`execute`、`run_tests`、`diagnostics` 的 shell 子程序可以在 OS 層沙箱內執行（macOS Seatbelt `sandbox-exec`，Linux bubblewrap `bwrap`），做法對標 Claude Code、Codex CLI 與 Cursor。quill 本身不進沙箱，只包住 shell 指令。
+
+| `sandbox.mode` | 寫入 | 讀取 | 網路 |
+|---|---|---|---|
+| `full-access`（預設） | 不限制 | 不限制 | 不限制 |
+| `workspace-write` | 專案目錄、暫存目錄、建置 cache（Go、npm、pip ...）與 `sandbox.writable_roots`；但 `.git/hooks`、`.git/config`、`.quill/` 不可寫 | 整台機器，但 `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.config/gh`、`~/.netrc`、`~/.quill/.env`、docker socket 等不可讀 | 只有 localhost |
+| `read-only` | 都不可寫（`write_file`、`edit_file`、`apply_patch`、`delete` 也一併拒絕） | 同上 | 只有 localhost |
+
+- 一次性切換：`quill -sandbox workspace-write ...`、`quill serve -sandbox ...` 或 `QUILL_SANDBOX_MODE`。
+- 試跑：`quill sandbox -- touch ~/x`（應該失敗）、`quill sandbox -- go test ./...`；`-print-policy` 印出實際規則。
+- Linux 需要安裝 bubblewrap 且允許 unprivileged user namespace；無法使用時預設拒絕啟動（`sandbox.on_unavailable = "warn"` 改成不受限執行，並在每個指令結果中警告）。
+- 沙箱擋的是 shell；檔案工具本來就鎖在專案目錄內（virtual mode），`.git/hooks`、`.git/config` 也同樣不可寫。
+- 只有 `~/.quill/config.toml` 能設定沙箱，專案目錄裡的設定改不了它。
 
 ### 腳本與 CI
 
@@ -113,11 +129,17 @@ max_retries = 2                            # 模型呼叫遇到 429 / 5xx / 連�
 
 [server]
 url = "http://127.0.0.1:8123"              # 等同 QUILL_SERVER
+
+[sandbox]
+mode = "workspace-write"                   # read-only / workspace-write / full-access（預設）；等同 QUILL_SANDBOX_MODE
+writable_roots = ["~/scratch"]             # workspace-write 額外可寫的目錄
+deny_read = ["~/.config/secret-tool"]      # 額外不可讀的路徑
+on_unavailable = "error"                   # 平台沙箱無法使用時：error（預設，拒絕啟動）或 warn
 ```
 
 allow-list 只比對每段指令（以 `|`、`;`、`&&`、`||` 切開）的第一個字；含 `$(`、反引號、`$VAR`、`${`、重導向（`>`、`<`、`>>`、`<<`）、背景 `&`、換行或 tab 的指令一律要核准。例如 `ls | grep x` 免核准，`ls "$(rm -rf /)"` 與 `ls &` 仍會問。
 
-shell 指令沒有 sandbox，下列保護只擋常見的意外：
+不論是否開啟沙箱，下列保護都會生效：
 
 - 破壞性指令（`rm -rf` 根目錄、家目錄或整個專案，`git reset --hard`、`git clean -f`、`git checkout -- .`、`git push --force`、`curl ... | sh`、`mkfs`、`dd of=/dev/...` 等）：
   - 互動模式下一律要核准，即使用了 `-y`、allow-list 為 `"all"`，或本次已選擇自動核准；

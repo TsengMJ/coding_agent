@@ -271,7 +271,7 @@ func (b *LocalShellBackend) command(ctx context.Context, command string) (*exec.
 
 // Sandboxed reports whether commands run inside an OS sandbox.
 func (b *LocalShellBackend) Sandboxed() bool {
-	return b.opts.Sandbox != nil && b.opts.Policy.Mode != ossandbox.FullAccess
+	return ossandbox.Confines(b.opts.Sandbox, b.opts.Policy)
 }
 
 // SandboxPolicy returns the policy commands run under; meaningful only

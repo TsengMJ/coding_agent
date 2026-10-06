@@ -10,6 +10,7 @@ import (
 	"os/exec"
 
 	"github.com/tsengmingchun/quill/backend/ossandbox"
+	codeagent "github.com/tsengmingchun/quill/code/agent"
 )
 
 // runSandbox runs one command under the shell sandbox, the way the agent's
@@ -17,8 +18,8 @@ import (
 func runSandbox(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 	fs := flag.NewFlagSet("quill sandbox", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	mode := fs.String("mode", string(ossandbox.WorkspaceWrite), "read-only, workspace-write or full-access")
-	network := fs.String("network", string(ossandbox.NetworkNone), "none or full")
+	mode := fs.String("mode", "", "read-only, workspace-write or full-access (default sandbox.mode, or workspace-write when that is full-access)")
+	network := fs.String("network", "", "none or full (default sandbox.network)")
 	printProfile := fs.Bool("print-policy", false, "print the policy (and the Seatbelt profile on macOS) before running")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "Usage:\n  quill sandbox [flags] -- command [args...]\n\nRuns command in the current directory inside the sandbox quill's shell tools use.")
@@ -31,29 +32,35 @@ func runSandbox(ctx context.Context, args []string, stdout, stderr io.Writer) (i
 		fs.Usage()
 		return 2, errors.New("sandbox: missing command")
 	}
-	m, err := ossandbox.ParseMode(*mode)
-	if err != nil {
-		return 2, err
-	}
-	n, err := ossandbox.ParseNetwork(*network)
-	if err != nil {
-		return 2, err
-	}
-	if n == ossandbox.NetworkAllowlist {
-		return 2, errors.New("sandbox: -network allowlist needs the agent's proxy; use none or full")
-	}
-	cwd, err := os.Getwd()
+	e, err := loadEnv()
 	if err != nil {
 		return 1, err
 	}
-	policy := ossandbox.DefaultPolicy(m, cwd)
-	policy.Network = n
-	sb := ossandbox.None()
-	if m != ossandbox.FullAccess {
-		if sb, err = ossandbox.Native(); err != nil {
-			return 1, err
+	s := *e.settings
+	if !s.Sandbox.Enabled() {
+		s.Sandbox.Mode = ossandbox.WorkspaceWrite
+	}
+	if *mode != "" {
+		if s.Sandbox.Mode, err = ossandbox.ParseMode(*mode); err != nil {
+			return 2, err
 		}
 	}
+	if *network != "" {
+		if s.Sandbox.Network, err = ossandbox.ParseNetwork(*network); err != nil {
+			return 2, err
+		}
+	}
+	if s.Sandbox.Network == ossandbox.NetworkAllowlist {
+		return 2, errors.New("sandbox: -network allowlist needs the agent's proxy; use none or full")
+	}
+	sb, policy, err := codeagent.NewShellSandbox(&s, e.cwd)
+	if err != nil {
+		return 1, err
+	}
+	if sb == nil {
+		sb, policy = ossandbox.None(), ossandbox.Policy{Mode: ossandbox.FullAccess}
+	}
+	cwd := e.cwd
 	if *printProfile {
 		fmt.Fprintf(stderr, "sandbox: %s, mode %s, network %s\nwritable: %v\ndeny write: %v\ndeny read: %v\n",
 			sb.Name(), policy.Mode, policy.Network, policy.WritableRoots, policy.DenyWrite, policy.DenyRead)

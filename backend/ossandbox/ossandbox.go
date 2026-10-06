@@ -101,6 +101,28 @@ func (none) Command(ctx context.Context, _ Policy, shellCmd string) (*exec.Cmd, 
 	return exec.CommandContext(ctx, "sh", "-c", shellCmd), nil
 }
 
+// Unconfined runs commands without a sandbox but first prints a warning
+// with reason to stderr, so every result says the sandbox is off.
+func Unconfined(reason string) Sandbox { return unconfined{reason} }
+
+type unconfined struct{ reason string }
+
+func (unconfined) Name() string { return "unconfined" }
+
+func (u unconfined) Command(ctx context.Context, _ Policy, shellCmd string) (*exec.Cmd, error) {
+	warn := "printf '%s\\n' " + shellQuote("warning: not sandboxed: "+u.reason) + " >&2\n"
+	return exec.CommandContext(ctx, "sh", "-c", warn+shellCmd), nil
+}
+
+// Confines reports whether sb actually confines commands run under p.
+func Confines(sb Sandbox, p Policy) bool {
+	switch sb.(type) {
+	case nil, none, unconfined:
+		return false
+	}
+	return p.Mode != FullAccess
+}
+
 // DefaultPolicy is the policy for a project rooted at root: in
 // WorkspaceWrite mode the project, temp and toolchain cache directories are
 // writable; files that would let a command run code outside the sandbox

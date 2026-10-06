@@ -16,6 +16,7 @@ import (
 	"github.com/tsengmingchun/quill"
 	core "github.com/tsengmingchun/quill/agent"
 	"github.com/tsengmingchun/quill/backend"
+	"github.com/tsengmingchun/quill/backend/ossandbox"
 	"github.com/tsengmingchun/quill/code/askuser"
 	"github.com/tsengmingchun/quill/code/cache"
 	"github.com/tsengmingchun/quill/code/codetools"
@@ -96,7 +97,10 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	}
 	b := opts.Backend
 	if b == nil {
-		b = NewBackend(opts.Cwd)
+		var err error
+		if b, err = NewSandboxedBackend(opts.Cwd, opts.Settings); err != nil {
+			return nil, fmt.Errorf("code/agent.CreateCLIAgent: %w", err)
+		}
 	}
 	b = withHostRoutes(b, userSkillRoots(opts.UserDir, opts.AgentName), opts.Artifacts, opts.Cwd)
 	skillSources := existingSkillSources(ctx, b, SkillSources(opts.UserDir, opts.AgentName))
@@ -194,6 +198,12 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		quill.WithSubAgents(subs...),
 		quill.WithBackgroundTasks(),
 		quill.WithTracer(opts.Tracer),
+	}
+	if perms := sandboxPermissions(opts.Settings); len(perms) > 0 {
+		dopts = append(dopts, quill.WithPermissions(perms...))
+	}
+	if opts.Settings != nil && opts.Settings.Sandbox.Mode == ossandbox.ReadOnly {
+		dopts = append(dopts, quill.WithMiddleware(readOnlyGuard{}))
 	}
 	if len(interrupts) > 0 {
 		dopts = append(dopts, quill.WithInterruptOn(interrupts))

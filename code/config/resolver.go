@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/tsengmingchun/quill/backend/ossandbox"
 )
 
 // Environment variables that override config.toml.
@@ -47,6 +49,7 @@ type fileConfig struct {
 		LangSmith bool   `toml:"langsmith"`
 		Project   string `toml:"project"`
 	} `toml:"tracing"`
+	Sandbox sandboxFile `toml:"sandbox"`
 }
 
 // fileResolver resolves defaults < config.toml < environment. CLI flags are
@@ -66,7 +69,7 @@ func (r *fileResolver) Settings() (*Settings, error) {
 func (r *fileResolver) Sources() []Source { return r.sources }
 
 func (r *fileResolver) Reload() error {
-	s := &Settings{ApprovalMode: ApprovalYolo}
+	s := &Settings{ApprovalMode: ApprovalYolo, Sandbox: defaultSandboxSettings()}
 	src := Source{Scope: ScopeUser, Path: r.paths.ConfigFile}
 	err := loadUserFile(r.paths.ConfigFile, s)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -126,6 +129,9 @@ func loadUserFile(path string, s *Settings) error {
 	if err := applyAllowList(s, fc.Shell.AllowList); err != nil {
 		return fmt.Errorf("config %s: shell.allow_list: %w", path, err)
 	}
+	if err := applySandbox(&s.Sandbox, fc.Sandbox); err != nil {
+		return fmt.Errorf("config %s: sandbox.%w", path, err)
+	}
 	return nil
 }
 
@@ -184,6 +190,13 @@ func applyEnv(s *Settings, getenv func(string) string) error {
 		if err := applyAllowList(s, v); err != nil {
 			return fmt.Errorf("$%s: %w", ShellAllowListEnvVar, err)
 		}
+	}
+	if v := getenv(SandboxModeEnvVar); v != "" {
+		m, err := ossandbox.ParseMode(v)
+		if err != nil {
+			return fmt.Errorf("$%s: %w", SandboxModeEnvVar, err)
+		}
+		s.Sandbox.Mode = m
 	}
 	return nil
 }

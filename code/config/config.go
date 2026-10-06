@@ -42,9 +42,10 @@ type Settings struct {
 	// MaxRetries overrides llm.DefaultMaxRetries when non-nil (retries.max_retries).
 	MaxRetries *int
 	// ServerURL is the `quill serve` URL clients use (server.url, $QUILL_SERVER).
-	ServerURL       string
-	Theme           string
-	SandboxProvider string
+	ServerURL string
+	Theme     string
+	// Sandbox confines shell commands ([sandbox], $QUILL_SANDBOX_MODE).
+	Sandbox SandboxSettings
 	// WebSearchAPIKey is the Brave Search API key ($BRAVE_API_KEY); empty
 	// leaves web_search out.
 	WebSearchAPIKey string
