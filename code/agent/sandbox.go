@@ -2,13 +2,15 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"strings"
 
 	core "github.com/tsengmingchun/quill/agent"
 	"github.com/tsengmingchun/quill/backend/ossandbox"
 	"github.com/tsengmingchun/quill/code/codetools"
 	"github.com/tsengmingchun/quill/code/config"
 	"github.com/tsengmingchun/quill/llm"
-	"github.com/tsengmingchun/quill/middleware/permissions"
 	"github.com/tsengmingchun/quill/tool"
 )
 
@@ -37,34 +39,38 @@ func NewShellSandbox(s *config.Settings, cwd string) (ossandbox.Sandbox, ossandb
 	return sb, policy, nil
 }
 
-// readOnlyGuard refuses apply_patch in read-only mode; it writes through
-// the backend directly, so the file permission rules do not cover it.
-type readOnlyGuard struct{}
+// fileWriteTools change files through the backend rather than the shell.
+var fileWriteTools = []string{"write_file", "edit_file", "delete", codetools.ApplyPatchName}
 
-func (readOnlyGuard) Name() string { return "SandboxReadOnlyGuard" }
+// sandboxFileGuard keeps file tools in step with the shell sandbox:
+// read-only mode refuses every write, and workspace-write refuses the
+// project files the sandbox protects (.git/hooks, .git/config), since a
+// hook written there runs outside any sandbox on the user's next commit.
+type sandboxFileGuard struct{ mode ossandbox.Mode }
 
-func (readOnlyGuard) WrapToolCall(ctx context.Context, req *core.ToolCallRequest, next core.ToolHandler) (*tool.Result, error) {
-	if req.ToolCall.Name != codetools.ApplyPatchName {
+func (sandboxFileGuard) Name() string { return "SandboxFileGuard" }
+
+func (g sandboxFileGuard) WrapToolCall(ctx context.Context, req *core.ToolCallRequest, next core.ToolHandler) (*tool.Result, error) {
+	if !slices.Contains(fileWriteTools, req.ToolCall.Name) {
 		return next(ctx, req)
 	}
-	return &tool.Result{IsError: true, Content: []llm.ContentBlock{llm.TextBlock(
-		"Not run: the sandbox is in read-only mode (sandbox.mode = \"read-only\"), so files cannot be changed. " +
-			"Describe the change instead, or ask the user to switch to workspace-write.")}}, nil
+	if g.mode == ossandbox.ReadOnly {
+		return refuse("Not run: the sandbox is in read-only mode (sandbox.mode = \"read-only\"), so files cannot be changed. " +
+			"Describe the change instead, or ask the user to switch to workspace-write."), nil
+	}
+	for _, p := range codetools.MutatedPaths(req.ToolCall) {
+		if protectedPath(p) {
+			return refuse(fmt.Sprintf("Not run: %s is protected by the sandbox because changing it could run code outside the sandbox. "+
+				"Leave git hooks and git config to the user.", p)), nil
+		}
+	}
+	return next(ctx, req)
 }
 
-// sandboxPermissions keeps file tools in step with the shell sandbox:
-// read-only mode denies every write, and the files the sandbox protects
-// inside the project stay read-only for write_file and edit_file too.
-func sandboxPermissions(s *config.Settings) []permissions.FilesystemPermission {
-	if s == nil || !s.Sandbox.Enabled() {
-		return nil
-	}
-	if s.Sandbox.Mode == ossandbox.ReadOnly {
-		return []permissions.FilesystemPermission{{Operations: []permissions.Operation{permissions.OpWrite}, Paths: []string{"/**"}, Mode: permissions.ModeDeny}}
-	}
-	return []permissions.FilesystemPermission{{
-		Operations: []permissions.Operation{permissions.OpWrite},
-		Paths:      []string{"/.git/hooks", "/.git/hooks/**", "/.git/config"},
-		Mode:       permissions.ModeDeny,
-	}}
+func protectedPath(p string) bool {
+	return p == "/.git/config" || p == "/.git/hooks" || strings.HasPrefix(p, "/.git/hooks/")
+}
+
+func refuse(msg string) *tool.Result {
+	return &tool.Result{IsError: true, Content: []llm.ContentBlock{llm.TextBlock(msg)}}
 }

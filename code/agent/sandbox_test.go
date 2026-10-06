@@ -14,7 +14,6 @@ import (
 	"github.com/tsengmingchun/quill/code/codetools"
 	"github.com/tsengmingchun/quill/code/config"
 	"github.com/tsengmingchun/quill/llm"
-	"github.com/tsengmingchun/quill/middleware/permissions"
 	"github.com/tsengmingchun/quill/tool"
 )
 
@@ -59,39 +58,64 @@ func TestNewShellSandboxReadOnlyIgnoresExtraWritableRoots(t *testing.T) {
 	}
 }
 
-func TestSandboxPermissions(t *testing.T) {
-	if perms := sandboxPermissions(sandboxSettings(ossandbox.FullAccess)); perms != nil {
-		t.Errorf("full-access perms = %v", perms)
-	}
-	ro := sandboxPermissions(sandboxSettings(ossandbox.ReadOnly))
-	if permissions.Check(ro, permissions.OpWrite, "/src/a.go") != permissions.ModeDeny ||
-		permissions.Check(ro, permissions.OpRead, "/src/a.go") == permissions.ModeDeny {
-		t.Errorf("read-only perms = %+v", ro)
-	}
-	ww := sandboxPermissions(sandboxSettings(ossandbox.WorkspaceWrite))
-	for path, want := range map[string]permissions.Mode{
-		"/.git/hooks/pre-commit": permissions.ModeDeny,
-		"/.git/config":           permissions.ModeDeny,
-		"/src/a.go":              permissions.ModeAllow,
-	} {
-		if got := permissions.Check(ww, permissions.OpWrite, path); got != want && !(want == permissions.ModeAllow && got == "") {
-			t.Errorf("write %s = %q, want %q", path, got, want)
-		}
-	}
-}
-
-func TestReadOnlyGuardBlocksApplyPatchOnly(t *testing.T) {
+// guarded reports whether g refuses call, and the refusal text.
+func guarded(g sandboxFileGuard, name string, args map[string]any) (bool, string) {
 	called := false
 	next := func(context.Context, *core.ToolCallRequest) (*tool.Result, error) {
 		called = true
 		return &tool.Result{}, nil
 	}
-	res, _ := readOnlyGuard{}.WrapToolCall(context.Background(), &core.ToolCallRequest{ToolCall: llm.ToolCall{Name: codetools.ApplyPatchName}}, next)
-	if called || !res.IsError || !strings.Contains(res.Content[0].Text, "read-only") {
-		t.Fatalf("apply_patch: called %v, result %+v", called, res)
+	res, _ := g.WrapToolCall(context.Background(), &core.ToolCallRequest{ToolCall: llm.ToolCall{Name: name, Args: args}}, next)
+	if called {
+		return false, ""
 	}
-	if _, _ = (readOnlyGuard{}).WrapToolCall(context.Background(), &core.ToolCallRequest{ToolCall: llm.ToolCall{Name: "read_file"}}, next); !called {
-		t.Fatal("read_file was blocked")
+	return true, res.Content[0].Text
+}
+
+func TestSandboxFileGuardReadOnly(t *testing.T) {
+	g := sandboxFileGuard{mode: ossandbox.ReadOnly}
+	for _, name := range []string{"write_file", "edit_file", "delete", codetools.ApplyPatchName} {
+		if blocked, msg := guarded(g, name, map[string]any{"file_path": "/a.go"}); !blocked || !strings.Contains(msg, "read-only") {
+			t.Errorf("%s: blocked %v, %q", name, blocked, msg)
+		}
+	}
+	if blocked, _ := guarded(g, "read_file", map[string]any{"file_path": "/a.go"}); blocked {
+		t.Error("read_file was blocked")
+	}
+}
+
+func TestSandboxFileGuardWorkspaceWriteProtectsGit(t *testing.T) {
+	g := sandboxFileGuard{mode: ossandbox.WorkspaceWrite}
+	cases := []struct {
+		name string
+		args map[string]any
+		want bool
+	}{
+		{"write_file", map[string]any{"file_path": "/.git/hooks/pre-commit"}, true},
+		{"edit_file", map[string]any{"file_path": "/.git/config"}, true},
+		{"write_file", map[string]any{"file_path": "/src/a.go"}, false},
+		{"write_file", map[string]any{"file_path": "/.github/workflows/ci.yml"}, false},
+		{codetools.ApplyPatchName, map[string]any{"patch": "*** Begin Patch\n*** Add File: .git/hooks/post-checkout\n+echo hi\n*** End Patch"}, true},
+		{codetools.ApplyPatchName, map[string]any{"patch": "*** Begin Patch\n*** Add File: src/b.go\n+package b\n*** End Patch"}, false},
+	}
+	for _, c := range cases {
+		if blocked, msg := guarded(g, c.name, c.args); blocked != c.want {
+			t.Errorf("%s %v: blocked %v (%q), want %v", c.name, c.args, blocked, msg, c.want)
+		}
+	}
+}
+
+func TestCreateCLIAgentWithSandboxModes(t *testing.T) {
+	if _, err := ossandbox.Native(); err != nil {
+		t.Skip(err)
+	}
+	for _, mode := range []ossandbox.Mode{ossandbox.ReadOnly, ossandbox.WorkspaceWrite} {
+		dir := t.TempDir()
+		s := sandboxSettings(mode)
+		_, err := CreateCLIAgent(context.Background(), Options{Settings: s, Model: llm.NewFakeModel(), Cwd: dir, AutoApprove: true, NoWebTools: true, NoVerifyGate: true})
+		if err != nil {
+			t.Errorf("%s: %v", mode, err)
+		}
 	}
 }
 

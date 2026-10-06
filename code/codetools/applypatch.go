@@ -331,7 +331,7 @@ func parallelPatchConflict(rt *tool.Runtime, planned []PatchedFile) (string, boo
 			if call.ID == rt.ToolCallID {
 				return "", false
 			}
-			for _, p := range mutatedPaths(call) {
+			for _, p := range MutatedPaths(call) {
 				if mine[p] {
 					return p, true
 				}
@@ -345,15 +345,15 @@ func parallelPatchConflict(rt *tool.Runtime, planned []PatchedFile) (string, boo
 // patchEffect writes the files the patch names; an unparsable patch is
 // rejected without touching anything, but is scheduled as writing everything.
 func patchEffect(args map[string]any) tool.Effect {
-	paths := mutatedPaths(llm.ToolCall{Name: ApplyPatchName, Args: args})
+	paths := MutatedPaths(llm.ToolCall{Name: ApplyPatchName, Args: args})
 	if len(paths) == 0 {
 		paths = nil
 	}
 	return tool.Effect{Kind: tool.EffectWrite, Paths: paths}
 }
 
-// mutatedPaths lists the files a tool call changes.
-func mutatedPaths(call llm.ToolCall) []string {
+// MutatedPaths lists the files a tool call changes.
+func MutatedPaths(call llm.ToolCall) []string {
 	if slices.Contains(mutationTools, call.Name) {
 		raw, _ := call.Args["file_path"].(string)
 		if p, err := backend.ValidatePath(raw, nil); err == nil && raw != "" {
