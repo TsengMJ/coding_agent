@@ -13,12 +13,13 @@ Coding agent 在使用者的電腦上讀寫檔案、執行任意 shell 指令，
 
 ## 業界怎麼做
 
-- **Claude Code**：macOS Seatbelt、Linux bubblewrap，檔案與網路兩層隔離。
-- **Codex**：read-only / workspace-write / danger-full-access 三種 sandbox，搭配獨立的 approval policy。
+- **Claude Code**（`@anthropic-ai/sandbox-runtime`）：macOS Seatbelt、Linux bubblewrap + 獨立 network namespace；網路走 sandbox 外的 proxy 依 domain allowlist 放行；`autoAllowBashIfSandboxed` 讓 sandbox 內的指令免核准。
+- **Codex**：read-only / workspace-write / danger-full-access 三種 sandbox，搭配獨立的 approval policy；workspace-write 預設斷網。
+- **Cursor**：終端機指令在 sandbox 內執行，workspace 可寫、預設斷網，被擋下時提示在 sandbox 外重跑。
 
-## 我的立場：誠實標示沒有 OS sandbox，在其他層盡量擋
+## 我的立場：shell 進 OS sandbox，其他層照樣擋
 
-README 與 `--help` 明確寫出「shell 指令沒有 sandbox，核准後可以存取整台機器；`-y` 等於沒有保護」。OS 層 sandbox（seatbelt / bwrap）沒做，理由是平台相依、而且無法在 regress 評測中驗證（「每個抽象都要可觀察」）。其餘以多層防護處理：
+shell 子程序（`execute`、`run_tests`、`diagnostics`）在 OS 層 sandbox 內執行，macOS / Linux 預設開啟（見 [§12](#12-os-層-process-sandbox)）；quill 本身不進 sandbox。sandbox 是最後一道牆，前面的多層防護都還在：
 
 ```mermaid
 flowchart TD
@@ -28,14 +29,14 @@ flowchart TD
     perm -->|deny| deny2[permission denied]
     perm -->|interrupt| hitl
     perm -->|allow| hitl{需要人工核准？}
-    hitl -->|破壞性指令：一律| review[核准框]
-    hitl -->|allow-list 符合 / YOLO| run
+    hitl -->|破壞性指令、sandbox 逃生口：一律| review[核准框]
+    hitl -->|allow-list 符合 / YOLO / 在 sandbox 內的 shell| run
     hitl -->|其他寫入、執行、網路| review
     review -->|approve / edit| run[執行]
     review -->|reject + 理由| back[理由回給模型]
     run --> path{路徑在專案根目錄內？}
     path -->|否| deny3[invalid path]
-    path -->|是| exec[執行：shell 看不到 secret 環境變數]
+    path -->|是| exec[執行：shell 在 OS sandbox 內、看不到 secret 環境變數]
     exec --> trace[寫 trace 前遮蔽 secret]
 ```
 
@@ -53,6 +54,7 @@ flowchart TD
 |---|---|
 | `write_file`、`edit_file`、`apply_patch`、`delete`、`execute`、`run_tests`、`diagnostics`、`web_search`、`fetch_url`、Context7、啟動 web-researcher 的 `task` | `ls`、`read_file`、`grep`、`glob`、`git_status`、`git_diff` |
 
+- **sandbox 開啟時**，`execute`、`run_tests`、`diagnostics` 改成免核准，只有破壞性指令與 `sandbox: false` 逃生口要核准（§12）。
 - **四種決策**：approve、edit（修改參數後執行，並取代存下的 assistant 訊息中的參數）、reject（理由回傳給模型）、respond（使用者的回答直接當工具結果，`ask_user` 用）。
 - **核准框顯示 diff**：寫入 / 編輯 / patch 顯示對磁碟現有檔案的 unified diff。
 - **各介面行為**：TUI `a/r/A`；`-n` 且 stdin 是終端機時逐一 `[y]es / [a]ll / [N]o / 理由`；**`-n` 但 stdin 不是終端機（管線、CI）時自動拒絕，並告訴模型沒有人可以核准**，而不是卡住等輸入。
@@ -142,12 +144,41 @@ flowchart TD
 
 Stage 18e：專案目錄的 `.env` **不能設定** `LANGSMITH_*` / `LANGCHAIN_*`，只能放在 shell 或 `~/.quill/.env`。避免 clone 下來的 repo 偷開 tracing，把你的對話與程式碼送到別人的 LangSmith 專案。`.env` 載入時 shell 已設定的變數永遠優先。
 
+## 12. OS 層 Process Sandbox
+
+實作：[backend/ossandbox](../../backend/ossandbox/)（policy、Seatbelt、bubblewrap、proxy）、[code/agent/sandbox.go](../../code/agent/sandbox.go)、[code/agent/sandbox_escape.go](../../code/agent/sandbox_escape.go)。
+
+**架構**：跨平台的 `Policy`（Mode、WritableRoots、DenyWrite、DenyRead、Network、Proxy）加上 `Sandbox` interface（產生包好的 `*exec.Cmd`）；`LocalShellBackend.Execute` 透過它建立指令。只包 shell 子程序，agent 行程本身不受限（它要連 LLM、Postgres、Redis）。
+
+| | macOS | Linux |
+|---|---|---|
+| 機制 | `sandbox-exec -p <動態 profile>`，`(deny default)` 起手 | `bwrap`：`--ro-bind / /`、writable root `--bind`、`--unshare-pid/ipc/net`、`--die-with-parent`、`--new-session` |
+| deny-read | `(deny file-read* ...)`，讀取與列目錄都被拒 | 目錄蓋 tmpfs（看起來是空目錄）、檔案蓋 `/dev/null` |
+| 規則順序 | 後面的規則優先：先 allow writable roots，再 deny `.git/hooks` 等 | 後面的 mount 遮住前面的：先 bind，再 ro-bind |
+| 不存在的路徑 | subpath 規則照樣生效 | 無法 bind：writable root 先 `mkdir`（如 `$GOPATH/pkg/sumdb`），deny-write 的不存在路徑擋不住 |
+
+**模式**（`sandbox.mode`，對標 Codex）：`workspace-write`（macOS / Linux 預設）可寫專案、暫存目錄、建置 cache 與 `sandbox.writable_roots`；`.git/hooks`、`.git/config`、`.quill/` 不可寫，因為 hook 會在使用者下次 commit 時於 sandbox 外執行；`~/.ssh`、`~/.aws`、`~/.config/gh`、`~/.quill/.env`、docker socket 等不可讀。`read-only` 都不可寫，檔案工具也一併拒絕（`sandboxFileGuard`，因為 filesystem 的 permissions 不能和可執行的 backend 併用）。`full-access` 不包。
+
+**網路**（`sandbox.network`）：`none`（預設）只剩 localhost。`allowlist` 對標 Claude Code：quill 行程內跑 HTTP CONNECT proxy，只放行 `sandbox.allowed_domains`（預設 Go module proxy / sumdb、GitHub、npm、PyPI），解析出的 IP 經 `BlockedIP` 檢查並釘住（防 DNS rebinding），指令透過注入的 `HTTP(S)_PROXY` 使用它。macOS 的 profile 本來就允許 localhost，直接連 proxy port；Linux 的 network namespace 裡連不到主機的 loopback，所以指令外面包一層 `quill __netbridge`，在 namespace 內聽同一個 port，轉接到 bind 進來的 proxy unix socket（Claude Code 用 socat）。fake-IP proxy（Clash、Surge TUN 模式）把網域解析到 `198.18.0.0/15`，這段不視為內網，否則開了這類工具的機器所有網域都會被擋。
+
+**和核准連動**（對標 `autoAllowBashIfSandboxed`）：sandbox 內的 shell 指令免核准；破壞性指令仍一律核准。`execute` 多一個 `sandbox: false` 參數當逃生口，一律要核准（核准框標示 OUTSIDE the sandbox），headless 自動核准時沒人能核准就拒絕，`sandbox.allow_unsandboxed = false` 完全關掉。輸出含 EPERM、read-only file system、DNS 失敗、proxy 403 等字樣時附上 `[sandbox]` 說明，讓模型解釋或請求逃生口，而不是盲目重試；`ExecuteArtifact` 記錄 `sandbox` 模式與 `sandbox_blocked`，trace 看得到。
+
+**不可用時**：Linux 沒有 bwrap 或 user namespace 被關掉時，預設啟動就失敗並說明怎麼修（`sandbox.on_unavailable = "warn"` 改成不受限執行，且每個指令結果都印出警告）；不會悄悄降級。只有 `~/.quill/config.toml` 能設定 `[sandbox]`，clone 下來的專案改不了它。
+
+**驗證**（不靠 benchmark）：`make test-sandbox` 在 macOS 真的呼叫 `sandbox-exec`；`make test-sandbox-linux` 在 `golang` 容器內安裝 bubblewrap，以 root 與一般使用者各跑一次同一組整合測試（寫 workspace / 家目錄 / `.git/hooks`、讀假的 `~/.ssh`、git commit / stash / reset、斷網、allowlist 允許 / 拒絕、`go mod download`、逾時殺掉背景子程序），再用 `quill sandbox -network allowlist --` 跑 Go / npm / pip / pytest 小專案，最後移除 bwrap 確認錯誤訊息。
+
+**已知限制**：被擋判斷是看輸出關鍵字的啟發式；bwrap 下被 deny-read 的目錄顯示為空目錄；`sandboxFileGuard` 只套用在主 agent；Seatbelt 允許所有 localhost port，主機上的本地服務 sandbox 內也連得到；Windows 沒有 sandbox（預設 full-access）。
+
+**後續**：Linux Landlock + seccomp（不依賴 bwrap 的 fallback）、Windows（restricted token / AppContainer）、subagent 使用不同 policy、`ExecuteWithOffload` 也走 sandbox、credential broker（需要 token 的指令不必把 secret 放進 sandbox）。
+
 ## 面試講法
 
-> 「我沒有做 OS 層 sandbox，而且在文件與 `--help` 裡明確寫出來，因為假裝安全比不安全更糟。其他層我盡量擋：路徑解析 symlink 後鎖在專案根目錄；寫入、執行、網路要人工核准，核准框顯示 diff；allow-list 只看每段指令的第一個字，含命令替換、變數展開、重導向的一律要問；破壞性指令用固定規則判定，即使開了自動核准也一定要人確認，headless 沒人可問就直接拒絕；shell 子程序看不到 API key；trace 寫入前遮蔽 secret；fetch 擋內網位址且每次 redirect 都重新檢查。」
+> 「shell 指令跑在 OS sandbox 裡：macOS 用 Seatbelt、Linux 用 bubblewrap，預設只能寫專案和建置 cache、讀不到 credential、斷網；需要裝套件時可以開 domain allowlist，流量經過 quill 自己的 proxy。sandbox 擋得住，所以 sandbox 內的指令免核准，要出 sandbox 一定要人核准。其他層我照樣擋：路徑解析 symlink 後鎖在專案根目錄；寫入、執行、網路要人工核准，核准框顯示 diff；allow-list 只看每段指令的第一個字，含命令替換、變數展開、重導向的一律要問；破壞性指令用固定規則判定，即使開了自動核准也一定要人確認，headless 沒人可問就直接拒絕；shell 子程序看不到 API key；trace 寫入前遮蔽 secret；fetch 擋內網位址且每次 redirect 都重新檢查。」
 
 可能的追問：
 
+- **sandbox 為什麼只包 shell 不包整個 agent？** agent 要連 LLM、Postgres、Redis，包起來就得放行這些；風險來自模型執行的任意指令，檔案工具本來就鎖在專案根目錄內。和 Claude Code、Codex 的做法一致。
+- **Linux 為什麼用 bubblewrap 不用 Landlock？** bwrap 一個 policy 就能同時處理檔案、pid、網路 namespace，而且 Claude Code 也用它；Landlock + seccomp 不依賴外部 binary，列在 backlog 當 fallback。
 - **為什麼破壞性指令用 regex 不用 LLM 判斷？** 確定性、零成本、可測試；LLM 判斷本身也會被 prompt injection。
 - **環境變數為什麼用黑名單？** 白名單會讓大量正常專案的測試因缺變數失敗；黑名單針對的是「名稱像 credential」的變數，並提供放行機制。
 - **subagent 的核准怎麼辦？** 目前 subagent 不能暫停父 run，所以權限的 interrupt 變 deny；啟動 web-researcher 的 `task` 本身需要核准，核准後裡面的網路呼叫不再逐一詢問。

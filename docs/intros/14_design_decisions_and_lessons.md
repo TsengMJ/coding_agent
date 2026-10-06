@@ -90,10 +90,10 @@ Observation masking。離線重播估計省一半 token，實測 agent 重讀被
 並行（工具、subagent、背景任務、串流）是一等公民；`context.Context` 讓取消一路傳到 shell 程序群組；單一 binary 內嵌 GUI，`go install` 就能用。
 
 **Q11. 和 Claude Code / Codex / Cursor 比，你的設計有什麼對應？**
-Codex 的前綴延伸 cache 與依並行能力排程 → R4、R2；Claude Code 的 read-before-edit 與 Stop hook → VersionGuard、驗證閘門；Claude Code 的 WebFetch(url, prompt) → fetch_url；Cursor 的長輸出寫檔 → eviction；Codex 的 apply_patch 格式 → apply_patch。HEAD baseline 的概念接近 Agentless「只用原始碼上會通過的 regression test 篩 patch」，差別是我把它做成 agent 執行中的即時回饋：agent 還在場，可以根據「這是你造成的」繼續修。
+Codex 的前綴延伸 cache 與依並行能力排程 → R4、R2；Claude Code 的 read-before-edit 與 Stop hook → VersionGuard、驗證閘門；Claude Code 的 WebFetch(url, prompt) → fetch_url；Cursor 的長輸出寫檔 → eviction；Codex 的 apply_patch 格式 → apply_patch；Codex 的 read-only / workspace-write / full-access 與 Claude Code 的 Seatbelt / bubblewrap + domain allowlist proxy + `autoAllowBashIfSandboxed` → OS 層 shell sandbox（見 08 §12）。HEAD baseline 的概念接近 Agentless「只用原始碼上會通過的 regression test 篩 patch」，差別是我把它做成 agent 執行中的即時回饋：agent 還在場，可以根據「這是你造成的」繼續修。
 
 **Q12. 如果再多給你時間，下一步做什麼？**
-（1）OS sandbox（seatbelt / bwrap）並設計可在評測中驗證的方式；（2）更大的評測樣本（smoke50 × 多次）讓解題率的比較有統計意義；（3）環境一致性：bd80 的 regression 在 agent 環境裡看不到，屬於任何閘門都擋不了的類型；（4）若要重做 context 壓縮，只遮蔽 grep / glob / ls，或不遮蔽之後還會編輯的檔案。
+（1）sandbox 的下一步：Linux Landlock + seccomp fallback、Windows 支援，以及量測 sandbox 對評測解題率的影響；（2）更大的評測樣本（smoke50 × 多次）讓解題率的比較有統計意義；（3）環境一致性：bd80 的 regression 在 agent 環境裡看不到，屬於任何閘門都擋不了的類型；（4）若要重做 context 壓縮，只遮蔽 grep / glob / ls，或不遮蔽之後還會編輯的檔案。
 
 **Q13. 測試策略？**
 870 個測試函式。FakeModel 讓 agent 行為可以 deterministic 測試；httptest 假 provider；暫存 git repo 測 baseline；Postgres / Redis 整合測試（沒設定時 skip）；`-race`；前端 vitest。benchmark 失敗轉成 FakeModel 回歸測試。

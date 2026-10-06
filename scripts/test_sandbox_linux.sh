@@ -15,8 +15,11 @@ image=${GO_IMAGE:-golang:${go_version}}
 exec docker run --rm --privileged \
   -v "$PWD":/src:ro -w /src \
   -v quill-sandbox-gomod:/go/pkg/mod -v quill-sandbox-gocache:/gocache \
+  -v quill-sandbox-apt:/var/cache/apt/archives \
   -e QUILL_SANDBOX_IT=1 -e DEBIAN_FRONTEND=noninteractive \
   "$image" bash -euo pipefail -c '
+    # Keep downloaded packages in the volume; nodejs and npm are slow to fetch.
+    rm -f /etc/apt/apt.conf.d/docker-clean
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends bubblewrap curl git python3 python3-venv nodejs npm >/dev/null
     export GOFLAGS=-buildvcs=false GOCACHE=/gocache
