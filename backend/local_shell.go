@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/tsengmingchun/quill/backend/ossandbox"
 )
 
 // DefaultExecuteTimeout is LocalShellBackend's default command timeout.
@@ -38,11 +40,14 @@ type LocalShellOptions struct {
 	// those named in PassEnv. Env is always passed.
 	HideSecretEnv bool
 	PassEnv       []string
+	// Sandbox confines commands to Policy; nil runs them unconfined.
+	Sandbox ossandbox.Sandbox
+	Policy  ossandbox.Policy
 }
 
 // LocalShellBackend is a FilesystemBackend that also runs shell commands on
-// the host. It provides no isolation: commands can touch any path regardless
-// of VirtualMode.
+// the host. Without a Sandbox it provides no isolation: commands can touch
+// any path regardless of VirtualMode.
 type LocalShellBackend struct {
 	*FilesystemBackend
 	opts LocalShellOptions
@@ -89,7 +94,10 @@ func (b *LocalShellBackend) Execute(ctx context.Context, command string, timeout
 	runCtx, cancel := context.WithTimeout(ctx, effective)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, "sh", "-c", command)
+	cmd, err := b.command(runCtx, command)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("Error executing command: %v", err), 1)
+	}
 	cmd.Dir = b.root
 	cmd.Env = b.env()
 	stdout := &cappedBuffer{limit: b.opts.MaxOutputBytes}
@@ -97,7 +105,7 @@ func (b *LocalShellBackend) Execute(ctx context.Context, command string, timeout
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = time.Second
 	setProcessGroup(cmd)
-	err := cmd.Run()
+	err = cmd.Run()
 	// Background children (`cmd &`) would otherwise outlive the tool call.
 	_ = killProcessGroup(cmd)
 
@@ -253,6 +261,22 @@ func trimLeadingCutRune(s string) string {
 func errorResponse(msg string, code int) ExecuteResponse {
 	return ExecuteResponse{Output: msg, ExitCode: &code}
 }
+
+func (b *LocalShellBackend) command(ctx context.Context, command string) (*exec.Cmd, error) {
+	if b.opts.Sandbox == nil {
+		return exec.CommandContext(ctx, "sh", "-c", command), nil
+	}
+	return b.opts.Sandbox.Command(ctx, b.opts.Policy, command)
+}
+
+// Sandboxed reports whether commands run inside an OS sandbox.
+func (b *LocalShellBackend) Sandboxed() bool {
+	return b.opts.Sandbox != nil && b.opts.Policy.Mode != ossandbox.FullAccess
+}
+
+// SandboxPolicy returns the policy commands run under; meaningful only
+// when Sandboxed.
+func (b *LocalShellBackend) SandboxPolicy() ossandbox.Policy { return b.opts.Policy }
 
 func (b *LocalShellBackend) env() []string {
 	var env []string

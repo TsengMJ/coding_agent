@@ -56,6 +56,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, err
 			return 0, runServe(ctx, args[1:], stderr)
 		case "threads":
 			return 0, runThreads(ctx, args[1:], stdout)
+		case "sandbox":
+			return runSandbox(ctx, args[1:], stdout, stderr)
 		}
 	}
 	return runAgent(ctx, args, stdout, stderr)
@@ -181,7 +183,8 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 			"  quill [flags] [-n prompt | prompt...]   run the agent in the current directory\n"+
 			"                                         (interactive: web GUI; -tui terminal UI; -plain line REPL)\n"+
 			"  quill serve [-addr host:port]          run a long-lived agent server\n"+
-			"  quill threads [-all] [-json]           list threads\n\n"+
+			"  quill threads [-all] [-json]           list threads\n"+
+			"  quill sandbox [-mode m] -- cmd...      run one command in the shell sandbox\n\n"+
 			"quill needs Postgres ($QUILL_POSTGRES_CONN_STRING or $POSTGRES_CONN_STRING) for threads,\n"+
 			"plans and traces, and Redis ($QUILL_REDIS_URL or $REDIS_URL) for caches; it will not start without both.\n"+
 			"Tool calls run without approval by default. With startup.mode = \"manual\" in\n"+
