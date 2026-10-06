@@ -87,6 +87,16 @@ quill -server http://127.0.0.1:8123     # 客戶端的 -sandbox 不會生效
 
 trace 會記錄每個 `execute` 的沙箱模式（沙箱外執行的記為 `unsandboxed`）與是否疑似被擋。
 
+### 在 GUI 看指令有沒有跑在沙箱裡
+
+`execute`、`run_tests`、`diagnostics` 展開後，Output 旁有沙箱 badge：
+
+- `sandbox: workspace-write`（或其他模式）：在沙箱內執行。
+- 紅色 `unsandboxed`：經你核准後在沙箱外執行。
+- 紅色 `sandbox blocked`：失敗訊息看起來是被沙箱擋下（只有 `execute` 會判斷）。
+
+收合的工具列只在 `unsandboxed` 或 `sandbox blocked` 時於右側加註，一般沙箱內執行不另外標示。沒有 badge 代表沙箱沒有開啟（`full-access`）。
+
 ## 設定
 
 沙箱只能在 `~/.quill/config.toml` 的 `[sandbox]` 設定；專案目錄裡的任何設定都改不了它，避免 clone 下來的 repo 自己把沙箱關掉。優先順序：flag > 環境變數 > config.toml > 預設。格式錯誤時 quill 啟動失敗並指出哪個欄位。

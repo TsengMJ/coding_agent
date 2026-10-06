@@ -242,7 +242,8 @@ quill threads                      # 列出這個目錄的 threads（-all 列出
 重新啟動 GUI 時，預設開啟目前目錄最近有對話內容的 thread；`-thread <id>` 可指定，`-r` 可明確要求最近的 thread。側欄的 ✎ 可替已開始的 thread 命名，名稱會隨 thread 保存；執行中暫停切換 thread，避免把串流內容顯示到另一段對話。
 
 - 時間軸保留 TUI 的收合結構（`main · LLM #n`、tool call 樹、subagent 縮排），可以一路往上捲到 thread 開頭。
-- 點 tool call 展開詳細內容：grep 依檔案分組並標出命中、read_file 帶行號、execute 顯示終端輸出與 exit code、edit/write 以 GitHub 風格 diff（unified / split）呈現；另有 Arguments、Output、Raw JSON 分頁。
+- 點 tool call 展開詳細內容：grep 依檔案分組並標出命中、read_file 帶行號、execute 顯示終端輸出、exit code 與沙箱 badge（見 [docs/sandbox.md](docs/sandbox.md#在-gui-看指令有沒有跑在沙箱裡)）、edit/write 以 GitHub 風格 diff（unified / split）呈現；另有 Arguments、Output、Raw JSON 分頁。
+- 輸入框可附圖片：直接貼上、拖進輸入框或按 Attach image。支援 PNG、JPEG、GIF、WebP，單張 5 MB、合計 10 MB；目前只有 OpenAI 相容的 provider（OpenAI、OpenRouter）會送出圖片，模型本身要支援 vision。圖片存在 thread 裡，之後每一輪都會一起送給模型。
 - 點 LLM 那一行（或 `inspect`）打開側欄，看這次呼叫實際送出的 messages（標出和上一次相比新增的部分）、回覆、提供的 tools 與 token 用量。
 - 每個 turn 結尾有 Files changed 摘要；需要核准時直接在頁面上看 diff 預覽後核准或附理由拒絕。
 - 上方可篩選 Edits / Commands / Errors / LLM calls、搜尋內容；鍵盤 `j`/`k` 移動、Enter 展開、`e` 全部展開、`/` 搜尋、`i` 打開 LLM 側欄、`G` 跳到底、Esc 關閉。
