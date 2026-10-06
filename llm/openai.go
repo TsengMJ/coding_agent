@@ -249,10 +249,18 @@ func asInt(v any) (int, bool) {
 }
 
 func toLangChainMessage(msg Message) (llms.MessageContent, error) {
+	hasImage := false
 	for _, c := range msg.Content {
-		if c.Type != BlockText {
-			return llms.MessageContent{}, notimpl.Err("llm.OpenAIModel(" + string(c.Type) + " content)")
+		switch {
+		case c.Type == BlockText:
+		case c.Type == BlockImage && msg.Role == RoleUser:
+			hasImage = true
+		default:
+			return llms.MessageContent{}, notimpl.Err("llm.OpenAIModel(" + string(msg.Role) + " " + string(c.Type) + " content)")
 		}
+	}
+	if hasImage {
+		return userMessageWithImages(msg)
 	}
 	if msg.Role == RoleTool {
 		return llms.MessageContent{
@@ -284,6 +292,31 @@ func toLangChainMessage(msg Message) (llms.MessageContent, error) {
 		})
 	}
 	return llms.MessageContent{Role: role, Parts: parts}, nil
+}
+
+// userMessageWithImages keeps the block order. Inline images become data
+// URLs: langchaingo's BinaryContent serializes as a "binary" part, which
+// the Chat Completions API rejects.
+func userMessageWithImages(msg Message) (llms.MessageContent, error) {
+	parts := make([]llms.ContentPart, 0, len(msg.Content))
+	for _, c := range msg.Content {
+		if c.Type == BlockText {
+			parts = append(parts, llms.TextPart(c.Text))
+			continue
+		}
+		url := c.URL
+		if c.Base64 != "" {
+			if c.MimeType == "" {
+				return llms.MessageContent{}, errors.New("image block without mime_type")
+			}
+			url = "data:" + c.MimeType + ";base64," + c.Base64
+		}
+		if url == "" {
+			return llms.MessageContent{}, errors.New("image block without data or url")
+		}
+		parts = append(parts, llms.ImageURLPart(url))
+	}
+	return llms.MessageContent{Role: llms.ChatMessageTypeHuman, Parts: parts}, nil
 }
 
 func langChainRole(role Role) (llms.ChatMessageType, error) {

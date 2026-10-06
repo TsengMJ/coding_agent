@@ -126,3 +126,39 @@ func TestOpenAIOtherBadRequestIsNotOverflow(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestOpenAISendsUserImagesAsDataURLs(t *testing.T) {
+	var body map[string]any
+	m := fakeOpenAI(t, 200, textReply, &body)
+	user := Message{Role: RoleUser, Content: []ContentBlock{
+		TextBlock("what is this?"),
+		{Type: BlockImage, MimeType: "image/png", Base64: "iVBORw0KGgo="},
+		{Type: BlockImage, URL: "https://example.com/a.jpg"},
+	}}
+	if _, err := m.Generate(context.Background(), ChatRequest{Messages: []Message{user}}); err != nil {
+		t.Fatal(err)
+	}
+	parts := body["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	if len(parts) != 3 || parts[0].(map[string]any)["text"] != "what is this?" {
+		t.Fatalf("content = %v", parts)
+	}
+	for i, want := range []string{"data:image/png;base64,iVBORw0KGgo=", "https://example.com/a.jpg"} {
+		p := parts[i+1].(map[string]any)
+		if p["type"] != "image_url" || p["image_url"].(map[string]any)["url"] != want {
+			t.Errorf("part %d = %v", i+1, p)
+		}
+	}
+}
+
+func TestOpenAIRejectsImagesOutsideUserMessages(t *testing.T) {
+	m := fakeOpenAI(t, 200, textReply, nil)
+	img := ContentBlock{Type: BlockImage, MimeType: "image/png", Base64: "x"}
+	for _, msg := range []Message{
+		{Role: RoleTool, ToolCallID: "c1", Content: []ContentBlock{img}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: BlockAudio, MimeType: "audio/wav", Base64: "x"}}},
+	} {
+		if _, err := m.Generate(context.Background(), ChatRequest{Messages: []Message{msg}}); err == nil {
+			t.Errorf("%s message with %s content was accepted", msg.Role, msg.Content[0].Type)
+		}
+	}
+}
