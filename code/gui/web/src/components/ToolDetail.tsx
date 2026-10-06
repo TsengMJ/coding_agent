@@ -13,6 +13,8 @@ import {
   parseLibraries,
   parseNumbered,
   pathList,
+  sandboxOf,
+  UNSANDBOXED,
   type CodeLine,
   type GrepFile,
   type TreeNode,
@@ -231,7 +233,8 @@ function ExecView({ step, output }: { step: ToolStep; output: string }) {
               {res.exitCode !== undefined && (
                 <span className={`badge ${res.exitCode === 0 ? "ok" : "bad"}`}>exit {res.exitCode}</span>
               )}{" "}
-              {res.truncated && <span className="badge bad">truncated</span>}
+              {res.truncated && <span className="badge bad">truncated</span>}{" "}
+              <SandboxBadge step={step} />
             </>
           }
         >
@@ -421,9 +424,30 @@ function GenericView({ step, output }: { step: ToolStep; output: string }) {
         <JsonTree value={step.call.args} />
       </Section>
       {step.result && step.status !== "error" && (
-        <Section title="Output">
+        <Section title="Output" extra={<SandboxBadge step={step} />}>
           <pre className="terminal">{output || "(empty)"}</pre>
         </Section>
+      )}
+    </>
+  );
+}
+
+// SandboxBadge shows the sandbox a shell tool ran under; escapes and
+// suspected denials are highlighted.
+function SandboxBadge({ step }: { step: ToolStep }) {
+  const sb = sandboxOf(step.result);
+  if (!sb) return null;
+  if (sb.mode === UNSANDBOXED) {
+    return <span className="badge bad" title="Ran outside the sandbox after your approval">unsandboxed</span>;
+  }
+  return (
+    <>
+      <span className="badge" title="Ran inside the OS sandbox">sandbox: {sb.mode}</span>
+      {sb.blocked && (
+        <>
+          {" "}
+          <span className="badge bad" title="The failure looks like a sandbox denial">sandbox blocked</span>
+        </>
       )}
     </>
   );

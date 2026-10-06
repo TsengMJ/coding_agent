@@ -2,7 +2,7 @@
 // shown as structure (grouped matches, numbered code, exit codes) instead
 // of raw text. Every parser tolerates unexpected text by returning null.
 
-import type { ToolCall } from "../types";
+import type { Message, ToolCall } from "../types";
 import { str } from "./messages";
 import { patchPaths } from "./patch";
 import { isMerge, planOf, questionsOf, todosOf } from "./plan";
@@ -95,6 +95,38 @@ export function parseExecute(output: string): ExecResult {
   const m = /\n?\[Command (?:succeeded|failed) with exit code (-?\d+)\]$/.exec(rest);
   if (m) return { output: rest.slice(0, m.index), exitCode: Number(m[1]), truncated };
   return { output: rest, truncated };
+}
+
+export interface SandboxInfo {
+  // mode is the sandbox mode (e.g. "workspace-write"), or "unsandboxed"
+  // for an approved escape.
+  mode: string;
+  blocked: boolean;
+}
+
+export const UNSANDBOXED = "unsandboxed";
+
+// sandboxOf reads the sandbox tag of a shell tool result: metadata.sandbox,
+// or for older threads the execute artifact's fields.
+export function sandboxOf(result?: Message): SandboxInfo | null {
+  const md = result?.metadata;
+  if (!md) return null;
+  if (typeof md["sandbox"] === "string" && md["sandbox"]) {
+    return { mode: md["sandbox"], blocked: md["sandbox_blocked"] === true };
+  }
+  const art = md["artifact"] as Record<string, unknown> | undefined;
+  if (art && typeof art["sandbox"] === "string" && art["sandbox"]) {
+    return { mode: art["sandbox"], blocked: art["sandbox_blocked"] === true };
+  }
+  return null;
+}
+
+// sandboxNote is the short marker shown in a collapsed tool row; ordinary
+// sandboxed runs get none.
+export function sandboxNote(s: SandboxInfo | null): string {
+  if (!s) return "";
+  if (s.mode === UNSANDBOXED) return UNSANDBOXED;
+  return s.blocked ? "sandbox blocked" : "";
 }
 
 export interface TreeNode {

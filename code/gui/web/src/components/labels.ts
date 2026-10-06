@@ -1,6 +1,6 @@
 import type { LLMStep, ToolStep } from "../model/timeline";
 import { formatDuration, formatTokens, textOf } from "../model/messages";
-import { grepMode, parseExecute, parseGrep, parseNumbered, pathList } from "../model/tools";
+import { grepMode, parseExecute, parseGrep, parseNumbered, pathList, sandboxNote, sandboxOf } from "../model/tools";
 import { currentTodos, planOf } from "../model/plan";
 
 export function category(name: string): string {
@@ -39,6 +39,10 @@ export function resultSummary(t: ToolStep): string {
   if (!t.result) return "";
   const out = textOf(t.result);
   if (t.status === "error") return firstLine(out);
+  return [outcome(t, out), sandboxNote(sandboxOf(t.result))].filter(Boolean).join(" · ");
+}
+
+function outcome(t: ToolStep, out: string): string {
   switch (t.call.name) {
     case "grep": {
       const mode = grepMode(t.call);

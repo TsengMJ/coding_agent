@@ -4,7 +4,7 @@ import { applyEvent, emptyView, endRun, fromHistory, startRun } from "./state";
 import { buildTimeline, groupFiles } from "./timeline";
 import { diffLines, gapBefore, parseUnified, splitRows } from "./diff";
 import { failedCommand, matchTurn } from "./filter";
-import { buildTree, commandLine, parseExecute, parseGrep, parseLibraries, parseNumbered, summarize } from "./tools";
+import { buildTree, commandLine, parseExecute, parseGrep, parseLibraries, parseNumbered, sandboxNote, sandboxOf, summarize } from "./tools";
 
 const user = (text: string): Message => ({ role: "user", content: [{ type: "text", text }] });
 const assistant = (text: string, calls: Message["tool_calls"] = [], seq?: number): Message => ({
@@ -358,6 +358,29 @@ describe("tool output", () => {
       { title: "Next Auth", id: "/nextauthjs/next-auth", description: "", stats: "Snippets: 400 · Trust: 8", versions: "" },
     ]);
     expect(parseLibraries("no libraries")).toBeNull();
+  });
+});
+
+describe("sandboxOf", () => {
+  const withMeta = (metadata?: Record<string, unknown>): Message => ({ role: "tool", content: [], metadata });
+
+  it("reads the metadata tag", () => {
+    expect(sandboxOf(withMeta({ sandbox: "workspace-write", sandbox_blocked: true }))).toEqual({ mode: "workspace-write", blocked: true });
+  });
+
+  it("falls back to the execute artifact of older threads", () => {
+    expect(sandboxOf(withMeta({ artifact: { exit_code: 0, sandbox: "unsandboxed" } }))).toEqual({ mode: "unsandboxed", blocked: false });
+  });
+
+  it("is null without a tag", () => {
+    expect(sandboxOf(withMeta({ artifact: { exit_code: 0 } }))).toBeNull();
+    expect(sandboxOf(undefined)).toBeNull();
+  });
+
+  it("marks only escapes and denials in the row note", () => {
+    expect(sandboxNote({ mode: "workspace-write", blocked: false })).toBe("");
+    expect(sandboxNote({ mode: "workspace-write", blocked: true })).toBe("sandbox blocked");
+    expect(sandboxNote({ mode: "unsandboxed", blocked: false })).toBe("unsandboxed");
   });
 });
 
