@@ -52,6 +52,17 @@ func TestDefaultPolicyReadOnlyHasNoWritableRoots(t *testing.T) {
 	}
 }
 
+func TestCacheDirsCoverGoModuleAndChecksumCaches(t *testing.T) {
+	t.Setenv("GOPATH", "/gp")
+	t.Setenv("GOCACHE", "/gocache")
+	dirs := CacheDirs()
+	for _, want := range []string{"/gp/pkg/mod", "/gp/pkg/sumdb", "/gocache"} {
+		if !slices.Contains(dirs, want) {
+			t.Errorf("CacheDirs() %v lacks %s", dirs, want)
+		}
+	}
+}
+
 func TestSecretPathsCoverCredentials(t *testing.T) {
 	t.Setenv("HOME", "/home/u")
 	paths := SecretPaths()

@@ -3,14 +3,17 @@ package agent
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
+	"sync"
 
 	core "github.com/tsengmingchun/quill/agent"
 	"github.com/tsengmingchun/quill/backend"
 	"github.com/tsengmingchun/quill/backend/ossandbox"
 	"github.com/tsengmingchun/quill/code/codetools"
 	"github.com/tsengmingchun/quill/code/config"
+	"github.com/tsengmingchun/quill/code/tools"
 	"github.com/tsengmingchun/quill/llm"
 	"github.com/tsengmingchun/quill/middleware/hitl"
 	"github.com/tsengmingchun/quill/tool"
@@ -38,7 +41,46 @@ func NewShellSandbox(s *config.Settings, cwd string) (ossandbox.Sandbox, ossandb
 		}
 		return nil, policy, err
 	}
+	if policy.Network == ossandbox.NetworkAllowlist {
+		p, err := allowlistProxy(cfg.AllowlistDomains())
+		if err != nil {
+			return nil, policy, err
+		}
+		policy.Proxy = p.Endpoint()
+	}
 	return sb, policy, nil
+}
+
+var (
+	proxiesMu sync.Mutex
+	proxies   = map[string]*ossandbox.Proxy{}
+)
+
+// allowlistProxy returns the process's proxy for domains, starting it on
+// first use; agents with the same allowlist share it until exit.
+func allowlistProxy(domains []string) (*ossandbox.Proxy, error) {
+	key := strings.Join(domains, ",")
+	proxiesMu.Lock()
+	defer proxiesMu.Unlock()
+	if p, ok := proxies[key]; ok {
+		return p, nil
+	}
+	p, err := ossandbox.StartProxy(ossandbox.ProxyOptions{AllowedDomains: domains, Blocked: proxyBlocked})
+	if err != nil {
+		return nil, err
+	}
+	proxies[key] = p
+	return p, nil
+}
+
+// fakeIPRange is where fake-IP proxies (Clash, Surge and similar in TUN
+// mode) answer DNS queries; the proxy tool routes those addresses to the
+// real host, so an allowed domain resolving there is still public.
+var fakeIPRange = netip.MustParsePrefix("198.18.0.0/15")
+
+// proxyBlocked is tools.BlockedIP except for fakeIPRange.
+func proxyBlocked(ip netip.Addr) bool {
+	return tools.BlockedIP(ip) && !fakeIPRange.Contains(ip.Unmap())
 }
 
 // shellSandboxed reports whether b's shell commands run in a sandbox that

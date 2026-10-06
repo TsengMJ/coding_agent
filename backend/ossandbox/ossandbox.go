@@ -5,6 +5,7 @@ package ossandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -81,6 +82,27 @@ type ProxyEndpoint struct {
 	// Socket is a unix socket serving the same proxy; bubblewrap bind-mounts
 	// it into the sandbox's network namespace.
 	Socket string
+}
+
+// ProxyEnv is the environment that points commands at the allowlist proxy;
+// empty unless p uses NetworkAllowlist.
+func (p Policy) ProxyEnv() []string {
+	if p.Network != NetworkAllowlist || p.Proxy.Port == 0 || p.Mode == FullAccess {
+		return nil
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d", p.Proxy.Port)
+	var env []string
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} {
+		env = append(env, k+"="+url, strings.ToLower(k)+"="+url)
+	}
+	return append(env, "NO_PROXY=localhost,127.0.0.1,::1", "no_proxy=localhost,127.0.0.1,::1")
+}
+
+func checkProxy(p Policy) error {
+	if p.Network == NetworkAllowlist && p.Proxy.Port == 0 {
+		return errors.New("sandbox: network allowlist needs a running proxy (Policy.Proxy)")
+	}
+	return nil
 }
 
 // Sandbox wraps shell commands in an OS sandbox.
@@ -196,7 +218,7 @@ func CacheDirs() []string {
 	}
 	for _, p := range filepath.SplitList(gopath) {
 		if filepath.IsAbs(p) {
-			dirs = append(dirs, filepath.Join(p, "pkg", "mod"))
+			dirs = append(dirs, filepath.Join(p, "pkg", "mod"), filepath.Join(p, "pkg", "sumdb"))
 		}
 	}
 	return dedupe(dirs)

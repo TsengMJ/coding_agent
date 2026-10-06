@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/tsengmingchun/quill/backend/ossandbox"
@@ -37,8 +39,29 @@ type SandboxSettings struct {
 	AllowUnsandboxed bool
 }
 
-// DefaultSandboxMode applies when config.toml and the environment set none.
-const DefaultSandboxMode = ossandbox.FullAccess
+// DefaultAllowedDomains are reachable under sandbox.network = "allowlist":
+// the Go module proxy and checksum database, GitHub, npm and PyPI.
+var DefaultAllowedDomains = []string{
+	"proxy.golang.org", "sum.golang.org", "github.com",
+	"registry.npmjs.org", "pypi.org", "files.pythonhosted.org",
+}
+
+// AllowlistDomains are the defaults plus sandbox.allowed_domains.
+func (s SandboxSettings) AllowlistDomains() []string {
+	return append(slices.Clone(DefaultAllowedDomains), s.AllowedDomains...)
+}
+
+// DefaultSandboxMode applies when config.toml and the environment set
+// none: workspace-write where quill has a sandbox (macOS, Linux), as in
+// Codex and Cursor, and full-access elsewhere.
+var DefaultSandboxMode = defaultSandboxMode(runtime.GOOS)
+
+func defaultSandboxMode(goos string) ossandbox.Mode {
+	if goos == "darwin" || goos == "linux" {
+		return ossandbox.WorkspaceWrite
+	}
+	return ossandbox.FullAccess
+}
 
 func defaultSandboxSettings() SandboxSettings {
 	return SandboxSettings{

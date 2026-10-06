@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,6 +49,41 @@ func TestNewShellSandboxWorkspaceWritePolicy(t *testing.T) {
 	}
 	if !slices.Contains(p.DenyRead, "/opt/secret") || !slices.Contains(p.DenyWrite, "/proj/.git/hooks") {
 		t.Errorf("policy = %+v", p)
+	}
+}
+
+func TestNewShellSandboxAllowlistStartsSharedProxy(t *testing.T) {
+	if _, err := ossandbox.Native(); err != nil {
+		t.Skip(err)
+	}
+	s := sandboxSettings(ossandbox.WorkspaceWrite)
+	s.Sandbox.Network = ossandbox.NetworkAllowlist
+	_, p1, err := NewShellSandbox(s, "/proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, p2, err := NewShellSandbox(s, "/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.Proxy.Port == 0 || p1.Proxy.Socket == "" || p1.Proxy != p2.Proxy {
+		t.Fatalf("proxies = %+v, %+v; want one shared running proxy", p1.Proxy, p2.Proxy)
+	}
+}
+
+func TestProxyBlockedAllowsFakeIPRange(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"198.18.0.231":    false,
+		"198.19.255.1":    false,
+		"140.82.112.3":    false,
+		"127.0.0.1":       true,
+		"10.0.0.1":        true,
+		"169.254.169.254": true,
+		"192.168.1.1":     true,
+	} {
+		if got := proxyBlocked(netip.MustParseAddr(addr)); got != want {
+			t.Errorf("proxyBlocked(%s) = %v, want %v", addr, got, want)
+		}
 	}
 }
 

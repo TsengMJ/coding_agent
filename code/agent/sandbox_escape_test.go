@@ -131,6 +131,18 @@ func TestSandboxedShellHintOmitsEscapeWithoutReviewer(t *testing.T) {
 	}
 }
 
+func TestSandboxedShellExplainsAllowlistRefusals(t *testing.T) {
+	m := sandboxedShell{mode: ossandbox.WorkspaceWrite, network: ossandbox.NetworkAllowlist, allowUnsandboxed: true}
+	res, _ := wrapExecute(m, map[string]any{"command": "curl https://example.com"},
+		execResult(56, "curl: (56) CONNECT tunnel failed, response 403"))
+	if !res.Artifact.(backend.ExecuteArtifact).SandboxBlocked {
+		t.Fatal("proxy refusal not detected")
+	}
+	if hint := res.Content[len(res.Content)-1].Text; !strings.Contains(hint, "sandbox.allowed_domains") || strings.Contains(hint, "no network access") {
+		t.Fatalf("hint = %q", hint)
+	}
+}
+
 func TestSandboxedShellNoHintForOrdinaryFailures(t *testing.T) {
 	m := sandboxedShell{mode: ossandbox.WorkspaceWrite, allowUnsandboxed: true}
 	for _, res := range []*tool.Result{

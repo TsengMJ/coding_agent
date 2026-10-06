@@ -1,6 +1,7 @@
 package ossandbox
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -77,6 +78,39 @@ func TestBwrapArgsReadOnlyHasNoWritableBinds(t *testing.T) {
 func TestBwrapArgsNetworkFullSharesNetwork(t *testing.T) {
 	if args := BwrapArgs(Policy{Mode: ReadOnly, Network: NetworkFull}); index(args, "--unshare-net") >= 0 {
 		t.Fatalf("network full unshares the network: %q", args)
+	}
+}
+
+func TestBwrapAllowlistRunsCommandThroughBridge(t *testing.T) {
+	p := Policy{Mode: WorkspaceWrite, Network: NetworkAllowlist, Proxy: ProxyEndpoint{Port: 4321, Socket: "/tmp/q/proxy.sock"}}
+	cmd, err := Bwrap{Path: "/usr/bin/bwrap", Bridge: "/opt/quill"}.Command(context.Background(), p, "go mod download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--", "/opt/quill", NetBridgeArg, "4321", "/tmp/q/proxy.sock", "sh", "-c", "go mod download"}
+	if index(cmd.Args, want...) < 0 || index(cmd.Args, "--unshare-net") < 0 {
+		t.Fatalf("args = %q", cmd.Args)
+	}
+}
+
+func TestBwrapCreatesMissingWritableRoots(t *testing.T) {
+	cache := filepath.Join(realDir(t), "gopath", "pkg", "sumdb")
+	p := Policy{Mode: WorkspaceWrite, WritableRoots: []string{cache}}
+	cmd, err := Bwrap{Path: "/usr/bin/bwrap"}.Command(context.Background(), p, "true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index(cmd.Args, "--bind", cache, cache) < 0 {
+		t.Fatalf("missing cache dir not bound writable: %q", cmd.Args)
+	}
+}
+
+func TestBwrapAllowlistNeedsProxy(t *testing.T) {
+	for _, proxy := range []ProxyEndpoint{{}, {Port: 4321}} {
+		p := Policy{Mode: WorkspaceWrite, Network: NetworkAllowlist, Proxy: proxy}
+		if _, err := (Bwrap{Path: "/usr/bin/bwrap"}).Command(context.Background(), p, "true"); err == nil {
+			t.Errorf("proxy %+v: Command succeeded", proxy)
+		}
 	}
 }
 

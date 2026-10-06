@@ -100,6 +100,9 @@ func (b *LocalShellBackend) Execute(ctx context.Context, command string, timeout
 	}
 	cmd.Dir = b.root
 	cmd.Env = b.env()
+	if b.opts.Sandbox != nil && !sandboxBypassed(ctx) {
+		cmd.Env = append(cmd.Env, b.opts.Policy.ProxyEnv()...)
+	}
 	stdout := &cappedBuffer{limit: b.opts.MaxOutputBytes}
 	stderr := &cappedBuffer{limit: b.opts.MaxOutputBytes}
 	cmd.Stdout, cmd.Stderr = stdout, stderr

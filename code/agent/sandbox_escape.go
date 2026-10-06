@@ -32,6 +32,7 @@ func isUnsandboxedCall(call llm.ToolCall) bool {
 // sandbox.allow_unsandboxed = false, escapes are refused.
 type sandboxedShell struct {
 	mode             ossandbox.Mode
+	network          ossandbox.Network
 	allowUnsandboxed bool
 	noReviewer       bool
 }
@@ -83,8 +84,15 @@ func (m sandboxedShell) WrapToolCall(ctx context.Context, req *core.ToolCallRequ
 }
 
 func (m sandboxedShell) blockedHint() string {
+	network := "have no network access"
+	switch m.network {
+	case ossandbox.NetworkAllowlist:
+		network = "reach the network only through a proxy that allows the domains in sandbox.allowed_domains"
+	case ossandbox.NetworkFull:
+		network = "have full network access"
+	}
 	hint := "\n[sandbox] This failure may come from the sandbox (mode " + string(m.mode) + "): " +
-		"commands can write only inside the project, temp and build-cache directories, cannot read credential directories, and have no network access. " +
+		"commands can write only inside the project, temp and build-cache directories, cannot read credential directories, and " + network + ". " +
 		"Prefer an approach that stays inside those limits."
 	if m.allowUnsandboxed && !m.noReviewer {
 		hint += " If the command really must run unconfined, call execute again with \"sandbox\": false; the user will be asked to approve it."
@@ -93,9 +101,13 @@ func (m sandboxedShell) blockedHint() string {
 }
 
 // sandboxDenials are messages the sandbox makes commands print: Seatbelt
-// returns EPERM, bubblewrap's read-only mounts EROFS, and a missing
-// network fails DNS first.
+// returns EPERM, bubblewrap's read-only mounts EROFS, a missing network
+// fails DNS first, and the allowlist proxy answers 403 to CONNECT.
 var sandboxDenials = []string{
+	"not in sandbox.allowed_domains",
+	"tunnel failed",
+	"tunnel connection failed",
+	"from proxy after connect",
 	"operation not permitted",
 	"read-only file system",
 	"could not resolve host",

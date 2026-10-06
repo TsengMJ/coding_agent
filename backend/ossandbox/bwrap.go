@@ -2,9 +2,12 @@ package ossandbox
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 )
 
 // BwrapArgs renders p as bubblewrap arguments, before the `--` that starts
@@ -63,6 +66,9 @@ func existing(paths []string) []string {
 type Bwrap struct {
 	// Path is the bwrap binary.
 	Path string
+	// Bridge is the binary that handles NetBridgeArg; defaults to the
+	// running executable.
+	Bridge string
 }
 
 func (Bwrap) Name() string { return "bwrap" }
@@ -71,6 +77,34 @@ func (b Bwrap) Command(ctx context.Context, p Policy, shellCmd string) (*exec.Cm
 	if p.Mode == FullAccess {
 		return None().Command(ctx, p, shellCmd)
 	}
-	args := append(BwrapArgs(p), "--", "sh", "-c", shellCmd)
+	if err := checkProxy(p); err != nil {
+		return nil, err
+	}
+	if p.Mode == WorkspaceWrite {
+		// bwrap can only bind existing paths, so a cache directory a tool
+		// would create on first use (e.g. $GOPATH/pkg/sumdb) is made now;
+		// one that cannot be created simply stays read-only.
+		for _, r := range p.WritableRoots {
+			_ = os.MkdirAll(r, 0o755)
+		}
+	}
+	args := append(BwrapArgs(p), "--")
+	if p.Network == NetworkAllowlist {
+		// The network namespace has no route to the host's proxy port; the
+		// bridge relays a loopback port to the proxy's unix socket.
+		if p.Proxy.Socket == "" {
+			return nil, errors.New("sandbox: network allowlist needs the proxy's unix socket under bubblewrap")
+		}
+		bridge := b.Bridge
+		if bridge == "" {
+			exe, err := os.Executable()
+			if err != nil {
+				return nil, fmt.Errorf("sandbox: locate quill for the network bridge: %w", err)
+			}
+			bridge = exe
+		}
+		args = append(args, bridge, NetBridgeArg, strconv.Itoa(p.Proxy.Port), p.Proxy.Socket)
+	}
+	args = append(args, "sh", "-c", shellCmd)
 	return exec.CommandContext(ctx, b.Path, args...), nil
 }

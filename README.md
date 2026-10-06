@@ -79,24 +79,30 @@ go run ./cmd/quill summarize README.md
 
 核准框會顯示 `write_file` / `edit_file` / `apply_patch` 對照磁碟上現有檔案的 unified diff。
 
-> **注意**：預設（`sandbox.mode = "full-access"`）shell 指令沒有沙箱，核准後可以存取整台機器；`-y` 等於沒有保護。建議開啟 OS 沙箱（見下方「Shell 沙箱」），或只在可以放心讓它改動的目錄下使用。
+> **注意**：macOS 與 Linux 預設在 OS 沙箱（`workspace-write`）內跑 shell 指令，見下方「Shell 沙箱」。設成 `full-access`（或在其他平台）時 shell 指令沒有沙箱，核准後可以存取整台機器，`-y` 等於沒有保護。
 
 ### Shell 沙箱
 
-`execute`、`run_tests`、`diagnostics` 的 shell 子程序可以在 OS 層沙箱內執行（macOS Seatbelt `sandbox-exec`，Linux bubblewrap `bwrap`），做法對標 Claude Code、Codex CLI 與 Cursor。quill 本身不進沙箱，只包住 shell 指令。
+`execute`、`run_tests`、`diagnostics` 的 shell 子程序在 OS 層沙箱內執行（macOS Seatbelt `sandbox-exec`，Linux bubblewrap `bwrap`），做法對標 Claude Code、Codex CLI 與 Cursor。quill 本身不進沙箱，只包住 shell 指令。
 
-| `sandbox.mode` | 寫入 | 讀取 | 網路 |
-|---|---|---|---|
-| `full-access`（預設） | 不限制 | 不限制 | 不限制 |
-| `workspace-write` | 專案目錄、暫存目錄、建置 cache（Go、npm、pip ...）與 `sandbox.writable_roots`；但 `.git/hooks`、`.git/config`、`.quill/` 不可寫 | 整台機器，但 `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.config/gh`、`~/.netrc`、`~/.quill/.env`、docker socket 等不可讀 | 只有 localhost |
-| `read-only` | 都不可寫（`write_file`、`edit_file`、`apply_patch`、`delete` 也一併拒絕） | 同上 | 只有 localhost |
+| `sandbox.mode` | 寫入 | 讀取 |
+|---|---|---|
+| `workspace-write`（macOS、Linux 預設） | 專案目錄、暫存目錄、建置 cache（Go、npm、pip ...）與 `sandbox.writable_roots`；但 `.git/hooks`、`.git/config`、`.quill/` 不可寫 | 整台機器，但 `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.config/gh`、`~/.netrc`、`~/.quill/.env`、docker socket 等不可讀 |
+| `read-only` | 都不可寫（`write_file`、`edit_file`、`apply_patch`、`delete` 也一併拒絕） | 同上 |
+| `full-access`（其他平台預設） | 不限制，沒有沙箱 | 不限制 |
+
+| `sandbox.network` | 網路 |
+|---|---|
+| `none`（預設） | 只有 localhost |
+| `allowlist` | 只能透過 quill 內建的 HTTP proxy 連到允許的網域：預設 `proxy.golang.org`、`sum.golang.org`、`github.com`、`registry.npmjs.org`、`pypi.org`、`files.pythonhosted.org`，`sandbox.allowed_domains` 可擴充（`*.example.com` 代表子網域）；解析到內網、loopback、link-local 的位址一律拒絕。指令透過 `HTTP(S)_PROXY` 環境變數使用 proxy（go、npm、pip、git、curl 都支援） |
+| `full` | 不限制 |
 
 - 核准：沙箱開啟時 `execute`、`run_tests`、`diagnostics` 不再逐一詢問（對標 Claude Code 的 `autoAllowBashIfSandboxed`）；破壞性指令仍一律要核准。
 - 逃生口：指令被沙箱擋下時，結果會附上 `[sandbox]` 說明；模型可以對 `execute` 傳 `"sandbox": false` 請求在沙箱外執行，**一律要你核准**（核准框標示 OUTSIDE the sandbox）；`-n` 搭配自動核准時沒人能核准，直接拒絕。`sandbox.allow_unsandboxed = false` 完全關掉逃生口。
 - Trace：每個 `execute` 結果記錄沙箱模式（或 `unsandboxed`）與是否疑似被擋。
 - 一次性切換：`quill -sandbox workspace-write ...`、`quill serve -sandbox ...` 或 `QUILL_SANDBOX_MODE`。
-- 試跑：`quill sandbox -- touch ~/x`（應該失敗）、`quill sandbox -- go test ./...`；`-print-policy` 印出實際規則。
-- Linux 需要安裝 bubblewrap 且允許 unprivileged user namespace；無法使用時預設拒絕啟動（`sandbox.on_unavailable = "warn"` 改成不受限執行，並在每個指令結果中警告）。
+- 試跑：`quill sandbox -- touch ~/x`（應該失敗）、`quill sandbox -- go test ./...`、`quill sandbox -network allowlist -- npm install`；`-print-policy` 印出實際規則。
+- Linux 需要安裝 bubblewrap（`apt install bubblewrap`）且允許 unprivileged user namespace；無法使用時預設拒絕啟動並說明原因（設 `sandbox.mode = "full-access"` 關掉沙箱，或 `sandbox.on_unavailable = "warn"` 改成不受限執行，並在每個指令結果中警告）。
 - 沙箱擋的是 shell；檔案工具本來就鎖在專案目錄內（virtual mode），`.git/hooks`、`.git/config` 也同樣不可寫。
 - 只有 `~/.quill/config.toml` 能設定沙箱，專案目錄裡的設定改不了它。
 
@@ -134,7 +140,9 @@ max_retries = 2                            # 模型呼叫遇到 429 / 5xx / 連�
 url = "http://127.0.0.1:8123"              # 等同 QUILL_SERVER
 
 [sandbox]
-mode = "workspace-write"                   # read-only / workspace-write / full-access（預設）；等同 QUILL_SANDBOX_MODE
+mode = "workspace-write"                   # read-only / workspace-write（macOS、Linux 預設）/ full-access；等同 QUILL_SANDBOX_MODE
+network = "allowlist"                      # none（預設）/ allowlist / full
+allowed_domains = ["*.githubusercontent.com"]  # allowlist 額外放行的網域
 writable_roots = ["~/scratch"]             # workspace-write 額外可寫的目錄
 deny_read = ["~/.config/secret-tool"]      # 額外不可讀的路徑
 on_unavailable = "error"                   # 平台沙箱無法使用時：error（預設，拒絕啟動）或 warn

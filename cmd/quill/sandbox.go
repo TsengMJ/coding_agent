@@ -19,7 +19,7 @@ func runSandbox(ctx context.Context, args []string, stdout, stderr io.Writer) (i
 	fs := flag.NewFlagSet("quill sandbox", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	mode := fs.String("mode", "", "read-only, workspace-write or full-access (default sandbox.mode, or workspace-write when that is full-access)")
-	network := fs.String("network", "", "none or full (default sandbox.network)")
+	network := fs.String("network", "", "none, allowlist or full (default sandbox.network)")
 	printProfile := fs.Bool("print-policy", false, "print the policy (and the Seatbelt profile on macOS) before running")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "Usage:\n  quill sandbox [flags] -- command [args...]\n\nRuns command in the current directory inside the sandbox quill's shell tools use.")
@@ -50,9 +50,6 @@ func runSandbox(ctx context.Context, args []string, stdout, stderr io.Writer) (i
 			return 2, err
 		}
 	}
-	if s.Sandbox.Network == ossandbox.NetworkAllowlist {
-		return 2, errors.New("sandbox: -network allowlist needs the agent's proxy; use none or full")
-	}
 	sb, policy, err := codeagent.NewShellSandbox(&s, e.cwd)
 	if err != nil {
 		return 1, err
@@ -64,6 +61,9 @@ func runSandbox(ctx context.Context, args []string, stdout, stderr io.Writer) (i
 	if *printProfile {
 		fmt.Fprintf(stderr, "sandbox: %s, mode %s, network %s\nwritable: %v\ndeny write: %v\ndeny read: %v\n",
 			sb.Name(), policy.Mode, policy.Network, policy.WritableRoots, policy.DenyWrite, policy.DenyRead)
+		if policy.Network == ossandbox.NetworkAllowlist {
+			fmt.Fprintf(stderr, "allowed domains: %v\n", s.Sandbox.AllowlistDomains())
+		}
 		if _, ok := sb.(ossandbox.Seatbelt); ok {
 			fmt.Fprintln(stderr, ossandbox.SeatbeltProfile(policy))
 		}
@@ -73,6 +73,7 @@ func runSandbox(ctx context.Context, args []string, stdout, stderr io.Writer) (i
 		return 1, err
 	}
 	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), policy.ProxyEnv()...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, stderr
 	err = cmd.Run()
 	var exitErr *exec.ExitError

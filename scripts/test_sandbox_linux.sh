@@ -18,7 +18,7 @@ exec docker run --rm --privileged \
   -e QUILL_SANDBOX_IT=1 -e DEBIAN_FRONTEND=noninteractive \
   "$image" bash -euo pipefail -c '
     apt-get update -qq
-    apt-get install -y -qq --no-install-recommends bubblewrap curl git python3 >/dev/null
+    apt-get install -y -qq --no-install-recommends bubblewrap curl git python3 python3-venv nodejs npm >/dev/null
     export GOFLAGS=-buildvcs=false GOCACHE=/gocache
     tests="./backend/ossandbox/ ./backend/ ./code/agent/"
 
@@ -32,6 +32,21 @@ exec docker run --rm --privileged \
     ! quill sandbox -- sh -c "echo x > .git/hooks/x"
     ! quill sandbox -- curl -sS -m5 -o /dev/null https://example.com
     quill sandbox -- sh -c "echo ok > in.txt" && test -f in.txt
+
+    echo "== network allowlist (root) =="
+    allow="quill sandbox -network allowlist --"
+    ! $allow curl -sS -m10 -o /dev/null https://example.com
+    mkdir gop && cd gop && printf "module example.com/v\n\ngo 1.22\n" > go.mod
+    printf "package v\nimport (\"testing\"; \"rsc.io/quote\")\nfunc TestQ(t *testing.T) { if quote.Hello() == \"\" { t.Fatal() } }\n" > q_test.go
+    $allow go get rsc.io/quote@v1.5.2
+    $allow go test ./...
+    cd .. && mkdir np && cd np
+    echo "require(\"left-pad\")" > index.js
+    echo "{\"name\":\"v\",\"version\":\"1.0.0\",\"scripts\":{\"test\":\"node index.js\"}}" > package.json
+    $allow npm install --no-audit --no-fund left-pad
+    $allow npm test
+    cd .. && mkdir py && cd py && echo "def test_x(): assert 1" > test_x.py
+    $allow sh -c "python3 -m venv .venv && .venv/bin/pip install -q pytest && .venv/bin/pytest -q"
     cd /src
 
     echo "== unprivileged user =="
@@ -44,6 +59,8 @@ exec docker run --rm --privileged \
       cd /tmp && mkdir -p smoke-tester && cd smoke-tester
       ! quill sandbox -- touch \$HOME/x
       test ! -e \$HOME/x
+      quill sandbox -network allowlist -- curl -sS -m20 -o /dev/null https://proxy.golang.org/
+      ! quill sandbox -network allowlist -- curl -sS -m10 -o /dev/null https://example.com
     "
 
     echo "== without bubblewrap =="

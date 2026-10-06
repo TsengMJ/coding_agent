@@ -181,6 +181,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if sandboxed {
 		mws = append(mws, sandboxedShell{
 			mode:             opts.Settings.Sandbox.Mode,
+			network:          opts.Settings.Sandbox.Network,
 			allowUnsandboxed: opts.Settings.Sandbox.AllowUnsandboxed,
 			noReviewer:       opts.AutoApprove && !opts.Interactive,
 		})

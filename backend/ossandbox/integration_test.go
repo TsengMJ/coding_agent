@@ -3,6 +3,7 @@ package ossandbox
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,6 +69,7 @@ func (e itEnv) run(t *testing.T, p Policy, shellCmd string) (string, error) {
 		t.Fatalf("Command: %v", err)
 	}
 	cmd.Dir = e.ws
+	cmd.Env = append(os.Environ(), p.ProxyEnv()...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -148,6 +150,60 @@ func TestSandboxBlocksNetwork(t *testing.T) {
 		t.Skip("curl not installed")
 	}
 	e.mustFail(t, "curl -sS --max-time 5 -o /dev/null https://example.com")
+}
+
+// withAllowlist returns e's policy routed through a real proxy that allows
+// only the Go module proxy and checksum database.
+func (e itEnv) withAllowlist(t *testing.T) Policy {
+	t.Helper()
+	proxy, err := StartProxy(ProxyOptions{
+		AllowedDomains: []string{"proxy.golang.org", "sum.golang.org"},
+		Blocked: func(ip netip.Addr) bool {
+			return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { proxy.Close() })
+	p := e.policy
+	p.Network = NetworkAllowlist
+	p.Proxy = proxy.Endpoint()
+	return p
+}
+
+func TestSandboxAllowlistReachesOnlyAllowedDomains(t *testing.T) {
+	e := newITEnv(t)
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl not installed")
+	}
+	p := e.withAllowlist(t)
+	if out, err := e.run(t, p, "curl -sS --max-time 20 -o /dev/null https://proxy.golang.org/"); err != nil {
+		t.Fatalf("allowed domain failed: %v\n%s", err, out)
+	}
+	if out, err := e.run(t, p, "curl -sS --max-time 10 -o /dev/null https://example.com/"); err == nil {
+		t.Fatalf("example.com reached through the allowlist:\n%s", out)
+	}
+	// Bypassing the proxy finds no network at all.
+	if out, err := e.run(t, p, "curl -sS --noproxy '*' --max-time 10 -o /dev/null https://proxy.golang.org/"); err == nil {
+		t.Fatalf("direct connection succeeded:\n%s", out)
+	}
+}
+
+func TestSandboxAllowlistGoModDownload(t *testing.T) {
+	e := newITEnv(t)
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go not installed")
+	}
+	p := e.withAllowlist(t)
+	out, err := e.run(t, p, "GOPATH=$PWD/gopath GOMODCACHE= GOFLAGS=-modcacherw GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org "+
+		"go mod download -json rsc.io/quote@v1.5.2")
+	if err != nil {
+		t.Fatalf("go mod download: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(e.ws, "gopath", "pkg", "mod", "rsc.io", "quote@v1.5.2")); err != nil {
+		t.Fatalf("module not downloaded: %v\n%s", err, out)
+	}
 }
 
 func TestSandboxReadOnlyBlocksWorkspaceWrites(t *testing.T) {

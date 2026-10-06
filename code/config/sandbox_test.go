@@ -17,6 +17,18 @@ func TestSandboxDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultSandboxModeIsOnWhereSupported(t *testing.T) {
+	for goos, want := range map[string]ossandbox.Mode{
+		"darwin":  ossandbox.WorkspaceWrite,
+		"linux":   ossandbox.WorkspaceWrite,
+		"windows": ossandbox.FullAccess,
+	} {
+		if got := defaultSandboxMode(goos); got != want {
+			t.Errorf("defaultSandboxMode(%s) = %s, want %s", goos, got, want)
+		}
+	}
+}
+
 func TestSandboxFromConfig(t *testing.T) {
 	clearEnv(t)
 	home, _ := os.UserHomeDir()

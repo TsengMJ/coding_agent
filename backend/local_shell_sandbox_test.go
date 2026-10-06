@@ -51,6 +51,26 @@ func TestLocalShellWithoutSandboxBypassesIt(t *testing.T) {
 	}
 }
 
+// envSandbox runs the real command unconfined so tests can inspect its environment.
+type envSandbox struct{}
+
+func (envSandbox) Name() string { return "env" }
+
+func (envSandbox) Command(ctx context.Context, p ossandbox.Policy, shellCmd string) (*exec.Cmd, error) {
+	return ossandbox.None().Command(ctx, p, shellCmd)
+}
+
+func TestLocalShellPointsSandboxedCommandsAtProxy(t *testing.T) {
+	p := ossandbox.Policy{Mode: ossandbox.WorkspaceWrite, Network: ossandbox.NetworkAllowlist, Proxy: ossandbox.ProxyEndpoint{Port: 4321}}
+	b := newShell(t, LocalShellOptions{Sandbox: envSandbox{}, Policy: p})
+	if out := b.Execute(context.Background(), "echo $HTTPS_PROXY", nil).Output; strings.TrimSpace(out) != "http://127.0.0.1:4321" {
+		t.Fatalf("sandboxed HTTPS_PROXY = %q", out)
+	}
+	if out := b.Execute(WithoutSandbox(context.Background()), "echo \"[$HTTPS_PROXY]\"", nil).Output; strings.TrimSpace(out) != "[]" {
+		t.Fatalf("unsandboxed HTTPS_PROXY = %q", out)
+	}
+}
+
 func TestLocalShellReportsSandboxError(t *testing.T) {
 	b := newShell(t, LocalShellOptions{Sandbox: failingSandbox{}, Policy: ossandbox.Policy{Mode: ossandbox.WorkspaceWrite}})
 	res := b.Execute(context.Background(), "echo hi", nil)

@@ -116,6 +116,9 @@ func (Seatbelt) Command(ctx context.Context, p Policy, shellCmd string) (*exec.C
 	if p.Mode == FullAccess {
 		return None().Command(ctx, p, shellCmd)
 	}
+	if err := checkProxy(p); err != nil {
+		return nil, err
+	}
 	if _, err := os.Stat(SandboxExecPath); err != nil {
 		return nil, fmt.Errorf("sandbox: %s not found: %w", SandboxExecPath, err)
 	}

@@ -53,7 +53,7 @@ shell 子程序（`execute`、`run_tests`、`diagnostics`）在 OS 層 sandbox �
 **Goal**: quill 行程內的 HTTP CONNECT proxy 依 domain allowlist 放行並擋內網；Seatbelt 只允許連 proxy port；bwrap 用 unix socket + `quill __netbridge` 轉接；`sandbox.network`、`sandbox.allowed_domains`；驗證後把預設改成 workspace-write。
 **Success Criteria**: 兩個平台的整合測試通過（allowlist 內的 domain 成功、其他失敗）；手動以 `quill sandbox --` 跑 Go / Node / Python 常見指令。
 **Tests**: proxy 允許 / 拒絕 / 內網 IP；兩平台網路整合測試。
-**Status**: Not Started
+**Status**: Complete（`make check`、`make test-sandbox`、`make test-sandbox-linux` 通過；兩平台以 `quill sandbox -network allowlist --` 跑 `go get`/`go test`、`npm install`/`npm test`、`pip install pytest`/`pytest`、`git commit` 成功，`example.com` 回 403）。驗證中調整：`$GOPATH/pkg/sumdb` 加入 cache 路徑；bwrap 先建立不存在的 writable root（否則無法 bind）；fake-IP proxy（Clash、Surge TUN 的 `198.18.0.0/15`）不視為內網。預設改為 macOS / Linux `workspace-write`，network 維持 `none`。
 
 ## Backlog
 

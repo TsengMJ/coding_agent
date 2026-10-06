@@ -35,10 +35,11 @@ const (
 	modelFlagUsage   = "model as provider:model (default $" + config.ModelEnvVar + ", models.default in config.toml, or " + server.DefaultModelSpec + ")"
 	serverFlagUsage  = "quill serve URL (default $" + config.ServerEnvVar + " or server.url in config.toml)"
 	sandboxFlagUsage = "shell sandbox for this run: read-only, workspace-write or full-access (default $" +
-		config.SandboxModeEnvVar + " or sandbox.mode in config.toml)"
+		config.SandboxModeEnvVar + " or sandbox.mode in config.toml, else workspace-write on macOS and Linux)"
 )
 
 func main() {
+	ossandbox.MaybeRunNetBridge()
 	code, err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "quill:", err)
@@ -210,10 +211,12 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 			"%s, tools that change files (write_file, edit_file, apply_patch, delete) or run\n"+
 			"commands (execute, run_tests, diagnostics) ask first (-y skips it for one run;\n"+
 			"shell.allow_list lets matching commands skip it; allowing go covers run_tests and diagnostics).\n"+
-			"Shell commands run in the current directory. With sandbox.mode = \"workspace-write\" (or -sandbox)\n"+
-			"they run in an OS sandbox (macOS Seatbelt, Linux bubblewrap) that can write only the project,\n"+
-			"temp and build caches, cannot read credential directories such as ~/.ssh, and has no network;\n"+
-			"\"read-only\" blocks all writes. In \"full-access\" mode (the default) they are not sandboxed.\n\n", "~/.quill/config.toml")
+			"Shell commands run in the current directory, inside an OS sandbox (macOS Seatbelt, Linux bubblewrap)\n"+
+			"by default (sandbox.mode = \"workspace-write\"): they can write only the project, temp and build\n"+
+			"caches, cannot read credential directories such as ~/.ssh, and have no network (sandbox.network =\n"+
+			"\"allowlist\" allows package registries through a proxy). Sandboxed commands skip approval except\n"+
+			"destructive ones and requests to run outside the sandbox. \"read-only\" blocks all writes;\n"+
+			"\"full-access\" (the default on other platforms) does not sandbox them.\n\n", "~/.quill/config.toml")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
