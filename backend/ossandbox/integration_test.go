@@ -124,7 +124,10 @@ func TestSandboxBlocksGitHooksAndConfig(t *testing.T) {
 func TestSandboxBlocksSecretReads(t *testing.T) {
 	e := newITEnv(t)
 	e.mustFail(t, "cat "+ShellJoin([]string{filepath.Join(e.secret, "id_rsa")}))
-	e.mustFail(t, "ls "+ShellJoin([]string{e.secret}))
+	// Seatbelt refuses to list the directory; bwrap shows an empty one.
+	if out, _ := e.run(t, e.policy, "ls "+ShellJoin([]string{e.secret})); strings.Contains(out, "id_rsa") {
+		t.Fatalf("denied directory listed: %s", out)
+	}
 }
 
 func TestSandboxAllowsGitCommitAndStash(t *testing.T) {

@@ -15,7 +15,7 @@ image=${GO_IMAGE:-golang:${go_version}}
 exec docker run --rm --privileged \
   -v "$PWD":/src:ro -w /src \
   -v quill-sandbox-gomod:/go/pkg/mod \
-  -e QUILL_SANDBOX_IT=1 \
+  -e QUILL_SANDBOX_IT=1 -e DEBIAN_FRONTEND=noninteractive \
   "$image" bash -euo pipefail -c '
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends bubblewrap curl git python3 >/dev/null

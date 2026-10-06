@@ -35,7 +35,7 @@ shell 子程序（`execute`、`run_tests`、`diagnostics`）在 OS 層 sandbox �
 **Goal**: bwrap 實作同一個 Policy（`--ro-bind / /`、WritableRoots `--bind`、deny-read 以 tmpfs / 空檔蓋掉、`--unshare-net/pid`、`--die-with-parent`、`--new-session`）；偵測 bwrap 與 user namespace，不可用時明確報錯。
 **Success Criteria**: `make test-sandbox-linux` 通過（root 與非 root）；沒有 bwrap 時回明確錯誤。
 **Tests**: bwrap 參數產生；和 S1 相同的整合測試案例。
-**Status**: Not Started
+**Status**: Complete（`make test-sandbox-linux` 通過：root、非 root、移除 bwrap 後明確報錯）。差異：bwrap 下被 deny-read 的目錄顯示為空目錄（tmpfs），Seatbelt 則直接拒絕；不存在的 deny-write 路徑（例如沒有 `.git/hooks`）在 bwrap 下無法預先擋住。
 
 ## Stage S3: 設定、模式與檔案工具的一致性
 **Goal**: `sandbox.mode`、`sandbox.writable_roots`、`sandbox.deny_read`、`sandbox.on_unavailable` 設定與 `-sandbox` flag；read-only 模式下檔案寫入工具也拒絕；`NewBackend` 組出 policy；更新 `--help` 與 README。
