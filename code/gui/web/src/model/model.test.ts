@@ -90,6 +90,16 @@ describe("applyEvent", () => {
   });
 });
 
+describe("buildTimeline with images", () => {
+  it("starts a turn for a user message that has only images", () => {
+    const image: Message = { role: "user", content: [{ type: "image", mime_type: "image/png", base64: "AAAA" }] };
+    const v = fromHistory({ thread_id: "t", messages: [user("hi"), assistant("hello"), image, assistant("a cat")] }, null);
+    const turns = buildTimeline(v).turns;
+    expect(turns).toHaveLength(2);
+    expect(turns[1].user).toBe(image);
+  });
+});
+
 describe("buildTimeline", () => {
   const history = () =>
     fromHistory(

@@ -4,6 +4,8 @@ import type { LLMStep, SubRun, ToolStep, Turn } from "../model/timeline";
 import { groupFiles } from "../model/timeline";
 import { formatDuration, textOf } from "../model/messages";
 import { summarize } from "../model/tools";
+import { imageSrc, imagesOf } from "../model/images";
+import type { Message } from "../types";
 import { useUI } from "../ui";
 import { DiffStat, Highlighted, Markdown } from "./common";
 import { DiffView } from "./DiffView";
@@ -120,13 +122,34 @@ function TurnHeader({ turn, onReuseUserMessage, reuseDisabled }: { turn: Turn; o
               </button>
             )}
           </div>
-          <div className="user-msg-text"><Highlighted text={userText} query={query} /></div>
+          {userText && <div className="user-msg-text"><Highlighted text={userText} query={query} /></div>}
+          <UserImages message={turn.user} />
         </div>
       )}
       {turn.notes.map((m, i) => (
         <div className="note" key={i}>
           {m.role}: {firstLine(textOf(m))}
         </div>
+      ))}
+    </div>
+  );
+}
+
+function UserImages({ message }: { message: Message }) {
+  const [enlarged, setEnlarged] = useState(-1);
+  const images = imagesOf(message);
+  if (images.length === 0) return null;
+  return (
+    <div className="user-msg-images">
+      {images.map((b, i) => (
+        <img
+          key={i}
+          src={imageSrc(b)}
+          alt={`attachment ${i + 1}`}
+          className={enlarged === i ? "enlarged" : ""}
+          title={enlarged === i ? "Click to shrink" : "Click to enlarge"}
+          onClick={() => setEnlarged(enlarged === i ? -1 : i)}
+        />
       ))}
     </div>
   );

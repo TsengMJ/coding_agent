@@ -6,6 +6,7 @@ import { helpText, parseModelArgs, resolveCommand } from "./model/commands";
 import { contextText, costText, tokensText } from "./model/usage";
 import { applyEvent, emptyView, endRun, fromHistory, showBuild, startRun, type ThreadView } from "./model/state";
 import { BUILD_MESSAGE } from "./model/plan";
+import { pendingText, userContent, type ImageAttachment } from "./model/images";
 import { PlanBanner } from "./components/Plan";
 import { buildTimeline, type LLMStep, type Turn } from "./model/timeline";
 import { matchTurn, type Filter } from "./model/filter";
@@ -25,7 +26,11 @@ function newThreadID(): string {
 }
 
 // The ID lets a reattached page tell this message from its replay.
-const userMessage = (text: string): Message => ({ id: `user-${newThreadID()}`, role: "user", content: [{ type: "text", text }] });
+const userMessage = (text: string, images: ImageAttachment[] = []): Message => ({
+  id: `user-${newThreadID()}`,
+  role: "user",
+  content: userContent(text, images),
+});
 
 const DRAWER_STORAGE_KEY = "quill.inspectorWidth";
 const SIDEBAR_WIDTH = 260;
@@ -472,14 +477,11 @@ export function App({ api }: { api: Api }) {
   const currentModel = modelOverride || threadModel || info?.model || "";
 
   const send = useCallback(
-    async (text: string, literal = false) => {
-      if (literal) {
-        void run({ messages: [userMessage(text)] }, text);
-        return;
-      }
-      const cmd = resolveCommand(text, commands);
-      if (cmd.kind === "text") {
-        void run({ messages: [userMessage(text)] }, text);
+    async (text: string, literal = false, images: ImageAttachment[] = []) => {
+      // A message with images is never a slash command, so the images are not lost.
+      const cmd = literal || images.length ? null : resolveCommand(text, commands);
+      if (!cmd || cmd.kind === "text") {
+        void run({ messages: [userMessage(text, images)] }, pendingText(text, images.length));
         return;
       }
       if (cmd.kind === "unknown") {
@@ -789,7 +791,7 @@ export function App({ api }: { api: Api }) {
             onReplaceConfirm={() => { if (replaceCandidate !== null) fillFromHistory(replaceCandidate); }}
             onReplaceCancel={() => setReplaceCandidate(null)}
             onMode={switchMode}
-            onSend={(t, literal) => void send(t, literal)}
+            onSend={(t, literal, images) => void send(t, literal, images)}
             onStop={() => stop(threadId)}
           />
         </main>

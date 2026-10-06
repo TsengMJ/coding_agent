@@ -6,6 +6,8 @@ export interface ContentBlock {
   type: string;
   text?: string;
   mime_type?: string;
+  base64?: string;
+  url?: string;
 }
 
 export interface ToolCall {
