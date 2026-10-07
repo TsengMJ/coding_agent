@@ -140,6 +140,11 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if !slices.Contains(opts.Disable, FeatureStuck) {
 		mws = append(mws, StuckDetector{Enforce: !opts.Interactive})
 	}
+	if sb, ok := b.(backend.SandboxBackend); ok && !slices.Contains(opts.Disable, FeatureCheckpoint) {
+		if _, inGit := git(ctx, opts.Cwd, "rev-parse", "--is-inside-work-tree"); inGit {
+			mws = append(mws, CheckpointManager{Workspace: sb})
+		}
+	}
 	if !slices.Contains(opts.Disable, FeatureMicro) {
 		sb, _ := b.(backend.SandboxBackend)
 		mws = append(mws, MicroCheck{Files: b, Workspace: sb})
@@ -253,6 +258,10 @@ func DefaultInterruptOn() map[string]hitl.InterruptOnConfig {
 		"delete": {
 			AllowedDecisions: []hitl.DecisionType{hitl.DecisionApprove, hitl.DecisionReject},
 			Description:      "Action: Delete file or directory",
+		},
+		RollbackToolName: {
+			AllowedDecisions: []hitl.DecisionType{hitl.DecisionApprove, hitl.DecisionReject},
+			Description:      "Action: Restore the workspace to a checkpoint (files changed since are overwritten, files created since are deleted)",
 		},
 		"execute":                 {AlwaysWhen: isDestructiveCall, Describe: describeExecute},
 		codetools.RunTestsName:    {},

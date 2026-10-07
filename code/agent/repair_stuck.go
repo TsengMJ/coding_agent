@@ -77,7 +77,12 @@ func (d StuckDetector) WrapToolCall(ctx context.Context, req *core.ToolCallReque
 	}
 	msgs := append(history[:len(history):len(history)], m)
 	if r, ok := detectStuck(msgs); ok {
-		res.Content = append(slices.Clone(res.Content), llm.TextBlock(stuckNote(r, "")))
+		checkpoint := ""
+		if saved := checkpoints(msgs, userTurnStart(msgs)); len(saved) > 0 {
+			last := saved[len(saved)-1]
+			checkpoint = fmt.Sprintf("%s (%s) with the %s tool", last.ID, last.Reason, RollbackToolName)
+		}
+		res.Content = append(slices.Clone(res.Content), llm.TextBlock(stuckNote(r, checkpoint)))
 	}
 	return res, nil
 }
@@ -208,7 +213,7 @@ func alternatingCalls(msgs []llm.Message) (llm.ToolCall, llm.ToolCall, bool) {
 		if m.Role != llm.RoleTool || !ok {
 			continue
 		}
-		if mutatingTools[c.Name] && m.Status != llm.ToolStatusError && !strings.HasPrefix(m.Text(), "Error") {
+		if changesFiles(c.Name) && m.Status != llm.ToolStatusError && !strings.HasPrefix(m.Text(), "Error") {
 			seq = nil
 			continue
 		}
@@ -303,7 +308,7 @@ func changedCourse(msgs []llm.Message, reset int, edits bool) bool {
 			if h, _ := c.Args["hypothesis"].(string); strings.TrimSpace(h) != "" && strings.TrimSpace(h) != before {
 				return true
 			}
-		case edits && mutatingTools[c.Name] && !failed:
+		case edits && changesFiles(c.Name) && !failed:
 			return true
 		}
 	}

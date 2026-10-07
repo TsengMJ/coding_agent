@@ -51,10 +51,14 @@ const (
 	// strategy and, headless, refuses the next edit once until the
 	// hypothesis changes (StuckDetector).
 	FeatureStuck = "stuck"
+	// FeatureCheckpoint saves the workspace in git refs before the first
+	// edit of a turn and after each check an edit improved, and offers the
+	// rollback tool (CheckpointManager).
+	FeatureCheckpoint = "checkpoint"
 )
 
 // Features lists every name Options.Disable accepts.
-var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget, FeatureFailureClass, FeatureRepairState, FeatureMicro, FeatureRepro, FeaturePlanner, FeatureStuck}
+var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget, FeatureFailureClass, FeatureRepairState, FeatureMicro, FeatureRepro, FeaturePlanner, FeatureStuck, FeatureCheckpoint}
 
 // ParseFeatures splits a comma-separated list of feature names and rejects
 // unknown ones.

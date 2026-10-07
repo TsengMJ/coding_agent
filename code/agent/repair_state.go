@@ -161,7 +161,9 @@ type repairView struct {
 	Pending []PlannedCheck
 	// Stuck is the last reset note the model has not acted on yet.
 	Stuck *stuckReport
-	Next  string
+	// Checkpoints are the checkpoints saved in the current turn.
+	Checkpoints []checkpointNote
+	Next        string
 }
 
 // deriveRepair reads the current turn: the first failing check before any
@@ -192,7 +194,7 @@ func deriveRepair(msgs []llm.Message) repairView {
 			if h, _ := c.Args["hypothesis"].(string); !failed && strings.TrimSpace(h) != "" {
 				hypothesis = strings.TrimSpace(h)
 			}
-		case mutatingTools[c.Name]:
+		case changesFiles(c.Name):
 			if failed {
 				continue
 			}
@@ -230,6 +232,7 @@ func deriveRepair(msgs []llm.Message) repairView {
 		}
 	}
 	v.Phase, v.Next = repairPhase(v)
+	v.Checkpoints = checkpoints(msgs, start)
 	if r, ok := stuckOpen(msgs); ok {
 		v.Stuck = &r
 		v.Next = fmt.Sprintf("You are stuck (%s): call repair set_hypothesis with a different cause before editing again.", r.Rule)
@@ -347,6 +350,17 @@ func renderRepairState(rec RepairRecord, v repairView) string {
 	if v.Open != nil {
 		files, _ := json.Marshal(v.Open.Files)
 		fmt.Fprintf(&b, "unchecked_edits: %s\n", files)
+	}
+	if len(v.Checkpoints) > 0 {
+		shown := v.Checkpoints
+		if len(shown) > maxShownCheckpoints {
+			shown = shown[len(shown)-maxShownCheckpoints:]
+		}
+		var items []string
+		for _, c := range shown {
+			items = append(items, fmt.Sprintf("{id: %s, reason: %s}", c.ID, q(c.Reason)))
+		}
+		fmt.Fprintf(&b, "checkpoints: [%s]\n", strings.Join(items, ", "))
 	}
 	if v.Stuck != nil {
 		fmt.Fprintf(&b, "stuck: {rule: %s, resets: %d, detail: %s}\n", v.Stuck.Rule, v.Stuck.Resets, q(clipLine(v.Stuck.Detail, 200)))

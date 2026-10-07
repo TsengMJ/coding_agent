@@ -138,7 +138,7 @@ func normalizeOutput(text string) string {
 // changesWorkspace reports whether a successful call may have changed what
 // a repeated call sees: edits and shell commands.
 func changesWorkspace(c llm.ToolCall) bool {
-	return mutatingTools[c.Name] || c.Name == executeToolName
+	return changesFiles(c.Name) || c.Name == executeToolName
 }
 
 func callKey(c llm.ToolCall) string {
