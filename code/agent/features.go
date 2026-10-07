@@ -47,10 +47,14 @@ const (
 	// repair state and has the headless gate widen verification once
 	// (VerificationPlanner).
 	FeaturePlanner = "planner"
+	// FeatureStuck notices attempts that go in circles, asks for a new
+	// strategy and, headless, refuses the next edit once until the
+	// hypothesis changes (StuckDetector).
+	FeatureStuck = "stuck"
 )
 
 // Features lists every name Options.Disable accepts.
-var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget, FeatureFailureClass, FeatureRepairState, FeatureMicro, FeatureRepro, FeaturePlanner}
+var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget, FeatureFailureClass, FeatureRepairState, FeatureMicro, FeatureRepro, FeaturePlanner, FeatureStuck}
 
 // ParseFeatures splits a comma-separated list of feature names and rejects
 // unknown ones.

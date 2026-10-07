@@ -141,6 +141,8 @@ type Attempt struct {
 	Files      []string
 	Result     *Signature
 	Delta      *Delta
+	// at is the index of the check's result in the conversation.
+	at int
 }
 
 // repairView is the repair state derived from the current turn.
@@ -157,20 +159,16 @@ type repairView struct {
 	Plan    VerificationPlan
 	Reached VerifyLevel
 	Pending []PlannedCheck
-	Next    string
+	// Stuck is the last reset note the model has not acted on yet.
+	Stuck *stuckReport
+	Next  string
 }
 
 // deriveRepair reads the current turn: the first failing check before any
 // edit is the baseline; each run of successful edits followed by a check
 // is an attempt, compared with the previous run of the same tests.
 func deriveRepair(msgs []llm.Message) repairView {
-	start := 0
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if rt.IsUserTurn(msgs[i]) {
-			start = i
-			break
-		}
-	}
+	start := userTurnStart(msgs)
 	var v repairView
 	hypothesis := ""
 	edited := false
@@ -222,6 +220,7 @@ func deriveRepair(msgs []llm.Message) repairView {
 				continue
 			}
 			v.Open.Result = &s
+			v.Open.at = i
 			if prev, ok := previousSignature(msgs[start:i], c, s); ok {
 				d := CompareFailures(prev, s)
 				v.Open.Delta = &d
@@ -231,6 +230,10 @@ func deriveRepair(msgs []llm.Message) repairView {
 		}
 	}
 	v.Phase, v.Next = repairPhase(v)
+	if r, ok := stuckOpen(msgs); ok {
+		v.Stuck = &r
+		v.Next = fmt.Sprintf("You are stuck (%s): call repair set_hypothesis with a different cause before editing again.", r.Rule)
+	}
 	return v
 }
 
@@ -344,6 +347,9 @@ func renderRepairState(rec RepairRecord, v repairView) string {
 	if v.Open != nil {
 		files, _ := json.Marshal(v.Open.Files)
 		fmt.Fprintf(&b, "unchecked_edits: %s\n", files)
+	}
+	if v.Stuck != nil {
+		fmt.Fprintf(&b, "stuck: {rule: %s, resets: %d, detail: %s}\n", v.Stuck.Rule, v.Stuck.Resets, q(clipLine(v.Stuck.Detail, 200)))
 	}
 	renderVerification(&b, v.Plan, v.Reached, v.Pending)
 	if len(rec.Notes) > 0 {

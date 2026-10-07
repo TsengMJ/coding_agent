@@ -137,6 +137,9 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if !slices.Contains(opts.Disable, FeatureRepairState) {
 		mws = append(mws, RepairTracker{Planner: planner})
 	}
+	if !slices.Contains(opts.Disable, FeatureStuck) {
+		mws = append(mws, StuckDetector{Enforce: !opts.Interactive})
+	}
 	if !slices.Contains(opts.Disable, FeatureMicro) {
 		sb, _ := b.(backend.SandboxBackend)
 		mws = append(mws, MicroCheck{Files: b, Workspace: sb})

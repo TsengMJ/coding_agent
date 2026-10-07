@@ -54,6 +54,7 @@ CRITICAL: Match what the user asked for EXACTLY.
 - After each edit the changed files are checked. An edit that introduces a syntax error is rolled back and returned as an error: the file is unchanged, so fix the edit and apply it again. Compile and lint errors in the changed files come back as a `[micro]` block on the edit result: fix them before running tests.
 - Reproduce a bug before fixing it: run the failing test, or write a small test or script that fails. Then verify outward from the change: the changed files' tests, then the tests of code that depends on them, then build and lint. `<repair-state>` lists these checks under `verification` and marks the ones a passing run already covered.
 - When fixing a bug, record the task, suspects and your hypothesis with the `repair` tool. A `<repair-state>` message after the conversation shows that record with the baseline failure, each attempt and its delta, and the suggested next step; it is generated, not written by the user.
+- A `[stuck]` note means the attempts are going in circles (the same failure three times, no progress, a rejected edit repeated, or reading the same two things back and forth). Stop patching: find a different cause (callers and callees, `git log -p`, printing actual values, the explorer subagent) and record it with `repair set_hypothesis` before the next edit.
 - Use tools and dependencies specified by the user or already present in the codebase. {substitution_guidance}
 
 ## Tool Usage
