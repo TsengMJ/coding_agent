@@ -30,18 +30,22 @@ var (
 const maxRequirements = 12
 
 // reviewDiff checks the working tree once before a headless turn finishes:
-// byproducts to delete, existing tests the agent changed, and the task's
-// requirement list to check the change against. It returns "" when there
-// is nothing to review.
-func reviewDiff(ctx context.Context, sb backend.SandboxBackend, prompt string) string {
-	var byproducts, tests []string
+// byproducts to delete, existing tests the agent changed, what the diff
+// itself shows (see checkDiff; intent is the patch intent's files), and
+// the task's requirement list to check the change against. It returns ""
+// when there is nothing to review.
+func reviewDiff(ctx context.Context, sb backend.SandboxBackend, prompt string, intent []string) string {
+	var byproducts, tests, findings []string
 	t := gitTimeout
 	resp := sb.Execute(ctx, "git status --porcelain=v1 -uall --no-renames", &t)
 	if resp.ExitCode != nil && *resp.ExitCode == 0 {
 		byproducts, tests = classifyStatus(resp.Output)
 	}
+	if diff, err := workingDiff(ctx, sb); err == nil {
+		findings = checkDiff(parseDiff(diff), intent)
+	}
 	reqs := requirements(prompt)
-	if len(byproducts) == 0 && len(tests) == 0 && len(reqs) == 0 {
+	if len(byproducts) == 0 && len(tests) == 0 && len(findings) == 0 && len(reqs) == 0 {
 		return ""
 	}
 	var b strings.Builder
@@ -53,6 +57,9 @@ func reviewDiff(ctx context.Context, sb backend.SandboxBackend, prompt string) s
 	if len(tests) > 0 {
 		fmt.Fprintf(&b, "\n- You changed existing tests: %s. Change an existing test only where the task changes the behaviour it checks; "+
 			"never rewrite or weaken a test so that failing code passes. Revert the other test changes.", fileList(tests))
+	}
+	for _, f := range findings {
+		b.WriteString("\n- " + f)
 	}
 	if len(reqs) > 0 {
 		b.WriteString("\n- Check your change against each requirement of the task and fix any that is not met:")

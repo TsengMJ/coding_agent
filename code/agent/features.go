@@ -55,10 +55,13 @@ const (
 	// edit of a turn and after each check an edit improved, and offers the
 	// rollback tool (CheckpointManager).
 	FeatureCheckpoint = "checkpoint"
+	// FeatureReviewer has an independent read-only reviewer check a
+	// verified headless change once (Options.ReviewModel).
+	FeatureReviewer = "reviewer"
 )
 
 // Features lists every name Options.Disable accepts.
-var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget, FeatureFailureClass, FeatureRepairState, FeatureMicro, FeatureRepro, FeaturePlanner, FeatureStuck, FeatureCheckpoint}
+var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget, FeatureFailureClass, FeatureRepairState, FeatureMicro, FeatureRepro, FeaturePlanner, FeatureStuck, FeatureCheckpoint, FeatureReviewer}
 
 // ParseFeatures splits a comma-separated list of feature names and rejects
 // unknown ones.

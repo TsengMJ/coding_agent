@@ -823,3 +823,103 @@
       - {level: build_lint, tool: diagnostics, args: {"packages":["./..."]}, why: "build and vet the module", done: false}
   next: "Widen verification: run_tests {\"packages\":[\"./b\"]} (packages that import the changed packages)."
   ```
+
+### Stage RL5: StuckDetector 與換策略
+**Goal**: 偵測修復迴圈在原地打轉，要求換假設；headless 下沒換假設前擋一次修改。
+**Success Criteria**:
+- 四條規則，只看這個 turn 最後一次 `[stuck]` 之後的對話（每次提醒都要新證據）：
+  - `same_failure`：連續 3 次 attempt 的 delta 都是 `unchanged`；
+  - `no_progress`：連續 3 次 attempt 都沒有 `fixed` / `progressed`；
+  - `same_patch`：一個修改被失敗的檢查否定後，又原封不動重送；
+  - `alternating`：沒有修改的情況下，最近 8 個呼叫在同兩個之間來回。
+- 觸發的工具結果後附 `[stuck] {rule, detail, resets}` 與換策略的選項（重新定位、`git log -p`、印出實際值、explorer、回到最近的 checkpoint）。
+- headless：提醒後第一次修改被拒一次，除非之後用 `repair set_hypothesis` 記錄了**不同**的假設；被拒過一次後放行。
+- `<repair-state>` 顯示 `stuck:`，`next` 改成要求換假設，換了或改了檔案後消失。
+- `-disable stuck` 可關。
+**Tests**: `code/agent/repair_stuck_test.go` 12 個（四條規則與不觸發的情況、提醒後重新計數、附註可被 `stripNotes` 去掉、擋一次、新假設放行 / 同假設不放行、互動模式不擋、repair-state、e2e `TestAgentResetsStrategyWhenStuck`：三次 unchanged → 第四次修改被拒 → 新假設後修好）。
+**Status**: Complete
+
+**Results**:
+- `code/agent/repair_stuck.go`：`StuckDetector`、`detectStuck`、`stuckRefusal`；`Attempt` 多記檢查結果的位置。
+- 輸出範例：
+  ```
+  [stuck] {"rule":"same_failure","detail":"the last 3 attempts all left the same failure: TestA","resets":1}
+  Stop patching and change strategy: more edits on the same idea will not help. Before the next edit, call repair set_hypothesis with a different cause. Ways to find it:
+  - re-localize: read the callers and callees on the failing path, not only the code you have been changing
+  - read the history: git log -p on the files or functions involved
+  - print the actual values with a small script or a debug test
+  - ask the explorer subagent for an independent read of the failing path
+  - roll back to cp2 (attempt 1: progressed, still failing: TestB) with the rollback tool and try another approach from there
+  ```
+  ```
+  [stuck] Edit not applied: you are stuck (same_failure: the last 3 attempts all left the same failure: TestA) and have not changed the hypothesis since. Call repair set_hypothesis with a different cause first (the current one: "off by one in Two"). This edit is refused once; send it again only if you are sure it is right.
+  ```
+  ```
+  checkpoints: [{id: cp2, reason: "attempt 1: progressed, still failing: TestB"}]
+  stuck: {rule: same_failure, resets: 1, detail: "the last 3 attempts all left the same failure: TestA"}
+  next: "You are stuck (same_failure): call repair set_hypothesis with a different cause before editing again."
+  ```
+
+### Stage RL6: CheckpointManager 與 rollback
+**Goal**: 在 git 工作區自動存 checkpoint，讓 agent 能回到較好的狀態，而不是手動一個個復原修改。
+**Success Criteria**:
+- 存檔時機：每個 turn 第一次修改前；每次修改後的檢查是 `fixed` / `progressed`（只靠 rollback 回來的那次不算）。
+- 用暫時 index（複製真的 index 後 `git add -A`、`write-tree`、`commit-tree`）存到 `refs/quill/checkpoints/<thread>/<n>`，含未追蹤檔案；HEAD、index、branch 不動。
+- `rollback {checkpoint: "cpN"}`：檔案回到 checkpoint 的內容，之後新增的檔案刪掉，回報還原與刪除的檔案，提醒先重讀再改。未知 id 回錯誤並列出已存的。
+- 非 git 工作區不掛 middleware、不提供工具；`git` 失敗時不附註也不影響工具結果。
+- 非 AutoApprove 時 `rollback` 需要核准（approve / reject）。
+- `<repair-state>` 列出這個 turn 的 checkpoint（最近 3 個）；`[stuck]` 提醒附上最近的 checkpoint；rollback 算一次修改（之後的檢查成為 attempt、重設 ProgressMonitor 與 alternating）。
+- `-disable checkpoint` 可關。
+**Tests**: `code/agent/repair_checkpoint_test.go` 11 個（HEAD / index 不變、非 git 失敗、還原修改 / 刪除 / 新增的檔案、進步才存、第一次修改前存一次、非 git 不附註、rollback 工具與未知 id、stuck 提醒帶 checkpoint、repair-state、需要核准、e2e `TestAgentRollsBackToACheckpoint`：修好一個 → cp2 → 改壞 → rollback cp2 → 只剩另一個失敗）。
+**Status**: Complete
+
+**Results**:
+- `code/agent/repair_checkpoint.go`：`CheckpointManager`、`saveCheckpoint`、`restoreCheckpoint`、rollback 工具。
+- 輸出範例：
+  ```
+  [checkpoint] {"id":"cp1","commit":"a54e0911569dd794d2f7cf7caafc82bb0f8218bf","reason":"attempt 1: progressed, still failing: TestB"}
+  Saved the workspace as cp1; the rollback tool restores it.
+  ```
+  ```
+  Rolled back to cp1 (attempt 1: progressed, still failing: TestB). Restored: m.go. Removed (created after the checkpoint): later.go. The files changed on disk: read a file again before editing it.
+  ```
+
+### Stage RL7: Diff validation 與獨立 Reviewer
+**Goal**: 結束前用規則檢查 diff，再請一個只能讀的 reviewer 獨立審一次。
+**Success Criteria**:
+- diff review（原本的 byproducts / 改到既有測試 / requirements 之外）新增：
+  - 改了 `patch_intent.files` 以外的檔案（測試檔、lock 檔不算）；
+  - 測試的 assertion 被刪掉（刪的比加的多）、加了 skip / only；
+  - 程式碼加了 debug 輸出（`console.log`、`fmt.Println`、`println`、`print(`、`debugger`、`pdb`）；
+  - `go.mod` / `package.json` / `requirements*.txt` 新增依賴。
+
+  diff 用暫時 index 取得，包含未追蹤檔案，不動 index。
+- reviewer：
+  - 只讀的子 agent，工具限 `ls` / `read_file` / `glob` / `grep` / `git_status` / `git_diff`，用 `submit_review` 結構化輸出（verdict、issues[severity, file, line, kind, detail]、requirements[requirement, met, evidence]）。
+  - gate 在檢查通過、diff review 之後問一次；有 high 或未達成的 requirement 才擋，medium 一併列出。
+  - reviewer 出錯時放行，錯誤交給 `OnReview`。
+  - 不佔「檢查不足」的提醒額度。
+- 只有設定 `Options.ReviewModel` 時才有 reviewer：bench 與 server 的 headless run 用主模型；`-disable reviewer` 可關。
+**Tests**: `code/agent/repair_review_test.go` 11 個（parseDiff、四類規則、`reviewDiff` 整合、reviewMessage 只擋 high / 未達成、gate 只問一次並傳 task / record / files / check、reviewer 出錯放行、`NewModelReviewer` 只提供唯讀工具並解析結構化輸出、e2e `TestAgentFixesWhatTheReviewerFound`）。
+**Status**: Complete
+
+**Results**:
+- `code/agent/repair_review.go`：`parseDiff`、`checkDiff`、`workingDiff`、`Reviewer` / `NewModelReviewer`、`reviewMessage`；`diffreview.go`、`verify.go` 接上。
+- 輸出範例：
+  ```
+  [verify] Before finishing, review your change (git_diff):
+  - You changed existing tests: `m_test.go`. ...
+  - You changed files outside your patch_intent (`m.go`): `README.md`, `util.go`. Revert what the task does not need, or record why with repair set_hypothesis.
+  - `m.go:3` adds debug output: `func Add(a, b int) int { fmt.Println("add", a, b)`. Remove it unless the task asks for it.
+  - `m_test.go` removes 2 assertion(s) (`... t.Fatal("add") ...`, `... t.Fatal("sub") ...`). Never weaken a test so that the code passes; restore them unless the task changes that behavior.
+  - `m_test.go:5` skips or focuses tests: `func TestAdd(t *testing.T) { t.Skip("later") }`. Do not skip or focus tests to get a passing run.
+  If everything is already in order, finish without further changes.
+  ```
+  ```
+  [verify] An independent review of your change found problems. Fix them, rerun the affected tests, then finish:
+  - [high] m.go:7 (logic): Mul returns a + b instead of a * b
+  - Requirement not met: Mul(a, b) multiplies (m.go:7 returns a + b)
+  Also worth a look:
+  - [medium] m.go (edge_case): overflow for large inputs is not handled
+  If a finding is wrong, do not change the code for it; say why in your final answer.
+  ```

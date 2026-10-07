@@ -52,6 +52,9 @@ type Options struct {
 	ExtraTools []tool.Tool
 	// WebModel reads fetched pages for fetch_url prompts; nil uses Model.
 	WebModel llm.ChatModel
+	// ReviewModel, when set, runs the independent reviewer the headless
+	// gate asks once before a turn with changes finishes.
+	ReviewModel llm.ChatModel
 	// Cache holds web lookups; nil disables caching.
 	Cache cache.Cache
 	// NoWebTools leaves out web_search and fetch_url (offline evaluation).
@@ -81,6 +84,9 @@ type Options struct {
 	// OnBaseline receives every verdict of the headless gate's HEAD
 	// baseline, so a benchmark can record why a failing turn finished.
 	OnBaseline func(verdict string, tests []string)
+	// OnReview receives every review of the headless gate's reviewer and
+	// every reviewer error.
+	OnReview func(Review, error)
 }
 
 // CreateCLIAgent assembles the coding agent on top of quill.CreateAgent.
@@ -164,6 +170,12 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		g := newVerifyGate(b, opts.Disable)
 		g.OnBaseline = opts.OnBaseline
 		g.Planner = planner
+		if opts.ReviewModel != nil && g.Workspace != nil && !slices.Contains(opts.Disable, FeatureReviewer) {
+			if g.Reviewer, err = NewModelReviewer(opts.ReviewModel, b); err != nil {
+				return nil, err
+			}
+			g.OnReview = opts.OnReview
+		}
 		mws = append(mws, g)
 	}
 	var tools []tool.Tool

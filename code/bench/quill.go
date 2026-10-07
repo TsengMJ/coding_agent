@@ -158,7 +158,7 @@ func (s *QuillSolver) runAgent(ctx context.Context, task Task, container, ws, re
 	var verdicts []BaselineVerdict
 	var verdictsMu sync.Mutex
 	a, err := codeagent.CreateCLIAgent(ctx, codeagent.Options{
-		Settings: s.Settings, Model: trace.WrapModel(model), Cwd: ws, Backend: b,
+		Settings: s.Settings, Model: trace.WrapModel(model), ReviewModel: trace.WrapModel(model), Cwd: ws, Backend: b,
 		Checkpointer: rt.NewMemoryCheckpointer(), AutoApprove: true, NoWebTools: true,
 		ProjectContext:    projectContext(task, repoDir),
 		WorkingDirSection: workingDirSection(repoDir),

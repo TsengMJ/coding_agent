@@ -551,7 +551,12 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest) (agent.Agent, er
 	s.mu.Unlock()
 
 	e.once.Do(func() {
+		var reviewModel llm.ChatModel
+		if !req.Interactive {
+			reviewModel = s.model
+		}
 		e.agent, e.err = codeagent.CreateCLIAgent(ctx, codeagent.Options{
+			ReviewModel:  reviewModel,
 			Settings:     s.settings,
 			Model:        s.model,
 			Cwd:          req.Cwd,

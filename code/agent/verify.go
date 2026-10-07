@@ -81,6 +81,12 @@ type VerifyGate struct {
 	// Planner, when set, makes a passing turn widen its checks once until
 	// they reach LevelRelated.
 	Planner Planner
+	// Reviewer, when set, reviews a verified turn's change once; high
+	// severity issues and unmet requirements send the turn back.
+	Reviewer Reviewer
+	// OnReview, when set, receives every review and reviewer error; an
+	// error lets the turn finish.
+	OnReview func(Review, error)
 }
 
 func (VerifyGate) Name() string { return VerifyGateName }
@@ -183,9 +189,29 @@ func (g VerifyGate) AfterAgent(ctx context.Context, state *rt.State, _ *core.Run
 			return gateCommand(gateKindTestEdit, msg), nil
 		}
 	}
+	rec, _ := parseRepairRecord(state.Values[RepairStateKey])
 	if g.Workspace != nil && !g.NoDiffReview && !t.kinds[gateKindDiff] {
-		if msg := reviewDiff(ctx, g.Workspace, t.prompt); msg != "" {
+		var intent []string
+		if rec.Intent != nil {
+			intent = rec.Intent.Files
+		}
+		if msg := reviewDiff(ctx, g.Workspace, t.prompt, intent); msg != "" {
 			return gateCommand(gateKindDiff, msg), nil
+		}
+	}
+	if g.Reviewer != nil && !t.kinds[gateKindReview] {
+		req := ReviewRequest{Task: t.prompt, Record: rec, Files: t.files}
+		if t.last != nil {
+			req.Check = t.last.command
+		}
+		r, err := g.Reviewer.Review(ctx, req)
+		if g.OnReview != nil {
+			g.OnReview(r, err)
+		}
+		if err == nil {
+			if msg := reviewMessage(r); msg != "" {
+				return gateCommand(gateKindReview, msg), nil
+			}
 		}
 	}
 	return nil, nil
@@ -253,7 +279,7 @@ func inspectTurn(msgs []llm.Message) turnFacts {
 		if m.Role == llm.RoleUser && i > start {
 			if kind, _ := m.Metadata[GateKindKey].(string); kind != "" {
 				t.kinds[kind] = true
-				if kind == gateKindDiff || kind == gateKindTestEdit || kind == gateKindWiden {
+				if kind == gateKindDiff || kind == gateKindTestEdit || kind == gateKindWiden || kind == gateKindReview {
 					t.blocks--
 				}
 			}
