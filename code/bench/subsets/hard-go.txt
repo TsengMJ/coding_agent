@@ -1,0 +1,5 @@
+# The two HARD Go tasks of smoke50, for a cheap RL8 repair loop ablation:
+# run once with the repair loop and once with
+# -disable failure_class,repair_state,micro,repro,planner,stuck,checkpoint,reviewer.
+instance_flipt-io__flipt-c188284ff0c094a4ee281afebebd849555ebee59
+instance_future-architect__vuls-ca3f6b1dbf2cd24d1537bfda43e788443ce03a0c
