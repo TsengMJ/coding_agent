@@ -364,7 +364,7 @@ func errorLines(text string) []string {
 const sandboxNote = "\n[sandbox] "
 
 // noteMarkers start annotations that middleware appends to tool results.
-var noteMarkers = []string{"\n\n" + repairMarker + " ", "\n\n" + progressMarker + " ", "\n\n[hint] ", sandboxNote}
+var noteMarkers = []string{"\n\n" + repairMarker + " ", "\n\n" + progressMarker + " ", "\n\n" + microMarker + " ", "\n\n" + reproMarker + " ", "\n\n[hint] ", sandboxNote}
 
 // stripNotes removes the annotations middleware appended to a tool result,
 // leaving what the tool itself returned.

@@ -35,10 +35,22 @@ const (
 	// (task, hypothesis, baseline, attempts, phase) to each request
 	// (RepairTracker).
 	FeatureRepairState = "repair_state"
+	// FeatureMicro checks the files an edit changed right away: a new
+	// syntax error rolls the edit back, compile / lint errors are appended
+	// (MicroCheck).
+	FeatureMicro = "micro"
+	// FeatureRepro notes, on the first code edit of a headless turn, that
+	// no failing check has reproduced the problem yet (ReproReminder).
+	FeatureRepro = "repro"
+	// FeaturePlanner plans which tests a change needs (the changed files'
+	// tests, then their dependents, then build and lint), shows it in the
+	// repair state and has the headless gate widen verification once
+	// (VerificationPlanner).
+	FeaturePlanner = "planner"
 )
 
 // Features lists every name Options.Disable accepts.
-var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget, FeatureFailureClass, FeatureRepairState}
+var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget, FeatureFailureClass, FeatureRepairState, FeatureMicro, FeatureRepro, FeaturePlanner}
 
 // ParseFeatures splits a comma-separated list of feature names and rejects
 // unknown ones.
@@ -73,4 +85,14 @@ func newVerifyGate(b backend.Backend, disable []string) VerifyGate {
 	g.NoDiffReview = slices.Contains(disable, FeatureDiffReview)
 	g.NoTestEdits = slices.Contains(disable, FeatureTestEdits)
 	return g
+}
+
+// newPlanner returns the verification planner, or nil when b cannot run
+// commands or the planner is disabled.
+func newPlanner(b backend.Backend, disable []string) *VerificationPlanner {
+	sb, ok := b.(backend.SandboxBackend)
+	if !ok || slices.Contains(disable, FeaturePlanner) {
+		return nil
+	}
+	return NewVerificationPlanner(sb)
 }

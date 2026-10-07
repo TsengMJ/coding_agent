@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"slices"
 	"strings"
 
@@ -26,6 +27,9 @@ const (
 	maxShownAttempts = 5
 )
 
+// taskKinds are the kinds set_task accepts.
+var taskKinds = []string{"bug", "feature", "refactor", "other"}
+
 // RepairRecord is what the model writes with the repair tool. Attempts,
 // the baseline and the phase are not stored: deriveRepair recomputes them
 // from the conversation.
@@ -39,6 +43,9 @@ type RepairRecord struct {
 
 // TaskSpec is the request turned into something that can be checked.
 type TaskSpec struct {
+	// Kind is bug, feature, refactor or other; only a bug has a failure to
+	// reproduce before editing.
+	Kind         string   `json:"kind,omitempty"`
 	Expected     []string `json:"expected"`
 	Constraints  []string `json:"constraints,omitempty"`
 	Verification []string `json:"verification,omitempty"`
@@ -143,7 +150,14 @@ type repairView struct {
 	Attempts []Attempt
 	// Open is the attempt whose edits have not been checked yet.
 	Open *Attempt
-	Next string
+	// Files are every file the turn edited, relative to the root.
+	Files []string
+	// Plan, Reached and Pending describe the verification of Files, when a
+	// planner is set.
+	Plan    VerificationPlan
+	Reached VerifyLevel
+	Pending []PlannedCheck
+	Next    string
 }
 
 // deriveRepair reads the current turn: the first failing check before any
@@ -191,6 +205,9 @@ func deriveRepair(msgs []llm.Message) repairView {
 			for _, f := range editedFiles(c) {
 				if !slices.Contains(v.Open.Files, f) {
 					v.Open.Files = append(v.Open.Files, f)
+				}
+				if rel := strings.TrimPrefix(path.Clean("/"+f), "/"); !slices.Contains(v.Files, rel) {
+					v.Files = append(v.Files, rel)
 				}
 			}
 		default:
@@ -266,6 +283,9 @@ func renderRepairState(rec RepairRecord, v repairView) string {
 	fmt.Fprintf(&b, "phase: %s\n", v.Phase)
 	if rec.Task != nil {
 		b.WriteString("task:\n")
+		if rec.Task.Kind != "" {
+			fmt.Fprintf(&b, "  kind: %s\n", rec.Task.Kind)
+		}
 		list("expected", rec.Task.Expected)
 		list("constraints", rec.Task.Constraints)
 		list("verification", rec.Task.Verification)
@@ -325,6 +345,7 @@ func renderRepairState(rec RepairRecord, v repairView) string {
 		files, _ := json.Marshal(v.Open.Files)
 		fmt.Fprintf(&b, "unchecked_edits: %s\n", files)
 	}
+	renderVerification(&b, v.Plan, v.Reached, v.Pending)
 	if len(rec.Notes) > 0 {
 		b.WriteString("notes:\n")
 		for _, n := range rec.Notes {
@@ -370,8 +391,11 @@ func clipList(items []string, n int) []string {
 // the record plus the attempts derived from the current turn (baseline,
 // edits, before / after comparison, phase) to each request as a message
 // after the conversation, so the system message and history stay a
-// cacheable prefix.
-type RepairTracker struct{}
+// cacheable prefix. With a Planner it also shows the verification plan for
+// the edited files and how far the checks since the last edit reach.
+type RepairTracker struct {
+	Planner Planner
+}
 
 func (RepairTracker) Name() string { return "RepairTrackerMiddleware" }
 
@@ -379,7 +403,7 @@ func (RepairTracker) StateSchema() rt.Schema {
 	return rt.Schema{RepairStateKey: {Name: RepairStateKey, Reducer: reduceRepair, Private: true, OmitFromInput: true}}
 }
 
-func (RepairTracker) WrapModelCall(ctx context.Context, req *core.ModelRequest, next core.ModelHandler) (*core.ModelResponse, error) {
+func (t RepairTracker) WrapModelCall(ctx context.Context, req *core.ModelRequest, next core.ModelHandler) (*core.ModelResponse, error) {
 	if req.State == nil {
 		return next(ctx, req)
 	}
@@ -390,6 +414,13 @@ func (RepairTracker) WrapModelCall(ctx context.Context, req *core.ModelRequest, 
 	v := deriveRepair(req.State.Messages)
 	if rec.empty() && v.Phase == PhaseUnderstand {
 		return next(ctx, req)
+	}
+	if t.Planner != nil && len(v.Files) > 0 {
+		v.Plan = t.Planner.Plan(ctx, codeFiles(v.Files))
+		v.Reached, v.Pending = verificationProgress(req.State.Messages, v.Plan)
+		if v.Phase == PhaseVerified && len(v.Pending) > 0 {
+			v.Next = fmt.Sprintf("Widen verification: %s (%s).", v.Pending[0].describe(), v.Pending[0].Why)
+		}
 	}
 	tail := llm.NewUserMessage(renderRepairState(rec, v))
 	tail.Metadata = map[string]any{rt.SyntheticSourceKey: RepairStateSource}
@@ -419,6 +450,7 @@ func (RepairTracker) Tools() []tool.Tool {
 			"type": "object",
 			"properties": map[string]any{
 				"op":           map[string]any{"type": "string", "enum": []string{"set_task", "set_suspects", "set_hypothesis", "note"}},
+				"kind":         map[string]any{"type": "string", "enum": taskKinds, "description": "set_task: bug (reproduce the failure before editing), feature, refactor or other."},
 				"expected":     strList("set_task: the expected behaviors, each checkable."),
 				"constraints":  strList("set_task: what must not change."),
 				"verification": strList("set_task: commands or tests that show the task is done."),
@@ -452,6 +484,10 @@ func runRepairTool(_ context.Context, r *tool.Runtime, args map[string]any) (*to
 		task := TaskSpec{Expected: trimmed(stringArgs(args["expected"])), Constraints: trimmed(stringArgs(args["constraints"])), Verification: trimmed(stringArgs(args["verification"]))}
 		if len(task.Expected) == 0 {
 			return nil, errors.New("set_task needs at least one expected behavior")
+		}
+		task.Kind, _ = args["kind"].(string)
+		if task.Kind != "" && !slices.Contains(taskKinds, task.Kind) {
+			return nil, fmt.Errorf("kind must be one of %s, got %q", strings.Join(taskKinds, ", "), task.Kind)
 		}
 		up.Task = &task
 	case "set_suspects":

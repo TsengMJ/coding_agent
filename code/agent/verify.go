@@ -78,6 +78,9 @@ type VerifyGate struct {
 	// OnBaseline, when set, receives every baseline verdict, including the
 	// ones that let the turn finish without a message.
 	OnBaseline func(verdict string, tests []string)
+	// Planner, when set, makes a passing turn widen its checks once until
+	// they reach LevelRelated.
+	Planner Planner
 }
 
 func (VerifyGate) Name() string { return VerifyGateName }
@@ -169,6 +172,11 @@ func (g VerifyGate) AfterAgent(ctx context.Context, state *rt.State, _ *core.Run
 		}
 		return gateCommand(kind, msg), nil
 	}
+	if g.Planner != nil && !t.kinds[gateKindWiden] {
+		if msg := widenMessage(ctx, g.Planner, state.Messages, t.files); msg != "" {
+			return gateCommand(gateKindWiden, msg), nil
+		}
+	}
 	if g.Workspace != nil && !g.NoTestEdits && !t.kinds[gateKindTestEdit] {
 		te := TestEdits{Workspace: g.Workspace, RunTests: g.RunTests}
 		if msg := te.Check(ctx, t.lastCall); msg != "" {
@@ -245,7 +253,7 @@ func inspectTurn(msgs []llm.Message) turnFacts {
 		if m.Role == llm.RoleUser && i > start {
 			if kind, _ := m.Metadata[GateKindKey].(string); kind != "" {
 				t.kinds[kind] = true
-				if kind == gateKindDiff || kind == gateKindTestEdit {
+				if kind == gateKindDiff || kind == gateKindTestEdit || kind == gateKindWiden {
 					t.blocks--
 				}
 			}

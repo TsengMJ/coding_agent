@@ -771,3 +771,55 @@
   next: "The targeted check passes: widen verification ..."
   </repair-state>
   ```
+
+### Stage RL3: Micro Repair Loop（改完立刻檢查）
+**Goal**: `write_file`、`edit_file`、`apply_patch` 成功後立刻檢查改到的檔案。新引入的語法錯誤會還原整個呼叫並回錯誤；修改前就有的語法錯誤只附註；編譯與 lint 錯誤附在結果後，不還原。
+**Success Criteria**: Go 在本機用 `go/parser`，Python / JS 沿用 `pycompile.py` / `nodecheck.js`；`apply_patch` 全有或全無（新增的檔案會刪掉）；還原後 version guard 仍接受下一次修改；檢查逾時就跳過；`-disable micro` 可關。
+**Tests**: `code/agent/repair_micro_test.go`（Go / Python / JS 還原、原本就壞的檔案保留修改、整個 patch 還原、編譯錯誤只附註、乾淨時不附註、逾時跳過、失敗的修改與其他工具不處理、e2e `TestAgentRollsBackAnEditThatBreaksTheSyntax`）；`code/codetools/micro_test.go`（`SyntaxCheck`、`DiagnoseFiles` 只回報指定檔案）。
+**Status**: Complete
+
+**Results**:
+- `code/agent/repair_micro.go`：`MicroCheck`；`code/codetools/micro.go`：`SyntaxCheck`、`DiagnoseFiles`。
+- 輸出範例：
+  ```
+  Error: edit rolled back: it introduced a syntax error, so the files are unchanged. Fix the edit and apply it again.
+
+  [micro] {"status":"rolled_back","diagnostics":[{"file":"a/a.go","line":5,"col":2,"source":"go/parser","message":"expected '}', found 'EOF'"}]}
+  ```
+  ```
+  Successfully replaced 1 instance(s) of the string in '/a/a.go'
+
+  [micro] {"status":"failed","note":"Fix these errors in the changed files before running tests.","diagnostics":[{"file":"a/a.go","line":4,"col":9,"source":"build","message":"undefined: two"}]}
+  ```
+
+### Stage RL4: Reproduction 與 VerificationPlanner
+**Goal**: 修改前先重現；依改動算出驗證範圍並逐步擴大；`VerifyGate` 的放行條件改成驗證範圍達到 `related`。
+**Success Criteria**:
+- headless 下第一次修改程式碼時，若這個 turn 沒有在程式碼裡失敗的檢查（環境錯不算），且 task 不是 feature / refactor（`repair set_task kind=...`），結果附一次 `[repro]`，不擋。
+- 規劃器：Go 是改到的 package → import 它的 package（`go list`）→ `diagnostics ./...`；Node / Python 是同名測試檔 → import 它的其他測試檔（grep）→ `diagnostics`。依改動的檔案集合快取。
+- 已達層級：最後一次修改之後通過的檢查（`run_tests` 的 packages / files / dir、`go test ./...`、`npm test`、build / lint 指令）涵蓋了哪些計劃中的檢查。
+- gate：檢查都通過但沒到 `related` 時，列出還沒跑的檢查請 agent 擴大，每個 turn 一次，不佔「檢查不足」的提醒額度。
+- `<repair-state>` 多出 `verification` 區塊，verified 時 `next` 指向下一個沒跑的檢查。
+- `-disable repro`、`-disable planner` 可關。
+**Tests**: `code/codetools/related_test.go`（Go 依賴反查、Node / Python 依名稱與 import 找測試、改到的測試檔本身）；`code/agent/repair_verify_test.go`（計劃的層級順序、已達層級 10 種情況、Node 檔案與目錄、gate 只擋一次、達到 related 放行、不佔提醒額度、repair-state 顯示計劃、快取、repro 提醒 8 種情況、task kind、e2e `TestAgentWidensVerificationToDependents`）。
+**Status**: Complete
+
+**Results**:
+- `code/agent/repair_verify.go`：`VerificationPlanner`、`verificationProgress`、`widenMessage`、`ReproReminder`；`code/codetools/related.go`：`FindRelated`。
+- 全套測試（suite）這一層沒有做：目前沒有記錄每次測試的耗時，無法判斷是否低於 10 分鐘。
+- 輸出範例：
+  ```
+  [verify] Your checks pass, but verification only reached: package (targeted → package → related → build_lint). Widen it before finishing:
+  next: run_tests {"packages":["./b"]} (packages that import the changed packages)
+  then: diagnostics {"packages":["./..."]} (build and vet the module)
+  Fix what fails. If one of these cannot run here, say so in your final answer.
+  ```
+  ```
+  verification:
+    reached: package
+    plan:
+      - {level: package, tool: run_tests, args: {"packages":["./a"]}, why: "packages of the changed files", done: true}
+      - {level: related, tool: run_tests, args: {"packages":["./b"]}, why: "packages that import the changed packages", done: false}
+      - {level: build_lint, tool: diagnostics, args: {"packages":["./..."]}, why: "build and vet the module", done: false}
+  next: "Widen verification: run_tests {\"packages\":[\"./b\"]} (packages that import the changed packages)."
+  ```

@@ -130,8 +130,19 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if !slices.Contains(opts.Disable, FeatureFailureClass) {
 		mws = append(mws, FailureClassifier{})
 	}
+	var planner Planner
+	if p := newPlanner(b, opts.Disable); p != nil {
+		planner = p
+	}
 	if !slices.Contains(opts.Disable, FeatureRepairState) {
-		mws = append(mws, RepairTracker{})
+		mws = append(mws, RepairTracker{Planner: planner})
+	}
+	if !slices.Contains(opts.Disable, FeatureMicro) {
+		sb, _ := b.(backend.SandboxBackend)
+		mws = append(mws, MicroCheck{Files: b, Workspace: sb})
+	}
+	if !opts.Interactive && !slices.Contains(opts.Disable, FeatureRepro) {
+		mws = append(mws, ReproReminder{})
 	}
 	mws = append(mws, summ, todolist.New("", ""), mem, &liveContext{cwd: opts.Cwd, model: opts.Model, project: opts.ProjectContext})
 	if len(skillSources) > 0 {
@@ -144,6 +155,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if !opts.Interactive && !opts.NoVerifyGate {
 		g := newVerifyGate(b, opts.Disable)
 		g.OnBaseline = opts.OnBaseline
+		g.Planner = planner
 		mws = append(mws, g)
 	}
 	var tools []tool.Tool
