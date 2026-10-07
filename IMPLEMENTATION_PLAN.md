@@ -923,3 +923,27 @@
   - [medium] m.go (edge_case): overflow for large inputs is not handled
   If a finding is wrong, do not change the code for it; say why in your final answer.
   ```
+
+### Stage RL8: 評測與 ablation
+**Goal**: quillbench 記錄修復迴圈每個元件的觸發次數，用 `-disable` 比較開與關。
+**Success Criteria**: 解題率不下降；步數與成本增加不超過 20%；觸發次數與效果寫回這裡。刪除元件前先由使用者看數據決定。
+**Tests**: `TestTriggersCountsRepairLoopNotes`、`TestAnalyzeCountsRecordedReviews`、`TestReviewVerdictCountsBlockingFindings`。
+**Status**: In Progress（第一輪只跑 2 題，等使用者看數據）
+
+**Results**:
+- `quillbench analyze` 新增「Repair loop」表：`repair` / `rollback` 呼叫、`[repair]` 的 delta 與失敗分類、micro 還原 / 編譯錯誤、repro、widen、stuck、checkpoint、reviewer 結果（`Process.Reviews`，經 `OnReview` 記錄）。
+- 子集 `code/bench/subsets/hard-go.txt`（smoke50 中兩題 HARD Go），commit `2381a6b`，`openrouter:openai/gpt-6-luna-pro`，各 1 次：
+  - A `20261007-151258-quill-hard-go`：修復迴圈全開。
+  - B `20261007-161048-quill-hard-go`：`-disable failure_class,repair_state,micro,repro,planner,stuck,checkpoint,reviewer`。
+
+  | 題 | 解出 A / B | 步數 A / B | input tokens (M) | cache % | peak ctx (k) | $ | 分鐘 |
+  |---|---|---|---|---|---|---|---|
+  | flipt-c188 | 0 / 0（都是 F2P 5/6，`TestECRCredential` MISSING） | 83 / 47 | 19.8 / 5.5 | 33 / 84 | 553 / 307 | 1.52 / 0.17 | 47 / 18 |
+  | vuls-ca3f | 1 / 1 | 109 / 59 | 27.8 / 7.2 | 37 / 81 | 536 / 240 | 1.96 / 0.24 | 50 / 25 |
+
+- 解題率相同；成本約 8.5 倍、步數約 1.8 倍，遠超過 20% 的標準。
+- 主因是 cache：A 從第 5 個請求起 cache 命中率就停在約 35%，B 維持 80–95%。trace 中相鄰請求的訊息前綴相同（只有最後的 `<repair-state>` 被換掉），原因還沒確認；懷疑是每次請求最後多一則 user 訊息，讓 provider 把之前的內容當成上一輪而丟掉 reasoning。需要單獨 `-disable repair_state` 驗證。
+- A 的觸發次數（2 題合計）：`repair` 工具 12、delta fixed 1 / unchanged 9、micro 編譯錯誤 21 / 還原 0、repro 1、widen 1、stuck 提醒 5 / 擋下 0、checkpoint 15 / rollback 0、reviewer 1 次（vuls 用滿 50 分鐘，reviewer 在期限到時逾時）。
+- 發現的 RL6 問題（未修）：
+  - 同一個回應平行跑兩個檢查時，兩者看到同樣的歷史，算出同一個 `cpN`，後者覆蓋前者的 ref（vuls 有 cp3、cp5、cp7、cp9、cp11、cp13 各兩個 commit）。
+  - 檢查前後都通過（`passed → passed`，delta `unchanged`）也算進步而存檔，所以 15 個 checkpoint 大多是 `attempt N: unchanged`。
