@@ -27,10 +27,18 @@ const (
 	// FeatureBudget warns a headless run to wrap up at 80% of its deadline
 	// or step limit.
 	FeatureBudget = "budget"
+	// FeatureFailureClass appends a [repair] line to check results that
+	// classifies the failure and compares it with the previous run after
+	// an edit (FailureClassifier).
+	FeatureFailureClass = "failure_class"
+	// FeatureRepairState offers the repair tool and adds the repair state
+	// (task, hypothesis, baseline, attempts, phase) to each request
+	// (RepairTracker).
+	FeatureRepairState = "repair_state"
 )
 
 // Features lists every name Options.Disable accepts.
-var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget}
+var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget, FeatureFailureClass, FeatureRepairState}
 
 // ParseFeatures splits a comma-separated list of feature names and rejects
 // unknown ones.

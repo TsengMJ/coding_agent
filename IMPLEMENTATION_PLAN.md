@@ -724,3 +724,50 @@
 - **bd80 解出**：18 步、$0.02；diff review 1 次；沒有 HEAD baseline 判定（最後一次檢查通過）。
 - **8168 未解**：`incomplete_fix`，F2P 3/4，失敗測試 `Groups groups cover should remove cover`。gold_src_recall 1.00（改到了對的檔），差一條 cover 刪除行為。步數 32 已回到 baseline（36），失敗與 masking 無關。
 - 這只有 3 個 attempt，解題率不做統計結論。機制上：masking 移除有效；baseline 放行可觀察；test_edits 這次沒有對應的改測試行為可驗證。
+
+## Repair Loop（RL1–RL8）
+
+把現有單一 ReAct loop 補成完整的修復迴圈：重現 → 假設 → 小步修改 → 前後比較 → 卡住偵測 → checkpoint → 漸進驗證 → review。不另建外層狀態機：修復狀態由 middleware 從對話推導，checkpoint 與離線 trace 重播都能還原。四個計劃，每個計劃完成後停下，等使用者確認再繼續。
+
+- Plan 1：RL1 FailureClassifier / Signature、RL2 RepairState
+- Plan 2：RL3 Micro repair loop、RL4 Reproduction + VerificationPlanner
+- Plan 3：RL5 StuckDetector、RL6 CheckpointManager、RL7 Reviewer + diff validation
+- Plan 4：RL8 評測與 ablation
+
+### Stage RL1: FailureClassifier 與 failure signature
+**Goal**: 把 `run_tests` / `diagnostics` / `execute` 的檢查結果分類成 `Signature`（category、失敗測試、錯誤行、環境原因），並和同一組測試的上一次結果比較（`fixed` / `progressed` / `unchanged` / `changed` / `regressed`）。
+**Success Criteria**: 檢查結果後附 `[repair]` JSON；環境類失敗（缺模組、服務未啟動、逾時、sandbox 擋下）不會被當成程式錯誤；換指令跑同一組測試仍能比較；`ProgressMonitor` 改用不含指令的 signature。
+**Tests**: 28 個分類案例（go / pytest / mocha / tsc / diagnostics / 環境 / sandbox）、非檢查工具忽略、易變數字不影響 key、指令不影響 key、CompareFailures 表格、附註不干擾 `classifyCheck`、編輯後才給 delta、跨指令 unchanged、e2e（真的 go module + FakeModel：assertion → fixed）。
+**Status**: Complete
+
+**Results**:
+- `code/agent/repair_failure.go`：`ClassifyFailure`、`CompareFailures`、`FailureClassifier` middleware；`-disable failure_class` 可關。
+- 順帶修正：工具結果後附的 `[hint]` / `[progress]` / `[sandbox]` 會讓 `classifyCheck` 解析 JSON 或結束碼失敗，現在先 `stripNotes`。
+- 輸出範例：
+  ```
+  [repair] {"category":"assertion","check":"go test ./...","tests":["TestB"],"delta":"progressed","advice":"..."}
+  ```
+
+### Stage RL2: RepairState
+**Goal**: 模型用 `repair` 工具記錄 task / suspects / hypothesis / patch intent / notes（state key `repair`，reducer 合併部分更新）；baseline、每次 attempt（改了哪些檔、結果、delta）與 phase 從目前 turn 的對話推導；每次請求在對話後附 `<repair-state>`，不動 system message 與歷史，保持 cache prefix。
+**Success Criteria**: 四種 op 都寫入 state、壞參數回錯誤；並行呼叫都保留；只讀目前 turn；失敗的編輯不算 attempt；沒有東西時不附；最多顯示最近 5 次 attempt；e2e 最後一次請求帶 `phase: verified`、`delta: fixed`。
+**Tests**: `code/agent/repair_state_test.go` 11 個測試（含 e2e `TestAgentKeepsRepairRecord`）。
+**Status**: Complete
+
+**Results**:
+- `code/agent/repair_state.go`：`RepairTracker`（tool + state schema + `WrapModelCall`）；`-disable repair_state` 可關。
+- 輸出範例：
+  ```
+  <repair-state>
+  phase: verified
+  task:
+    expected:
+      - "Two returns 2"
+  hypothesis: "Two returns a literal 3"
+  baseline: {check: "go test ./...", result: "assertion TestA, TestB"}
+  attempts: # 2 attempts
+    - attempt 1: {files: ["/a.go"], ..., delta: progressed, fixed: "TestA"}
+    - attempt 2: {files: ["/a.go"], ..., delta: fixed, fixed: "TestB"}
+  next: "The targeted check passes: widen verification ..."
+  </repair-state>
+  ```

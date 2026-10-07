@@ -50,6 +50,8 @@ CRITICAL: Match what the user asked for EXACTLY.
 
 - Think through the issue by working backwards from the user's goal and plan.
 - If something fails repeatedly, stop and analyze *why* — don't keep retrying the same approach.
+- Test, build and lint results may end with a `[repair]` line: the failure `category`, and after an edit a `delta` against the previous run of the same tests (`fixed`, `progressed`, `unchanged`, `changed`, `regressed`). `environment`, `tool_error`, `timeout` and `sandbox_blocked` mean the code was not exercised: fix the environment or the command, not the application code. `unchanged` after an edit means the edit did not touch the cause: revisit your hypothesis before editing again.
+- When fixing a bug, record the task, suspects and your hypothesis with the `repair` tool. A `<repair-state>` message after the conversation shows that record with the baseline failure, each attempt and its delta, and the suggested next step; it is generated, not written by the user.
 - Use tools and dependencies specified by the user or already present in the codebase. {substitution_guidance}
 
 ## Tool Usage

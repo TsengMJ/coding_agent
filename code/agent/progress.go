@@ -113,11 +113,11 @@ func repeatFailures(history []llm.Message, call llm.ToolCall) []string {
 // failureFingerprint identifies how a call failed, ignoring numbers that
 // vary between identical runs. failed is false for a successful result.
 func failureFingerprint(call llm.ToolCall, text string, status llm.ToolStatus) (fp string, failed bool) {
-	if r := classifyCheck(call, text); r != nil {
-		if r.passed {
+	if s, ok := ClassifyFailure(call, text); ok {
+		if s.Category == FailurePassed {
 			return "", false
 		}
-		return checkFingerprint(r, text), true
+		return s.Key(), true
 	}
 	if status == llm.ToolStatusError || strings.HasPrefix(text, "Error") {
 		return normalizeOutput(text), true
@@ -130,19 +130,8 @@ func failureFingerprint(call llm.ToolCall, text string, status llm.ToolStatus) (
 	return "", false
 }
 
-// checkFingerprint names a failing check by its failing tests when the
-// runner reports them, otherwise by its normalized output.
-func checkFingerprint(r *checkResult, text string) string {
-	if len(r.failedTests) > 0 {
-		tests := slices.Clone(r.failedTests)
-		slices.Sort(tests)
-		return r.command + "\n" + strings.Join(tests, "\n")
-	}
-	return r.command + "\n" + normalizeOutput(text)
-}
-
 func normalizeOutput(text string) string {
-	text = strings.TrimSpace(strings.SplitN(text, "\n\n"+progressMarker, 2)[0])
+	text = strings.TrimSpace(stripNotes(text))
 	return volatile.ReplaceAllString(text, "#")
 }
 

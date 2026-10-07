@@ -340,6 +340,7 @@ func turnStart(msgs []llm.Message) (int, int) {
 // classifyCheck reads a tool result as a test / build run, or returns nil when
 // the call was not one (or gave no usable signal).
 func classifyCheck(call llm.ToolCall, text string) *checkResult {
+	text = stripNotes(text)
 	switch call.Name {
 	case codetools.RunTestsName:
 		var rep codetools.TestReport

@@ -127,6 +127,12 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if !slices.Contains(opts.Disable, FeatureProgress) {
 		mws = append(mws, ProgressMonitor{})
 	}
+	if !slices.Contains(opts.Disable, FeatureFailureClass) {
+		mws = append(mws, FailureClassifier{})
+	}
+	if !slices.Contains(opts.Disable, FeatureRepairState) {
+		mws = append(mws, RepairTracker{})
+	}
 	mws = append(mws, summ, todolist.New("", ""), mem, &liveContext{cwd: opts.Cwd, model: opts.Model, project: opts.ProjectContext})
 	if len(skillSources) > 0 {
 		sk, err := skills.New(skills.Options{Backend: b, Sources: skillSources})
