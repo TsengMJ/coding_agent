@@ -1,6 +1,7 @@
 package bench
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -25,6 +26,19 @@ const (
 	TriggerServiceHint     = "service_hint"
 	TriggerShellTruncated  = "shell_truncated"
 	TriggerBudget          = "budget_notice"
+)
+
+// Repair loop trigger names. A [repair] note also counts as
+// "class_<category>" and, after an edit, "delta_<kind>"; a [micro] note
+// as "micro_<status>"; a recorded review as "review_<verdict>".
+const (
+	TriggerRepairTool   = "repair_tool"
+	TriggerRollback     = "rollback"
+	TriggerCheckpoint   = "checkpoint"
+	TriggerStuckReset   = "stuck_reset"
+	TriggerStuckRefusal = "stuck_refusal"
+	TriggerRepro        = "repro_reminder"
+	TriggerReviewError  = "review_error"
 )
 
 // toolMarkers are the texts components add to tool results, checked in
@@ -75,11 +89,71 @@ func TriggersFromTrace(calls []trace.LLMCallDetail) Triggers {
 						break
 					}
 				}
+				countRepairNotes(out, text)
 			}
 		}
 		if budget {
 			out[TriggerBudget]++
 		}
+		if c.Response != nil && len(c.Namespace) == 0 {
+			for _, call := range c.Response.ToolCalls {
+				switch call.Name {
+				case codeagent.RepairToolName:
+					out[TriggerRepairTool]++
+				case codeagent.RollbackToolName:
+					out[TriggerRollback]++
+				}
+			}
+		}
 	}
 	return out
+}
+
+// countRepairNotes counts the repair loop notes in one tool result; unlike
+// toolMarkers, one result can carry several.
+func countRepairNotes(out Triggers, text string) {
+	var repair struct {
+		Category string `json:"category"`
+		Delta    *struct {
+			Kind string `json:"kind"`
+		} `json:"delta"`
+	}
+	if noteJSON(text, "[repair]", &repair) {
+		out["class_"+repair.Category]++
+		if repair.Delta != nil {
+			out["delta_"+repair.Delta.Kind]++
+		}
+	}
+	var micro struct {
+		Status string `json:"status"`
+	}
+	if noteJSON(text, "[micro]", &micro) {
+		out["micro_"+micro.Status]++
+	}
+	var obj struct{}
+	if noteJSON(text, "[checkpoint]", &obj) {
+		out[TriggerCheckpoint]++
+	}
+	switch {
+	case strings.Contains(text, "[stuck] Edit not applied"):
+		out[TriggerStuckRefusal]++
+	case noteJSON(text, "[stuck]", &obj):
+		out[TriggerStuckReset]++
+	}
+	if strings.Contains(text, "[repro] ") {
+		out[TriggerRepro]++
+	}
+}
+
+// noteJSON decodes the JSON object that follows marker on its line.
+func noteJSON(text, marker string, v any) bool {
+	i := strings.Index(text, marker+" {")
+	if i < 0 {
+		return false
+	}
+	line := text[i+len(marker)+1:]
+	if j := strings.IndexByte(line, '\n'); j >= 0 {
+		line = line[:j]
+	}
+	return json.Unmarshal([]byte(line), v) == nil
 }

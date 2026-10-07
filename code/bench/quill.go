@@ -156,6 +156,7 @@ func (s *QuillSolver) runAgent(ctx context.Context, task Task, container, ws, re
 		Container:         container, Workdir: repoDir, Binary: s.DockerBinary,
 	})
 	var verdicts []BaselineVerdict
+	var reviews []ReviewVerdict
 	var verdictsMu sync.Mutex
 	a, err := codeagent.CreateCLIAgent(ctx, codeagent.Options{
 		Settings: s.Settings, Model: trace.WrapModel(model), ReviewModel: trace.WrapModel(model), Cwd: ws, Backend: b,
@@ -168,6 +169,11 @@ func (s *QuillSolver) runAgent(ctx context.Context, task Task, container, ws, re
 			verdictsMu.Lock()
 			defer verdictsMu.Unlock()
 			verdicts = append(verdicts, BaselineVerdict{Verdict: verdict, Tests: tests})
+		},
+		OnReview: func(r codeagent.Review, err error) {
+			verdictsMu.Lock()
+			defer verdictsMu.Unlock()
+			reviews = append(reviews, reviewVerdict(r, err))
 		},
 	})
 	if err != nil {
@@ -198,12 +204,34 @@ func (s *QuillSolver) runAgent(ctx context.Context, task Task, container, ws, re
 	}
 	verdictsMu.Lock()
 	res.Metrics.Process.BaselineVerdicts = verdicts
+	res.Metrics.Process.Reviews = reviews
 	verdictsMu.Unlock()
 	if err := writeBaselineLog(logDir, verdicts); err != nil {
 		res.Error = strings.TrimSpace(res.Error + "\n" + err.Error())
 	}
 	res.Metrics.AgentMS = agentMS
 	return res
+}
+
+func reviewVerdict(r codeagent.Review, err error) ReviewVerdict {
+	if err != nil {
+		return ReviewVerdict{Error: err.Error()}
+	}
+	v := ReviewVerdict{Verdict: r.Verdict}
+	for _, is := range r.Issues {
+		switch is.Severity {
+		case "high":
+			v.High++
+		case "medium":
+			v.Medium++
+		}
+	}
+	for _, req := range r.Requirements {
+		if !req.Met {
+			v.Unmet++
+		}
+	}
+	return v
 }
 
 func writeBaselineLog(logDir string, verdicts []BaselineVerdict) error {

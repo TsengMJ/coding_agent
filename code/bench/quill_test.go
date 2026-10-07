@@ -10,6 +10,7 @@ import (
 	"time"
 
 	core "github.com/tsengmingchun/quill/agent"
+	codeagent "github.com/tsengmingchun/quill/code/agent"
 	"github.com/tsengmingchun/quill/code/cost"
 	"github.com/tsengmingchun/quill/code/trace"
 	"github.com/tsengmingchun/quill/llm"
@@ -275,5 +276,19 @@ func TestWriteBaselineLog(t *testing.T) {
 	}
 	if err := writeBaselineLog("", []BaselineVerdict{{Verdict: "x"}}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReviewVerdictCountsBlockingFindings(t *testing.T) {
+	got := reviewVerdict(codeagent.Review{
+		Verdict:      "request_changes",
+		Issues:       []codeagent.ReviewIssue{{Severity: "high"}, {Severity: "medium"}, {Severity: "medium"}, {Severity: "low"}},
+		Requirements: []codeagent.ReviewedRequirement{{Met: true}, {Met: false}},
+	}, nil)
+	if want := (ReviewVerdict{Verdict: "request_changes", High: 1, Medium: 2, Unmet: 1}); got != want {
+		t.Fatalf("verdict = %+v, want %+v", got, want)
+	}
+	if got := reviewVerdict(codeagent.Review{}, errors.New("model failed")); got != (ReviewVerdict{Error: "model failed"}) {
+		t.Fatalf("error verdict = %+v", got)
 	}
 }

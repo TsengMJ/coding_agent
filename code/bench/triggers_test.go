@@ -66,3 +66,54 @@ func TestTriggersCountsEachMarkerOnce(t *testing.T) {
 		t.Fatalf("triggers = %v\nwant       %v", got, want)
 	}
 }
+
+func TestTriggersCountsRepairLoopNotes(t *testing.T) {
+	sys := llm.NewSystemMessage("sys")
+	fail := toolMsg("c1", "FAIL\n\n[repair] {\"category\":\"assertion\",\"tests\":[\"TestA\"]}")
+	progressed := toolMsg("c2", "FAIL\n\n[repair] {\"category\":\"assertion\",\"delta\":{\"kind\":\"progressed\",\"fixed\":[\"TestA\"]}}\n\n"+
+		"[checkpoint] {\"id\":\"cp2\",\"commit\":\"abc\",\"reason\":\"attempt 1: progressed\"}\nSaved the workspace as cp2; the rollback tool restores it.")
+	unchanged := toolMsg("c3", "FAIL\n\n[repair] {\"category\":\"assertion\",\"delta\":{\"kind\":\"unchanged\"}}\n\n"+
+		"[stuck] {\"rule\":\"same_failure\",\"detail\":\"...\",\"resets\":1}\nStop patching and change strategy")
+	refused := toolMsg("c4", "[stuck] Edit not applied: you are stuck (same_failure: ...)")
+	rolledBack := toolMsg("c5", "Error: edit rolled back: it introduced a syntax error\n\n[micro] {\"status\":\"rolled_back\",\"diagnostics\":[]}")
+	compile := toolMsg("c6", "Successfully replaced\n\n[micro] {\"status\":\"failed\",\"diagnostics\":[]}")
+	repro := toolMsg("c7", "Successfully replaced\n\n[repro] You edited code before any check in this turn failed.")
+	widen := synthetic(codeagent.VerifyGateName, "widen", "[verify] Your checks pass, but verification only reached: package")
+	review := synthetic(codeagent.VerifyGateName, "review", "[verify] An independent review of your change found problems.")
+	msgs := []llm.Message{sys, fail, progressed, unchanged, refused, rolledBack, compile, repro, widen, review}
+
+	main := detail(msgs...)
+	main.Response = &llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+		{ID: "r1", Name: codeagent.RepairToolName}, {ID: "r2", Name: codeagent.RollbackToolName}, {ID: "r3", Name: "read_file"},
+	}}
+	sub := detail(sys)
+	sub.Namespace = []string{"reviewer"}
+	sub.Response = &llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "s1", Name: codeagent.RepairToolName}}}
+
+	got := TriggersFromTrace([]trace.LLMCallDetail{main, detail(msgs...), sub})
+	want := Triggers{
+		"class_assertion": 3, "delta_progressed": 1, "delta_unchanged": 1,
+		TriggerCheckpoint: 1, TriggerStuckReset: 1, TriggerStuckRefusal: 1,
+		"micro_rolled_back": 1, "micro_failed": 1, TriggerRepro: 1,
+		"gate_widen": 1, "gate_review": 1, TriggerRepairTool: 1, TriggerRollback: 1,
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("triggers = %v\nwant       %v", got, want)
+	}
+}
+
+func TestAnalyzeCountsRecordedReviews(t *testing.T) {
+	a := Attempt{InstanceID: "instance_x", Process: &Process{Reviews: []ReviewVerdict{
+		{Verdict: "request_changes", High: 1}, {Verdict: "approve"}, {Error: "model failed"},
+	}}}
+	got := AnalyzeAttempt(a, Task{}, nil, []trace.LLMCallDetail{detail(llm.NewSystemMessage("sys"))}, nil, cost.Table{})
+	want := map[string]int{"review_request_changes": 1, "review_approve": 1, "review_error": 1}
+	for k, v := range want {
+		if got.Triggers[k] != v {
+			t.Fatalf("triggers = %v, want %s = %d", got.Triggers, k, v)
+		}
+	}
+	if r := got.Metrics.Process.Reviews; len(r) != 3 || r[0].High != 1 {
+		t.Fatalf("reviews = %+v", r)
+	}
+}

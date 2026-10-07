@@ -91,6 +91,14 @@ func AnalyzeAttempt(a Attempt, task Task, tests []TestResult, calls []trace.LLMC
 			for _, v := range a.Process.BaselineVerdicts {
 				out.Triggers["baseline_"+v.Verdict]++
 			}
+			out.Metrics.Process.Reviews = a.Process.Reviews
+			for _, r := range a.Process.Reviews {
+				if r.Error != "" {
+					out.Triggers[TriggerReviewError]++
+				} else {
+					out.Triggers["review_"+r.Verdict]++
+				}
+			}
 		}
 	}
 	out.Observed = ObservedFailure(a, task, out.FailingP2P, toolOutputs(calls))
@@ -272,27 +280,56 @@ var triggerColumns = []string{
 	"baseline_regression", "baseline_preexisting", "baseline_flaky", "baseline_also_fails", "baseline_unknown",
 }
 
+// repairColumns orders the repair loop trigger table.
+var repairColumns = []string{
+	TriggerRepairTool, "delta_fixed", "delta_progressed", "delta_unchanged", "delta_changed", "delta_regressed",
+	"micro_rolled_back", "micro_failed", TriggerRepro, "gate_widen", TriggerStuckReset, TriggerStuckRefusal,
+	TriggerCheckpoint, TriggerRollback, "gate_review", "review_approve", "review_request_changes", TriggerReviewError,
+}
+
 // writeTriggers lists what each component did in the recorded run, for
 // finding components that never fire.
 func writeTriggers(b *strings.Builder, rows []AttemptAnalysis) {
 	b.WriteString("\n## Component triggers\n\n")
 	b.WriteString("What the agent's components did in the recorded trace: tool results and gate messages are counted once, budget notices per request; `baseline_*` are the gate's HEAD baseline verdicts the run recorded (none for runs before they were recorded).\n\n")
-	b.WriteString("| task | t | observed | " + strings.Join(triggerColumns, " | ") + " |\n")
-	b.WriteString("|---|---|---|" + strings.Repeat("---|", len(triggerColumns)) + "\n")
+	writeTriggerTable(b, rows, triggerColumns)
+	b.WriteString("\n## Repair loop\n\n")
+	b.WriteString("`delta_*` compare a check after an edit with the previous run of the same tests; `review_*` are the reviewer results the run recorded (none for runs before they were recorded).\n\n")
+	writeTriggerTable(b, rows, repairColumns)
+	classes := Triggers{}
+	for _, r := range rows {
+		for k, v := range r.Triggers {
+			if c, ok := strings.CutPrefix(k, "class_"); ok {
+				classes[c] += v
+			}
+		}
+	}
+	if len(classes) > 0 {
+		b.WriteString("\nFailure classes of the checks:")
+		for _, c := range sortedKeys(classes) {
+			fmt.Fprintf(b, " %s %d;", c, classes[c])
+		}
+		b.WriteString("\n")
+	}
+}
+
+func writeTriggerTable(b *strings.Builder, rows []AttemptAnalysis, columns []string) {
+	b.WriteString("| task | t | observed | " + strings.Join(columns, " | ") + " |\n")
+	b.WriteString("|---|---|---|" + strings.Repeat("---|", len(columns)) + "\n")
 	sum := Triggers{}
 	for _, r := range rows {
 		if r.Triggers == nil {
 			continue
 		}
 		fmt.Fprintf(b, "| %s | %d | %s |", shortInstance(r.Attempt.InstanceID), r.Attempt.Trial, r.Observed)
-		for _, c := range triggerColumns {
+		for _, c := range columns {
 			sum[c] += r.Triggers[c]
 			fmt.Fprintf(b, " %d |", r.Triggers[c])
 		}
 		b.WriteString("\n")
 	}
 	b.WriteString("| total | | |")
-	for _, c := range triggerColumns {
+	for _, c := range columns {
 		fmt.Fprintf(b, " %d |", sum[c])
 	}
 	b.WriteString("\n")

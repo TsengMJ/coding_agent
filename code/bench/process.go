@@ -41,6 +41,19 @@ type Process struct {
 	// order; set by the solver, since verdicts that let the turn finish
 	// leave nothing in the trace.
 	BaselineVerdicts []BaselineVerdict `json:"baseline_verdicts,omitempty"`
+	// Reviews are the verify gate's reviewer results, in order; set by the
+	// solver, since an approval leaves nothing in the main agent's trace.
+	Reviews []ReviewVerdict `json:"reviews,omitempty"`
+}
+
+// ReviewVerdict summarizes one reviewer result; Error is set when the
+// reviewer failed and the gate let the turn finish.
+type ReviewVerdict struct {
+	Verdict string `json:"verdict,omitempty"`
+	High    int    `json:"high,omitempty"`
+	Medium  int    `json:"medium,omitempty"`
+	Unmet   int    `json:"unmet,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // BaselineVerdict is one HEAD baseline result and the tests it was about.
