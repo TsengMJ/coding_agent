@@ -94,8 +94,11 @@ var (
 	jsModuleMissing = regexp.MustCompile(`Cannot find module '([^']+)'|Cannot find package '([^']+)'`)
 	pyModuleMissing = regexp.MustCompile(`No module named '([^']+)'`)
 	toolMissing     = regexp.MustCompile(`(?m)^(?:sh|bash|/bin/sh)?:?\s*(?:\d+: )?([\w./-]+): (?:command )?not found`)
-	networkFailure  = regexp.MustCompile(`ENOTFOUND|EAI_AGAIN|getaddrinfo|Could not resolve host|Temporary failure in name resolution|dial tcp: lookup|no such host|network is unreachable|CONNECT tunnel failed|Tunnel connection failed`)
-	goSumMissing    = regexp.MustCompile(`missing go\.sum entry for module providing package (\S+)`)
+	// networkFailure includes Go's `Get "<url>": <reason>`, which a module
+	// download reports for any transport failure (a missing module is
+	// "reading <url>: 404" instead).
+	networkFailure = regexp.MustCompile(`ENOTFOUND|EAI_AGAIN|getaddrinfo|Could not resolve host|Temporary failure in name resolution|dial tcp: lookup|no such host|network is unreachable|CONNECT tunnel failed|Tunnel connection failed|Get "https?://[^"]+": `)
+	goSumMissing   = regexp.MustCompile(`missing go\.sum entry for module providing package (\S+)`)
 
 	goTestFail     = regexp.MustCompile(`(?m)^\s*--- FAIL: (\S+)`)
 	pytestFail     = regexp.MustCompile(`(?m)^FAILED \S+::(\S+)`)

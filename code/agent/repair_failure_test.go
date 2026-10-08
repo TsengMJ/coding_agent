@@ -103,6 +103,8 @@ func TestClassifyFailure(t *testing.T) {
 		{"run_tests own package not created yet", runTestsCall(), reportJSON(t, goBuildReport("no required module provides package go.flipt.io/flipt/internal/oci/ecr; to add it:\n\tgo get go.flipt.io/flipt/internal/oci/ecr")), FailureCompile, nil, ""},
 		{"diagnostics blocked by the network", llm.ToolCall{Name: codetools.DiagnosticsName}, diagJSON(t, codetools.Diagnostic{File: "a.go", Line: 9, Severity: "error", Source: "build", Message: proxyUnreachable}), FailureEnvironment, nil, "network"},
 		{"execute unreachable network", shellCheck("go test ./..."), "go: github.com/x/y@v1.0.0: Get \"https://proxy.golang.org/x\": dial tcp 142.250.0.1:443: connect: network is unreachable\n\n[Command failed with exit code 1]", FailureEnvironment, nil, "network"},
+		{"execute module download cut off", shellCheck("go test ./..."), "dep.go:4:8: example.com/dep@v1.0.0: Get \"https://proxy.golang.org/example.com/dep/@v/v1.0.0.zip\": EOF\n\n[Command failed with exit code 1]", FailureEnvironment, nil, "network"},
+		{"execute module that does not exist is code", shellCheck("go build ./..."), "go: example.com/dep@v9.9.9: reading https://proxy.golang.org/example.com/dep/@v/v9.9.9.info: 404 Not Found\n\n[Command failed with exit code 1]", FailureFailed, nil, ""},
 		{"execute passed", shellCheck("go test ./..."), "ok\tm\t0.1s\n\n[Command succeeded with exit code 0]", FailurePassed, nil, ""},
 		{"execute no tests", shellCheck("npx mocha -g nothing"), "  0 passing (2ms)\n\n[Command succeeded with exit code 0]", FailureNoTests, nil, ""},
 	}
@@ -348,6 +350,60 @@ func TestAgentAnnotatesCheckResults(t *testing.T) {
 	}
 	if d, _ := repairBlock(t, results["t2"])["delta"].(map[string]any); d["kind"] != "fixed" {
 		t.Fatalf("second run = %s", results["t2"])
+	}
+}
+
+func TestAgentGetsEnvironmentAdviceInsteadOfFixingCode(t *testing.T) {
+	dir := goRepo(t, map[string]string{
+		"go.mod": "module m\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n",
+		"dep.go": "package m\n\nimport _ \"example.com/dep\"\n",
+	})
+	call := func(id, name string, args map[string]any) llm.Message {
+		return llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: id, Name: name, Args: args}}}
+	}
+	offlineTest := "GOFLAGS=-mod=mod GOPROXY=https://proxy.invalid GOSUMDB=off go test ./..."
+	model := llm.NewFakeModel(
+		call("t1", "execute", map[string]any{"command": "go test ./..."}),
+		call("r1", "read_file", map[string]any{"file_path": "/dep.go"}),
+		call("e1", "edit_file", map[string]any{"file_path": "/dep.go", "old_string": "package m", "new_string": "// Package m uses dep.\npackage m"}),
+		call("e2", "edit_file", map[string]any{"file_path": "/dep.go", "old_string": "// Package m uses dep.", "new_string": "// Package m uses example.com/dep."}),
+		call("t2", "execute", map[string]any{"command": offlineTest}),
+		llm.NewAssistantMessage("Done."),
+		llm.NewAssistantMessage("The module cannot be downloaded here."),
+		llm.NewAssistantMessage("Unverified: the network is unreachable."),
+	)
+	a, err := CreateCLIAgent(context.Background(), Options{Model: model, Cwd: dir, Backend: NewBackend(dir), AutoApprove: true, NoWebTools: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := a.Invoke(context.Background(), core.Input{Messages: []llm.Message{llm.NewUserMessage("document package m")}}, rt.RunConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := map[string]string{}
+	var gate []string
+	for _, m := range st.Messages {
+		switch {
+		case m.Role == llm.RoleTool:
+			results[m.ToolCallID] = m.Text()
+		case m.Role == llm.RoleUser && strings.HasPrefix(m.Text(), verifyMarker):
+			gate = append(gate, m.Text())
+		}
+	}
+	if b := repairBlock(t, results["t1"]); b["env"] != "dependency:example.com/dep" || !strings.Contains(b["advice"].(string), "go mod tidy") {
+		t.Fatalf("t1 block = %v\n%s", b, results["t1"])
+	}
+	if b := microBlock(t, results["e1"]); b["status"] != "environment" {
+		t.Fatalf("e1 block = %v", b)
+	}
+	if strings.Contains(results["e2"], microMarker) {
+		t.Fatalf("second edit repeated the environment note:\n%s", results["e2"])
+	}
+	if b := repairBlock(t, results["t2"]); b["category"] != "environment" || b["env"] != "network" {
+		t.Fatalf("t2 block = %v\n%s", b, results["t2"])
+	}
+	if len(gate) != 2 || !strings.Contains(gate[0], "could not run because of the environment (network)") || strings.Contains(gate[0], "Fix the cause") {
+		t.Fatalf("gate messages:\n%s", strings.Join(gate, "\n---\n"))
 	}
 }
 
