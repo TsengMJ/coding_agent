@@ -249,6 +249,7 @@ type turnFacts struct {
 	// last is the last check after the last edit, run by lastCall.
 	last     *checkResult
 	lastCall llm.ToolCall
+	lastText string
 	hints    []string
 }
 
@@ -313,7 +314,7 @@ func inspectTurn(msgs []llm.Message) turnFacts {
 			continue
 		}
 		if r := classifyCheck(call, text); r != nil {
-			t.last, t.lastCall = r, call
+			t.last, t.lastCall, t.lastText = r, call, text
 		}
 	}
 	return t
@@ -322,6 +323,7 @@ func inspectTurn(msgs []llm.Message) turnFacts {
 // checkMessage tells the model why the turn has no valid check yet.
 func checkMessage(t turnFacts) string {
 	last := t.last
+	env := false
 	var b strings.Builder
 	b.WriteString(verifyMarker + " ")
 	switch {
@@ -335,16 +337,28 @@ func checkMessage(t turnFacts) string {
 			"Run the relevant tests (run_tests, or the project's own command through execute) and fix what fails before finishing.",
 			fileList(t.files))
 	default:
-		fmt.Fprintf(&b, "The last check after your changes did not pass: `%s` %s.", clipLine(last.command, 200), last.detail)
+		s, _ := ClassifyFailure(t.lastCall, t.lastText)
+		env = s.Category == FailureEnvironment
+		if env {
+			fmt.Fprintf(&b, "The last check after your changes could not run because of the environment (%s): `%s` %s.", s.Env, clipLine(last.command, 200), last.detail)
+		} else {
+			fmt.Fprintf(&b, "The last check after your changes did not pass: `%s` %s.", clipLine(last.command, 200), last.detail)
+		}
 		if len(last.failures) > 0 {
 			b.WriteString("\nFailing:")
 			for _, f := range last.failures {
 				b.WriteString("\n- " + f)
 			}
 		}
-		b.WriteString("\nFix the cause and rerun the check before finishing.")
+		if env {
+			b.WriteString("\n" + environmentAdvice(s.Env) + " Once it is fixed, rerun the check before finishing.")
+		} else {
+			b.WriteString("\nFix the cause and rerun the check before finishing.")
+		}
 	}
-	b.WriteString("\nIf the tests cannot start because of the environment (a missing service, dependency or database), set the environment up instead of giving up.")
+	if !env {
+		b.WriteString("\nIf the tests cannot start because of the environment (a missing service, dependency or database), set the environment up instead of giving up.")
+	}
 	for _, h := range t.hints {
 		b.WriteString("\n" + h)
 	}

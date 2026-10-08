@@ -169,6 +169,33 @@ func TestVerifyGateStopsAfterCap(t *testing.T) {
 	}
 }
 
+func TestVerifyGateNamesTheEnvironmentProblem(t *testing.T) {
+	msgs := transcript(editStep, step{name: "run_tests", result: reportJSON(t, goBuildReport(proxyUnreachable))})
+	first, ok := verifyMessage(msgs)
+	if !ok || !strings.Contains(first, "could not run because of the environment (network)") || !strings.Contains(first, "Editing the code will not fix") {
+		t.Fatalf("ok=%v msg=%q", ok, first)
+	}
+	if strings.Contains(first, "Fix the cause") {
+		t.Fatalf("asks to fix the code for an environment problem: %q", first)
+	}
+	msgs = append(msgs, llm.NewUserMessage(first), llm.NewAssistantMessage("done"))
+	second, ok := verifyMessage(msgs)
+	if !ok || !strings.Contains(second, "last reminder") {
+		t.Fatalf("second block: ok=%v msg=%q", ok, second)
+	}
+	msgs = append(msgs, llm.NewUserMessage(second), llm.NewAssistantMessage("unverified"))
+	if msg, ok := verifyMessage(msgs); ok {
+		t.Fatalf("third block: %s", msg)
+	}
+}
+
+func TestVerifyGateAsksToFixACodeFailure(t *testing.T) {
+	msg, ok := verifyMessage(transcript(editStep, step{name: "run_tests", result: reportJSON(t, goBuildReport("undefined: ErrUserNotFound"))}))
+	if !ok || !strings.Contains(msg, "did not pass") || !strings.Contains(msg, "Fix the cause") {
+		t.Fatalf("ok=%v msg=%q", ok, msg)
+	}
+}
+
 func TestVerifyGateNewUserTurnResetsCap(t *testing.T) {
 	msgs := transcript(editStep)
 	for range maxVerifyBlocks {
