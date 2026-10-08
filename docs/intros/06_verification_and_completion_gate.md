@@ -68,7 +68,9 @@ flowchart TD
   - `execute`：指令符合測試 / build 的 regex（`go test`、`npm test`、`npx jest`、`pytest`、`python -m unittest`、`make test`、`cargo test`、`tox` ...），再讀結尾的 exit code；exit 0 但輸出是 `0 passing`、`collected 0 items` 也算沒跑。
 - **測試名稱過濾不算驗證**（Stage 16a）：`run_tests run=...`、mocha `--grep/-g/--fgrep`、jest/vitest `-t`、`go test -run`、pytest `-k` 或 `file.py::test` 都會被偵測。通過了也要求「不帶過濾把同一批測試檔再跑一次」。`-timeout`、`-tags` 這類旗標不會誤判。
 
-擋下的訊息依情況不同：沒跑 → 列出改過的檔案；有過濾 → 說明同檔其他測試可能壞掉；失敗 → 列出前 5 個失敗（file:line + 訊息）與 build 錯誤。都會加一句「如果是環境問題（缺服務、依賴、資料庫），把環境建起來，不要放棄」。
+擋下的訊息依情況不同：沒跑 → 列出改過的檔案；有過濾 → 說明同檔其他測試可能壞掉；失敗 → 列出前 5 個失敗（file:line + 訊息）與 build 錯誤，並加一句「如果是環境問題（缺服務、依賴、資料庫），把環境建起來，不要放棄」。
+
+失敗的原因在程式碼之外時（`ClassifyFailure` 判為 environment：下載 module 時網路不通、缺 go.sum、服務沒啟動……，RL8b），訊息改成「檢查因環境無法執行（network）」，接著是依問題給的建議：能修的先列（恢復網路存取、`go mod tidy`、啟動服務），修不了才在回答裡說明哪些沒驗證。不再寫「Fix the cause」，因為改程式碼修不好。仍然最多擋 2 次。這來自 RL8 的 flipt：agent 自己判斷出是離線環境的問題，閘門卻兩次叫它回去修程式碼。
 
 ## 2. 服務啟動提示
 

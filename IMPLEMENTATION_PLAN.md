@@ -955,3 +955,23 @@
   - 檢查前後都通過（`passed → passed`，delta `unchanged`）也算進步而存檔，所以 15 個 checkpoint 大多是 `attempt N: unchanged`。
     - 修正：checkpoint 改用 `improved`：delta 是 `fixed` / `progressed`，或沒有可比較的前一次而且通過。`madeProgress` 仍給 stuck 用（通過不算卡住）。
   - 測試：`TestSaveCheckpointNumbersAfterTheLatestRef`、`TestSaveCheckpointSkipsAnUnchangedWorkspace`、`TestCheckpointManagerSavesParallelChecksOnce`、`TestCheckpointManagerSkipsAPassingRerun`。
+
+### Stage RL8b: 環境錯誤的回饋
+**Goal**: 檢查因程式碼之外的原因失敗時（下載 module 時網路不通、缺 go.sum、服務沒啟動、缺工具），失敗分類、micro、卡住偵測、`<repair-state>` 和驗證關卡都認得出來，並告訴 agent 能做什麼，而不是叫它改程式碼。以日常開發為準（quill 的沙箱預設 `network = "none"`），bench 只用來量效果。
+**Success Criteria**:
+- 只依工具輸出裡的證據判斷，沒有 bench 專用開關；建議先列能修的做法，「修不了就說明哪些沒驗證」放最後。
+- 驗證關卡仍然最多擋 2 次；環境錯誤仍然計入卡住偵測，只是訊息不同。
+- hard-go 重跑 A：`micro_failed` 不再是環境錯誤，stuck 不再叫 agent 換程式碼假設，步數與成本比 RL8 的 A 低。
+**Tests**: 見各 stage。
+**Status**: In Progress（程式碼完成，等 bench 數據）
+
+- E1 分類器（`a7a1d20`、`851d884`）：
+  - `envOfMessage` 判斷單一錯誤訊息；`classifyRunTests` 的 build_errors 和 `classifyDiagnostics` 的 error 每一筆先過它。全部是環境錯誤時判為 environment 並帶 `Env`，有程式碼錯誤時判為 compile / syntax，`Details` 只放程式碼錯誤。
+  - 網路規則補上 `network is unreachable` 和 Go 下載的 `Get "<url>": <reason>`（DNS、連線被拒、proxy 回 EOF 都是這個格式；module 不存在是 `reading <url>: 404`，不算）。
+  - `missing go.sum entry ...` 判為 `dependency:<pkg>`，建議 `go mod tidy`。`no required module provides package` 不加規則：flipt 裡同一句話是專案自己還沒建立的套件，沒讀 `go.mod` 分不出來。
+  - `environmentAdvice` 依 `Env` 分開寫：network 說明改程式碼修不好，列出恢復存取的方法（沙箱設定、問使用者）或改跑不需下載的檢查，最後才是回報；dependency 要求 `go mod tidy`；其他沿用「啟動服務、安裝依賴」。
+  - 測試：`TestClassifyFailure` 新增 8 列、`TestClassifyFailureKeepsOnlyCodeErrorsBesideEnvironmentOnes`、`TestFailureAdviceDependsOnTheEnvironmentProblem`。
+- E2 micro（`36d67aa`）：`diagnosticsNote` 把 build 錯誤分成程式碼與環境；環境錯誤是 `status: environment` 加 `env` 與建議，同一個回合同一個 `env` 只提醒一次；混合時只列程式碼錯誤並點出環境問題。quillbench 新增 `micro_environment` 欄。測試：`TestMicroCheckReportsAnEnvironmentErrorOncePerTurn`（真的 go，缺 go.sum）、`TestDiagnosticsNoteSeparatesCodeAndEnvironmentErrors`。
+- E3 卡住偵測與 `<repair-state>`（`d65e016`）：環境類 attempt 不計入 `same_failure` / `no_progress` / `same_patch`；連續 3 次環境錯誤回報新規則 `environment`，要求修環境或問使用者，不擋編輯（修環境可能要改 `go.mod`）；`<repair-state>` 的 next 改成點出環境問題。測試：`TestDetectStuckEnvironment`、`TestDetectStuckLeavesEnvironmentAttemptsOutOfTheCodeRules`、`TestDetectStuckSamePatchIgnoresEnvironmentChecks`、`TestStuckRefusalLetsEditsThroughAfterAnEnvironmentNote`、`TestDeriveRepairPhases` 新增一列。
+- E4 驗證關卡（`ba4722e`）：最後一次檢查是環境錯誤時，訊息是「could not run because of the environment (Env)」加上同樣的建議，沒有「Fix the cause」。測試：`TestVerifyGateNamesTheEnvironmentProblem`、`TestVerifyGateAsksToFixACodeFailure`。
+- E5 e2e：`TestAgentGetsEnvironmentAdviceInsteadOfFixingCode`（headless，缺 go.sum 拿到 `go mod tidy` 建議、micro 只提醒一次、離線的 `go test` 判為 network、關卡訊息點出環境問題）。
