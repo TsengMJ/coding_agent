@@ -32,6 +32,9 @@ const (
 	stuckNoProgress  = "no_progress"
 	stuckSamePatch   = "same_patch"
 	stuckAlternating = "alternating"
+	// stuckEnvironment: the checks keep failing before they reach the
+	// code, so the advice is about the environment, not the hypothesis.
+	stuckEnvironment = "environment"
 )
 
 // stuckReport is why the detector asked for a new strategy. Resets counts
@@ -46,6 +49,9 @@ type stuckReport struct {
 // a different strategy: the same failure after 3 attempts, 3 attempts that
 // neither fix nor reduce the failure, an edit repeated after a check
 // rejected it, or calls alternating between the same two without an edit.
+// Checks that failed because of the environment never reached the code:
+// they do not count for those rules, and 3 in a row ask for the
+// environment to be fixed instead.
 // The reset note goes on the tool result that showed it. Only what comes
 // after the last note counts, so each note needs fresh evidence.
 //
@@ -93,6 +99,12 @@ func stuckNote(r stuckReport, checkpoint string) string {
 	raw, _ := json.Marshal(r)
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n\n%s %s\n", stuckMarker, raw)
+	if r.Rule == stuckEnvironment {
+		b.WriteString("Stop editing the code: the checks fail before they reach it, so no edit can change the result. " +
+			"Fix the environment (see the [repair] advice), or ask the user if you cannot. " +
+			"If it stays broken, finish and say in your final answer which changes are unverified.")
+		return b.String()
+	}
 	b.WriteString("Stop patching and change strategy: more edits on the same idea will not help. ")
 	b.WriteString("Before the next edit, call repair set_hypothesis with a different cause. Ways to find it:\n")
 	b.WriteString("- re-localize: read the callers and callees on the failing path, not only the code you have been changing\n")
@@ -119,14 +131,24 @@ func detectStuck(msgs []llm.Message) (stuckReport, bool) {
 	if detail := repeatedPatch(msgs[from:]); detail != "" {
 		return report(stuckSamePatch, detail)
 	}
-	var recent []Attempt
+	var recent, ranCode []Attempt
 	for _, a := range deriveRepair(msgs).Attempts {
-		if a.at >= from {
-			recent = append(recent, a)
+		if a.at < from {
+			continue
+		}
+		recent = append(recent, a)
+		if a.Result.Category != FailureEnvironment {
+			ranCode = append(ranCode, a)
 		}
 	}
 	if len(recent) >= stuckAttempts {
 		last := recent[len(recent)-stuckAttempts:]
+		if !slices.ContainsFunc(last, func(a Attempt) bool { return a.Result.Category != FailureEnvironment }) {
+			return report(stuckEnvironment, fmt.Sprintf("the last %d checks could not run because of the environment (%s)", stuckAttempts, last[len(last)-1].Result.Env))
+		}
+	}
+	if len(ranCode) >= stuckAttempts {
+		last := ranCode[len(ranCode)-stuckAttempts:]
 		if !slices.ContainsFunc(last, func(a Attempt) bool { return a.Delta == nil || a.Delta.Kind != DeltaUnchanged }) {
 			return report(stuckSameFailure, fmt.Sprintf("the last %d attempts all left the same failure: %s", stuckAttempts, failureLabel(*last[len(last)-1].Result)))
 		}
@@ -190,7 +212,7 @@ func repeatedPatch(msgs []llm.Message) string {
 			unchecked = append(unchecked, key)
 			continue
 		}
-		if s, ok := ClassifyFailure(c, text); ok {
+		if s, ok := ClassifyFailure(c, text); ok && s.Category != FailureEnvironment {
 			for _, k := range unchecked {
 				rejected[k] = s.Category != FailurePassed
 			}
@@ -276,7 +298,7 @@ func stuckOpen(msgs []llm.Message) (stuckReport, bool) {
 func stuckRefusal(history []llm.Message) string {
 	start := userTurnStart(history)
 	reset, _, r := lastStuckNote(history, start)
-	if reset < 0 || changedCourse(history, reset, false) {
+	if reset < 0 || r.Rule == stuckEnvironment || changedCourse(history, reset, false) {
 		return ""
 	}
 	return fmt.Sprintf("%s: you are stuck (%s: %s) and have not changed the hypothesis since. "+

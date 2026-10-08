@@ -73,6 +73,47 @@ func TestDetectStuckSamePatch(t *testing.T) {
 	}
 }
 
+// offline is a go test run that could not download a module.
+func offline() step {
+	return step{name: "execute", args: goTest, result: "go: downloading example.com/dep v1.0.0\ndial tcp: lookup proxy.golang.org: no such host\n\n[Command failed with exit code 1]"}
+}
+
+func TestDetectStuckEnvironment(t *testing.T) {
+	r, ok := detectStuck(transcript(failing("TestA"), editN(0), offline(), editN(1), offline(), editN(2), offline()))
+	if !ok || r.Rule != stuckEnvironment || !strings.Contains(r.Detail, "network") {
+		t.Fatalf("report = %+v, %v", r, ok)
+	}
+	note := stuckNote(r, "")
+	if strings.Contains(note, "set_hypothesis") || !strings.Contains(note, "Stop editing the code") || !strings.Contains(note, "ask the user") {
+		t.Fatalf("note:\n%s", note)
+	}
+}
+
+func TestDetectStuckLeavesEnvironmentAttemptsOutOfTheCodeRules(t *testing.T) {
+	msgs := transcript(failing("TestA"), editN(0), failing("TestB"), editN(1), offline(), editN(2), failing("TestC"))
+	if r, ok := detectStuck(msgs); ok {
+		t.Fatalf("stuck with only 2 attempts that ran the code: %+v", r)
+	}
+}
+
+func TestDetectStuckSamePatchIgnoresEnvironmentChecks(t *testing.T) {
+	write := step{name: "write_file", args: map[string]any{"file_path": "/a.go", "content": "package m\n"}, result: "Updated file /a.go"}
+	if r, ok := detectStuck(transcript(failing("TestA"), write, offline(), write)); ok {
+		t.Fatalf("an environment failure rejected the patch: %+v", r)
+	}
+}
+
+func TestStuckRefusalLetsEditsThroughAfterAnEnvironmentNote(t *testing.T) {
+	msgs := transcript(failing("TestA"), editN(0), offline(), editN(1), offline(), editN(2), offline())
+	msgs = withStuckNote(msgs[:len(msgs)-1], stuckReport{Rule: stuckEnvironment, Detail: "network", Resets: 1})
+	if msg := stuckRefusal(msgs); msg != "" {
+		t.Fatalf("refused an edit after an environment note: %s", msg)
+	}
+	if next := deriveRepair(msgs).Next; strings.Contains(next, "set_hypothesis") {
+		t.Fatalf("next = %q", next)
+	}
+}
+
 func TestDetectStuckAlternating(t *testing.T) {
 	var steps []step
 	for i := 0; i < stuckAlternatingCalls; i++ {

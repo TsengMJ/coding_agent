@@ -236,6 +236,9 @@ func deriveRepair(msgs []llm.Message) repairView {
 	if r, ok := stuckOpen(msgs); ok {
 		v.Stuck = &r
 		v.Next = fmt.Sprintf("You are stuck (%s): call repair set_hypothesis with a different cause before editing again.", r.Rule)
+		if r.Rule == stuckEnvironment {
+			v.Next = "The checks keep failing because of the environment: fix it or ask the user; do not edit the code for it."
+		}
 	}
 	return v
 }
@@ -251,6 +254,9 @@ func repairPhase(v repairView) (RepairPhase, string) {
 		last := v.Attempts[len(v.Attempts)-1]
 		if last.Result.Category == FailurePassed {
 			return PhaseVerified, "The targeted check passes: widen verification (the changed package, then its dependents) and review git_diff before finishing."
+		}
+		if last.Result.Category == FailureEnvironment {
+			return PhaseDiagnosing, fmt.Sprintf("The last check could not run because of the environment (%s): deal with that before judging the edit; editing the code will not change the result.", last.Result.Env)
 		}
 		if last.Delta == nil {
 			return PhaseDiagnosing, "Read the failure before the next edit."

@@ -162,6 +162,7 @@ func TestDeriveRepairPhases(t *testing.T) {
 		{"unchanged failure", []step{{name: "execute", args: goTest, result: goFailure("TestA")}, editA, {name: "execute", args: goTest, result: goFailure("TestA")}}, PhaseDiagnosing, "did not change the failure"},
 		{"regressed", []step{{name: "execute", args: goTest, result: goFailure("TestA")}, editA, {name: "execute", args: goTest, result: goFailure("TestA", "TestC")}}, PhaseDiagnosing, "worse"},
 		{"edit without baseline", []step{editA}, PhasePatching, "Run the relevant tests"},
+		{"check blocked by the environment", []step{{name: "execute", args: goTest, result: goFailure("TestA")}, editA, offline()}, PhaseDiagnosing, "could not run because of the environment (network)"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
