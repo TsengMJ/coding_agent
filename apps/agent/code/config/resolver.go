@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	pathpkg "path"
 	"strings"
 	"time"
 
@@ -50,6 +51,9 @@ type fileConfig struct {
 		Project   string `toml:"project"`
 	} `toml:"tracing"`
 	Sandbox sandboxFile `toml:"sandbox"`
+	MCP     struct {
+		AllowTools []string `toml:"allow_tools"`
+	} `toml:"mcp"`
 }
 
 // fileResolver resolves defaults < config.toml < environment. CLI flags are
@@ -129,8 +133,21 @@ func loadUserFile(path string, s *Settings) error {
 	if err := applyAllowList(s, fc.Shell.AllowList); err != nil {
 		return fmt.Errorf("config %s: shell.allow_list: %w", path, err)
 	}
+	if err := checkPatterns(fc.MCP.AllowTools); err != nil {
+		return fmt.Errorf("config %s: mcp.allow_tools: %w", path, err)
+	}
+	s.MCPAllowTools = fc.MCP.AllowTools
 	if err := applySandbox(&s.Sandbox, fc.Sandbox); err != nil {
 		return fmt.Errorf("config %s: sandbox.%w", path, err)
+	}
+	return nil
+}
+
+func checkPatterns(patterns []string) error {
+	for _, p := range patterns {
+		if _, err := pathpkg.Match(p, ""); err != nil {
+			return fmt.Errorf("bad pattern %q: %w", p, err)
+		}
 	}
 	return nil
 }

@@ -23,6 +23,7 @@ import (
 	codeagent "github.com/tsengmingchun/quill/apps/agent/code/agent"
 	"github.com/tsengmingchun/quill/apps/agent/code/client"
 	"github.com/tsengmingchun/quill/apps/agent/code/config"
+	"github.com/tsengmingchun/quill/apps/agent/code/mcp"
 	"github.com/tsengmingchun/quill/apps/agent/code/server"
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
 	"github.com/tsengmingchun/quill/apps/agent/code/storage"
@@ -164,13 +165,35 @@ func newService(ctx context.Context, e env, model string) (*server.Service, erro
 		return nil, err
 	}
 	cfg.Storage = st
-	svc, err := server.New(ctx, cfg)
-	if err != nil {
+	if cfg.MCP, err = connectMCP(ctx, e.paths.MCPConfig); err != nil {
 		closeTracer(ls)
 		st.Close()
 		return nil, err
 	}
+	svc, err := server.New(ctx, cfg)
+	if err != nil {
+		closeTracer(ls)
+		st.Close()
+		if cfg.MCP != nil {
+			_ = cfg.MCP.Close()
+		}
+		return nil, err
+	}
 	return svc, nil
+}
+
+// connectMCP starts the servers in the user's MCP config; nil when none are
+// configured. Project directories cannot add servers: a cloned repository
+// must not be able to start commands.
+func connectMCP(ctx context.Context, path string) (mcp.Session, error) {
+	cfgs, err := mcp.LoadConfigs(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(cfgs) == 0 {
+		return nil, nil
+	}
+	return mcp.Connect(ctx, cfgs)
 }
 
 func closeTracer(ls *langsmith.Client) {

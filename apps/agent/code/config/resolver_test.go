@@ -215,3 +215,28 @@ func TestResolverRejectsBadResultsTTL(t *testing.T) {
 		}
 	}
 }
+
+func TestResolverReadsMCPAllowTools(t *testing.T) {
+	clearEnv(t)
+	s := resolve(t, writeConfig(t, "[mcp]\nallow_tools = [\"mcp__pw__browser_snapshot\", \"mcp__devtools__*\"]\n"))
+	if !slices.Equal(s.MCPAllowTools, []string{"mcp__pw__browser_snapshot", "mcp__devtools__*"}) {
+		t.Fatalf("MCPAllowTools = %v", s.MCPAllowTools)
+	}
+}
+
+func TestResolverRejectsBadMCPAllowTools(t *testing.T) {
+	clearEnv(t)
+	if _, err := NewResolver(writeConfig(t, "[mcp]\nallow_tools = [\"[\"]\n")); err == nil || !strings.Contains(err.Error(), "mcp.allow_tools") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDefaultPathsIncludeMCPConfig(t *testing.T) {
+	p, err := DefaultPaths(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.MCPConfig != filepath.Join(p.UserDir, "mcp.json") {
+		t.Fatalf("MCPConfig = %q", p.MCPConfig)
+	}
+}

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -143,5 +145,22 @@ func TestNoPromptPointsToTheDesktopApp(t *testing.T) {
 	code, err := run(context.Background(), nil, &stdout, &stderr)
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "quill serve") {
 		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestConnectMCPWithoutConfigIsNil(t *testing.T) {
+	s, err := connectMCP(context.Background(), filepath.Join(t.TempDir(), "mcp.json"))
+	if err != nil || s != nil {
+		t.Fatalf("session = %v, err = %v", s, err)
+	}
+}
+
+func TestConnectMCPRejectsABadConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.WriteFile(path, []byte(`{"mcpServers": {"x": {}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connectMCP(context.Background(), path); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("err = %v", err)
 	}
 }

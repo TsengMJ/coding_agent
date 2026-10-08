@@ -17,6 +17,7 @@ import (
 	codeagent "github.com/tsengmingchun/quill/apps/agent/code/agent"
 	"github.com/tsengmingchun/quill/apps/agent/code/config"
 	"github.com/tsengmingchun/quill/apps/agent/code/cost"
+	"github.com/tsengmingchun/quill/apps/agent/code/mcp"
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
 	"github.com/tsengmingchun/quill/apps/agent/code/storage"
 	"github.com/tsengmingchun/quill/apps/agent/code/trace"
@@ -26,6 +27,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/middleware/summarization"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/todolist"
 	"github.com/tsengmingchun/quill/apps/agent/runtime"
+	"github.com/tsengmingchun/quill/apps/agent/tool"
 	"github.com/tsengmingchun/quill/apps/agent/tracing"
 )
 
@@ -50,6 +52,8 @@ type Config struct {
 	// Tracer records run trees (codeagent.NewLangSmith); nil is off.
 	// Service.Close closes it when it has a Close method.
 	Tracer tracing.Tracer
+	// MCP supplies tools from MCP servers; Service.Close closes it.
+	MCP mcp.Session
 }
 
 // ResumeTraceTag marks the run of a turn that resumes after an approval, so
@@ -77,6 +81,8 @@ type Service struct {
 	traces       *trace.Store
 	noVerifyGate bool
 	tracer       tracing.Tracer
+	mcp          mcp.Session
+	mcpTools     []tool.Tool
 
 	mu     sync.Mutex
 	agents map[agentKey]*agentEntry
@@ -128,7 +134,15 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		}
 		webModel = trace.WrapModel(m)
 	}
+	var mcpTools []tool.Tool
+	if cfg.MCP != nil {
+		if mcpTools, err = cfg.MCP.Tools(ctx); err != nil {
+			return nil, err
+		}
+	}
 	s := &Service{
+		mcp:          cfg.MCP,
+		mcpTools:     mcpTools,
 		webModel:     webModel,
 		prices:       prices,
 		settings:     cfg.Settings,
@@ -185,6 +199,11 @@ func (s *Service) Close() error {
 		}
 	}
 	s.store.Close()
+	if s.mcp != nil {
+		if cerr := s.mcp.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close mcp: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -569,6 +588,7 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest) (agent.Agent, er
 			Interactive:  req.Interactive,
 			NoVerifyGate: s.noVerifyGate,
 			Tracer:       s.tracer,
+			MCPTools:     s.mcpTools,
 		})
 	})
 	if e.err != nil {

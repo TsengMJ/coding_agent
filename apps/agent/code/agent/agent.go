@@ -50,6 +50,9 @@ type Options struct {
 	Backend backend.Backend
 	// ExtraTools are added after the web tools.
 	ExtraTools []tool.Tool
+	// MCPTools come from connected MCP servers; unless AutoApprove, each
+	// needs approval except those in Settings.MCPAllowTools.
+	MCPTools []tool.Tool
 	// WebModel reads fetched pages for fetch_url prompts; nil uses Model.
 	WebModel llm.ChatModel
 	// ReviewModel, when set, runs the independent reviewer the headless
@@ -208,6 +211,11 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		if sandboxed {
 			reviewSandboxedShell(interrupts)
 		}
+		var allow []string
+		if opts.Settings != nil {
+			allow = opts.Settings.MCPAllowTools
+		}
+		reviewMCPTools(interrupts, opts.MCPTools, allow)
 	case opts.Interactive:
 		interrupts["execute"] = destructiveOnly()
 		if sandboxed {
@@ -242,7 +250,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		quill.WithModel(opts.Model),
 		quill.WithBackend(b),
 		quill.WithSystemPrompt(prompt),
-		quill.WithTools(append(tools, opts.ExtraTools...)...),
+		quill.WithTools(slices.Concat(tools, opts.ExtraTools, opts.MCPTools)...),
 		quill.WithMiddleware(append(mws, trace.Middleware{})...),
 		quill.WithCheckpointer(opts.Checkpointer),
 		quill.WithStore(opts.Store),

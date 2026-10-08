@@ -39,6 +39,9 @@ type Settings struct {
 	ShellAllowList []string
 	// ShellAllowAll approves every command (shell.allow_list = "all").
 	ShellAllowAll bool
+	// MCPAllowTools are MCP tool names or path.Match patterns that run
+	// without approval (mcp.allow_tools).
+	MCPAllowTools []string
 	// MaxRetries overrides llm.DefaultMaxRetries when non-nil (retries.max_retries).
 	MaxRetries *int
 	// ServerURL is the `quill serve` URL clients use (server.url, $QUILL_SERVER).
@@ -89,6 +92,8 @@ type Paths struct {
 	GlobalDotEnv string
 	// AgentFile is where `quill serve` publishes its URL and token.
 	AgentFile string
+	// MCPConfig lists the MCP servers (Claude Desktop "mcpServers" format).
+	MCPConfig string
 }
 
 // Resolver builds one process-wide configuration generation and reuses it
@@ -125,6 +130,7 @@ func DefaultPaths(cwd string) (Paths, error) {
 		SessionsDB:   filepath.Join(userDir, "sessions.db"),
 		GlobalDotEnv: filepath.Join(userDir, ".env"),
 		AgentFile:    filepath.Join(userDir, "agent.json"),
+		MCPConfig:    filepath.Join(userDir, "mcp.json"),
 	}, nil
 }
 

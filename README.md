@@ -217,6 +217,26 @@ mkdir /tmp/demo && cd /tmp/demo
 quill -n '建立 main.go 印出 hello，然後 go run main.go'
 ```
 
+### MCP server
+
+`~/.quill/mcp.json` 列出要接的 MCP server（Claude Desktop / Cursor 的 `mcpServers` 格式），`quill serve` 與 `quill -n` 啟動時會把它們全部啟動，任一個連不上就拒絕啟動並指出是哪一個。目前只支援 stdio transport。專案目錄裡的 MCP 設定不會讀取，避免 clone 下來的 repo 自動執行指令。
+
+```json
+{
+  "mcpServers": {
+    "everything": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-everything@2026.8.31"], "env": {} }
+  }
+}
+```
+
+- 工具名稱是 `mcp__<server>__<tool>`；回傳的文字與圖片會原樣交給模型。server 掛掉時，該次呼叫回傳錯誤訊息給模型，run 不會中斷。
+- MCP server 能做它的行程做得到的任何事，所以 MCP 工具在 `startup.mode = "manual"` 時一律要核准；不需要核准的工具在 config.toml 列出（完整名稱或 `path.Match` 樣式）：
+
+```toml
+[mcp]
+allow_tools = ["mcp__everything__echo", "mcp__devtools__take_*"]
+```
+
 ### agent 服務（`quill serve`）
 
 ```sh
