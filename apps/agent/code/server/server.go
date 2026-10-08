@@ -70,6 +70,9 @@ type RunRequest struct {
 	// BuildPlan starts implementing the thread's current plan; it needs
 	// Messages and agent mode.
 	BuildPlan bool `json:"build_plan,omitempty"`
+	// BrowserMCP picks the MCP server that drives the desktop browser
+	// panel ("playwright", "chrome-devtools"); empty uses browser.mcp.
+	BrowserMCP string `json:"browser_mcp,omitempty"`
 }
 
 // Run modes.

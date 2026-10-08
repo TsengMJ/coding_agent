@@ -41,6 +41,15 @@ type AppOptions struct {
 	// SaveDefaultModel backs PUT /default-model (`/model --default`);
 	// nil answers 501.
 	SaveDefaultModel func(spec string) error
+	// Browser backs GET and PUT /browser, where the desktop app registers
+	// its browser panel; nil answers 501.
+	Browser BrowserControl
+}
+
+// BrowserControl is implemented by Service.
+type BrowserControl interface {
+	SetBrowserEndpoint(cdpURL string) error
+	BrowserStatus() BrowserStatus
 }
 
 // NewToken returns a random session token.
@@ -72,6 +81,16 @@ func NewAppHandler(opts AppOptions) (http.Handler, error) {
 	})
 	mux.HandleFunc("PUT /default-model", func(w http.ResponseWriter, r *http.Request) {
 		saveDefaultModel(w, r, opts.SaveDefaultModel)
+	})
+	mux.HandleFunc("GET /browser", func(w http.ResponseWriter, r *http.Request) {
+		if opts.Browser == nil {
+			http.Error(w, "the browser panel is not available", http.StatusNotImplemented)
+			return
+		}
+		writeJSON(w, http.StatusOK, opts.Browser.BrowserStatus())
+	})
+	mux.HandleFunc("PUT /browser", func(w http.ResponseWriter, r *http.Request) {
+		setBrowser(w, r, opts.Browser)
 	})
 	mux.Handle("/", opts.API)
 	return requireLoopbackHost(requireToken(opts.Token, mux)), nil
@@ -115,6 +134,25 @@ func saveDefaultModel(w http.ResponseWriter, r *http.Request, save func(string) 
 	}
 	if err := save(body.Model); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func setBrowser(w http.ResponseWriter, r *http.Request, bc BrowserControl) {
+	if bc == nil {
+		http.Error(w, "the browser panel is not available", http.StatusNotImplemented)
+		return
+	}
+	var body struct {
+		CDPURL string `json:"cdp_url"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		http.Error(w, "want {\"cdp_url\": \"http://127.0.0.1:<port>\"}", http.StatusBadRequest)
+		return
+	}
+	if err := bc.SetBrowserEndpoint(body.CDPURL); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

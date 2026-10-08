@@ -75,6 +75,8 @@ type LLMCall struct {
 	// ToolCalls names the tools the reply requested.
 	ToolCalls []string `json:"tool_calls,omitempty"`
 	Error     string   `json:"error,omitempty"`
+	// BrowserMCP is the browser MCP whose tools the call offered.
+	BrowserMCP string `json:"browser_mcp,omitempty"`
 }
 
 // LLMCallDetail is a model call with its full request and response.
@@ -400,6 +402,8 @@ type LLMCallInput struct {
 	Start     time.Time
 	Duration  time.Duration
 	Err       error
+	// BrowserMCP is the run's browser MCP, if any.
+	BrowserMCP string
 }
 
 // RecordLLMCall stores a model call and returns its sequence number.
@@ -429,6 +433,7 @@ func (r *Recorder) RecordLLMCall(in LLMCallInput) (int, error) {
 		Seq: r.seq, Namespace: slices.Clone(in.Namespace), Model: in.Model,
 		Start: in.Start, DurationMs: in.Duration.Milliseconds(),
 		MessageCount: len(refs), NewFrom: commonPrefix(r.last[key], refs), ToolCount: len(in.Request.Tools),
+		BrowserMCP: in.BrowserMCP,
 	}
 	if in.Err != nil {
 		call.Error = in.Err.Error()

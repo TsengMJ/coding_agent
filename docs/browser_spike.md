@@ -26,7 +26,7 @@
 1. **Electron 不支援 `Target.createTarget`**（回 `Not supported`）。兩種 MCP 的「開新分頁」都會失敗，必須由 proxy 改寫成「面板導航到該網址，回傳面板的 targetId」。
 2. **新版 Chromium 每個 page 外面還有一層 `tab` target**。只用 page 的 targetId 過濾會把面板的 tab 丟掉，Puppeteer 因此卡住；同時 GUI 的 tab 被放行，再透過它 attach 到 GUI page，形成漏洞。
 3. **用 `browserContextId` 過濾才正確**。面板用獨立 session partition，它的 tab、page、popup 都屬於同一個 browser context，跟 GUI 不同。proxy 只放行這個 context 的 target，tab 與 page 的關係就不用追。
-4. **隱藏視窗會讓 Playwright 的 click 逾時**：它要等元素「穩定」，隱藏視窗沒有渲染幀。面板在真實 app 裡是可見的，不構成問題；測試時視窗要顯示。
+4. **沒有渲染幀時 Playwright 的 click 會逾時**：它要用 `requestAnimationFrame` 確認元素「穩定」。Stage 4 實測發現，即使面板可見，每次導航後換上的新 renderer widget 都停在 hidden 狀態，rAF 為 0（`document.visibilityState` 仍是 `visible`，因為關了 background throttling，不能拿來判斷）；CDP 截圖會暫時喚醒，所以有截過圖時看起來正常。解法是面板 `did-navigate` 時再呼叫一次 `webContents.setBackgroundThrottling(false)`，Electron 會把 hidden 的 widget 重新 show。停用 `MacWebContentsOcclusion`、延後顯示視窗都沒有效果。
 5. Playwright MCP 新版 `browser_click` 參數是 `target`（不是 `ref`）；Chrome DevTools MCP 1.10 的工具都要求 `pageId`。這些對模型是透明的（看 schema），但寫測試要注意。
 6. Playwright MCP 預設把快照與 console log 寫到工作目錄的 `.playwright-mcp/`，preset 要用 `--output-dir` 指到暫存目錄，避免汙染專案。
 

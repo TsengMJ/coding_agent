@@ -1,4 +1,5 @@
 import type {
+  BrowserStatus,
   Decision,
   Info,
   HistoryPage,
@@ -116,6 +117,15 @@ export class Api {
     return this.json(`/threads/${encodeURIComponent(id)}/compact`, { method: "POST" });
   }
 
+  async browserStatus(): Promise<BrowserStatus | null> {
+    try {
+      return await this.json("/browser");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 501) return null;
+      throw e;
+    }
+  }
+
   async saveDefaultModel(spec: string): Promise<void> {
     await this.request("/default-model", { method: "PUT", body: JSON.stringify({ model: spec }) });
   }
@@ -132,6 +142,7 @@ export class Api {
       model?: string;
       mode?: RunMode;
       build_plan?: boolean;
+      browser_mcp?: string;
     },
     signal: AbortSignal,
   ): AsyncGenerator<RunEvent> {

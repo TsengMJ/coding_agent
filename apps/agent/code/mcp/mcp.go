@@ -43,9 +43,11 @@ type ServerConfig struct {
 	Command   string            `json:"command,omitempty"`
 	Args      []string          `json:"args,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
-	URL       string            `json:"url,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Disabled  bool              `json:"disabled,omitempty"`
+	// Dir is the server's working directory; empty inherits quill's.
+	Dir      string            `json:"dir,omitempty"`
+	URL      string            `json:"url,omitempty"`
+	Headers  map[string]string `json:"headers,omitempty"`
+	Disabled bool              `json:"disabled,omitempty"`
 }
 
 // configFile is the Claude Desktop / Cursor style MCP config file.
@@ -133,6 +135,7 @@ func Connect(ctx context.Context, cfgs []ServerConfig) (Session, error) {
 		for k, v := range c.Env {
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
+		cmd.Dir = c.Dir
 		cmd.Stderr = os.Stderr
 		transports[c.Name] = &sdk.CommandTransport{Command: cmd}
 	}

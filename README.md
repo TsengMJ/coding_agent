@@ -281,6 +281,21 @@ desktop app 預設開啟 agent 目錄最近有對話內容的 thread。側欄的
 - 每個 turn 結尾有 Files changed 摘要；需要核准時直接在頁面上看 diff 預覽後核准或附理由拒絕。
 - 上方可篩選 Edits / Commands / Errors / LLM calls、搜尋內容；鍵盤 `j`/`k` 移動、Enter 展開、`e` 全部展開、`/` 搜尋、`i` 打開 LLM 側欄、`G` 跳到底、Esc 關閉。
 
+### 瀏覽器面板
+
+desktop app 右側有內建瀏覽器面板，agent 用瀏覽器 MCP 操作它來驗證自己的成果（開本機 dev server、點按鈕、讀頁面），每一步都看得到。面板載入新頁面時自動打開，上方 header 的 browser pill 顯示 agent 是否已連上面板。
+
+- 面板只能開 `http://localhost`、`http://127.0.0.1`、`http://[::1]`（與 `about:blank`），用獨立且不落地的 session，不和 GUI 共用 cookie，權限請求一律拒絕。
+- app 啟動時開一個只綁 127.0.0.1、隨機 port 的 DevTools 端點，再包一層過濾 proxy：MCP server 只看得到、只能操作面板，碰不到 quill 自己的畫面；開新分頁會變成在面板內導覽，關閉瀏覽器、建立新 browser context 等指令會被拒絕。app 把 proxy 網址用 `PUT /browser` 告訴 `quill serve`（GUI 重新載入時會重新註冊，所以先後重啟哪一邊都可以）。
+- 支援兩種 MCP server，版本固定，方便比較：Playwright MCP（`@playwright/mcp@0.0.83`，預設）與 Chrome DevTools MCP（`chrome-devtools-mcp@1.10.1`）。第一次使用時 agent 才用 `npx` 啟動，需要 Node 與網路。預設值在 config.toml 設定，面板上方的下拉選單可逐個 run 切換（API 的 `browser_mcp` 欄位），每次 LLM 呼叫的 trace 都會記錄用的是哪一個（`browser_mcp`）：
+
+```toml
+[browser]
+mcp = "playwright"   # 或 "chrome-devtools"
+```
+
+- 工具名稱是 `mcp__playwright__*` / `mcp__chrome-devtools__*`，和其他 MCP 工具一樣在 manual 模式要核准（可用 `[mcp] allow_tools` 放行）。會跳出面板的功能被拿掉：Playwright 的 `browser_run_code_unsafe`（在面板外執行 Node 程式）、Chrome DevTools 的 `upload_file`，以及會把檔案寫到任意路徑的參數（`filePath`、`outputDirPath` 等）。Playwright 的快照與 log 寫在暫存目錄，不會出現在專案裡。
+
 ### Plan 模式與 todo
 
 GUI 的 session 有 Agent / Plan 兩種模式：

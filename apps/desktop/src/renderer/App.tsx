@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { Api, ApiError } from "./api";
-import type { Decision, Info, Message, RunEvent, RunMode, SlashCommand, ThreadInfo, ThreadUsage } from "./types";
+import type { BrowserStatus, Decision, Info, Message, RunEvent, RunMode, SlashCommand, ThreadInfo, ThreadUsage } from "./types";
 import { helpText, parseModelArgs, resolveCommand } from "./model/commands";
 import { contextText, costText, tokensText } from "./model/usage";
 import { applyEvent, emptyView, endRun, fromHistory, showBuild, startRun, type ThreadView } from "./model/state";
@@ -18,6 +18,9 @@ import { Composer } from "./components/Composer";
 import { ApprovalCard } from "./components/Approval";
 import { LLMInspector } from "./components/LLMInspector";
 import { CopyButton } from "./components/common";
+import { BrowserPane } from "./components/BrowserPane";
+import { desktopBrowser, type PanelState } from "./desktop";
+import { hasPage } from "./model/browser";
 
 function newThreadID(): string {
   const b = new Uint8Array(6);
@@ -33,6 +36,16 @@ const userMessage = (text: string, images: ImageAttachment[] = []): Message => (
 });
 
 const DRAWER_STORAGE_KEY = "quill.inspectorWidth";
+const BROWSER_MCP_KEY = "quill.browserMCP";
+const BLANK_PANEL: PanelState = { url: "about:blank", title: "", loading: false, canGoBack: false };
+
+function savedBrowserMCP(): string {
+  try {
+    return localStorage.getItem(BROWSER_MCP_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
 const SIDEBAR_WIDTH = 260;
 const RESIZE_HANDLE_WIDTH = 8;
 const DRAWER_MIN_WIDTH = 420;
@@ -114,6 +127,11 @@ export function App({ api }: { api: Api }) {
   const [historyCursors, setHistoryCursors] = useState<Record<string, HistoryCursor>>({});
   const [diffsLoading, setDiffsLoading] = useState<Record<string, boolean>>({});
   const [replaceCandidate, setReplaceCandidate] = useState<string | null>(null);
+  const browser = useMemo(() => desktopBrowser(), []);
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [panel, setPanel] = useState<PanelState>(BLANK_PANEL);
+  const [browserStatus, setBrowserStatus] = useState<BrowserStatus | null>(null);
+  const [browserMCP, setBrowserMCP] = useState(savedBrowserMCP);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [drawerWidth, setDrawerWidth] = useState(() => savedDrawerWidth() ?? Math.round(window.innerWidth * 0.42));
   const drawerWidthRef = useRef(drawerWidth);
@@ -393,6 +411,36 @@ export function App({ api }: { api: Api }) {
       .catch(() => setCommands([]));
   }, [api]);
 
+  // The pane opens by itself when the agent loads a page, so the user can
+  // watch it work.
+  useEffect(() => {
+    if (!browser) return;
+    let lastURL = "";
+    return browser.onState((s) => {
+      setPanel(s);
+      if (hasPage(s) && s.url !== lastURL) setBrowserOpen(true);
+      lastURL = s.url;
+    });
+  }, [browser]);
+
+  useEffect(() => {
+    if (!browser || !info) return;
+    api
+      .browserStatus()
+      .then(setBrowserStatus)
+      .catch(() => setBrowserStatus(null));
+  }, [api, browser, info, browserOpen]);
+
+  const chooseBrowserMCP = useCallback((k: string) => {
+    setBrowserMCP(k);
+    try {
+      localStorage.setItem(BROWSER_MCP_KEY, k);
+    } catch {
+      // The choice still applies to this session.
+    }
+  }, []);
+  const runBrowserMCP = browserStatus?.kinds.includes(browserMCP) ? browserMCP : undefined;
+
   const timeline = useMemo(
     () => buildTimeline(view),
     // streamText and pendingUser change on every token; the timeline does not depend on them
@@ -418,15 +466,16 @@ export function App({ api }: { api: Api }) {
       const runAutoApprove = autoApprove;
       const runModel = modelOverride || undefined;
       const runMode = mode;
+      const runBrowser = runBrowserMCP;
       const ctrl = new AbortController();
       abortRefs.current[runThreadID] = ctrl;
       setViewFor(runThreadID, (v) => startRun(v, userText));
       void refreshThreads(info?.cwd ?? "");
-      const body = { thread_id: runThreadID, cwd: runCwdForThread, auto_approve: runAutoApprove, model: runModel, mode: runMode, ...req };
+      const body = { thread_id: runThreadID, cwd: runCwdForThread, auto_approve: runAutoApprove, model: runModel, mode: runMode, browser_mcp: runBrowser, ...req };
       await follow(runThreadID, ctrl, async () => api.run(body, ctrl.signal));
       if (modelOverride) setThreadModels((models) => ({ ...models, [runThreadID]: modelOverride }));
     },
-    [api, threadId, runCwd, autoApprove, modelOverride, mode, refreshThreads, follow, info, setViewFor],
+    [api, threadId, runCwd, autoApprove, modelOverride, mode, runBrowserMCP, refreshThreads, follow, info, setViewFor],
   );
 
   // stop cancels the run on the server and lets its stream end, so the
@@ -686,6 +735,7 @@ export function App({ api }: { api: Api }) {
           onRename={renameThread}
           version={info.version}
         />
+        <div className="work">
         <main className="main">
           <header className="header">
             <span className="pill model-pill" title={currentModel}>
@@ -719,6 +769,15 @@ export function App({ api }: { api: Api }) {
             >
               auto-approve {autoApprove ? "on" : "off"}
             </button>
+            {browser && (
+              <button
+                className={`pill ${browserOpen ? "on" : ""}`}
+                onClick={() => setBrowserOpen(!browserOpen)}
+                title={browserStatus?.connected ? "Show or hide the browser the agent drives" : "The agent service has not registered the browser panel; reload after starting quill serve"}
+              >
+                browser{browserStatus && !browserStatus.connected ? " (offline)" : ""}
+              </button>
+            )}
           </header>
           <div className="toolbar">
             {FILTERS.map((f) => (
@@ -795,6 +854,18 @@ export function App({ api }: { api: Api }) {
             onStop={() => stop(threadId)}
           />
         </main>
+        {browser && browserOpen && (
+          <BrowserPane
+            browser={browser}
+            state={panel}
+            kinds={browserStatus?.kinds ?? []}
+            kind={runBrowserMCP ?? browserStatus?.default ?? ""}
+            connected={browserStatus?.connected ?? false}
+            onKind={chooseBrowserMCP}
+            onClose={() => setBrowserOpen(false)}
+          />
+        )}
+        </div>
         {inspect && (
           <>
             {!overlayDrawer && (

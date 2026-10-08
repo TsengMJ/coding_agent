@@ -240,3 +240,24 @@ func TestDefaultPathsIncludeMCPConfig(t *testing.T) {
 		t.Fatalf("MCPConfig = %q", p.MCPConfig)
 	}
 }
+
+func TestResolverBrowserMCPDefaultsToPlaywright(t *testing.T) {
+	clearEnv(t)
+	if s := resolve(t, writeConfig(t, "")); s.BrowserMCP != "playwright" {
+		t.Fatalf("BrowserMCP = %q", s.BrowserMCP)
+	}
+}
+
+func TestResolverReadsBrowserMCP(t *testing.T) {
+	clearEnv(t)
+	if s := resolve(t, writeConfig(t, "[browser]\nmcp = \"chrome-devtools\"\n")); s.BrowserMCP != "chrome-devtools" {
+		t.Fatalf("BrowserMCP = %q", s.BrowserMCP)
+	}
+}
+
+func TestResolverRejectsUnknownBrowserMCP(t *testing.T) {
+	clearEnv(t)
+	if _, err := NewResolver(writeConfig(t, "[browser]\nmcp = \"selenium\"\n")); err == nil || !strings.Contains(err.Error(), "browser.mcp") {
+		t.Fatalf("err = %v", err)
+	}
+}

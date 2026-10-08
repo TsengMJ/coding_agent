@@ -50,6 +50,9 @@ type Options struct {
 	Backend backend.Backend
 	// ExtraTools are added after the web tools.
 	ExtraTools []tool.Tool
+	// BrowserMCP names the MCP server behind the browser panel tools in
+	// MCPTools ("playwright", "chrome-devtools"); empty without the panel.
+	BrowserMCP string
 	// MCPTools come from connected MCP servers; unless AutoApprove, each
 	// needs approval except those in Settings.MCPAllowTools.
 	MCPTools []tool.Tool
@@ -348,7 +351,7 @@ func SystemPrompt(opts Options) (string, error) {
 		wd = workingDirSection(opts.Cwd)
 	}
 	r := strings.NewReplacer(
-		"{mode_description}", pick(opts.Interactive, "an interactive TUI on the user's computer",
+		"{mode_description}", pick(opts.Interactive, "an interactive desktop app on the user's computer",
 			"non-interactive (headless) mode — there is no human operator monitoring your output in real time"),
 		"{interactive_preamble}", pick(opts.Interactive,
 			"The user sends you messages and you respond with text and tool calls. The user can see your responses and tool outputs in real time, so keep them informed — but don't over-explain.",
@@ -371,7 +374,20 @@ func SystemPrompt(opts Options) (string, error) {
 		"{web_search_section}", webSearchSection(opts),
 		"{project_context_section}", opts.ProjectContext,
 	)
-	return r.Replace(systemPromptTemplate), nil
+	return r.Replace(systemPromptTemplate) + browserSection(opts.BrowserMCP), nil
+}
+
+// browserSection is appended rather than templated so prompts without the
+// browser panel (headless runs, benchmarks) stay byte-identical.
+func browserSection(kind string) string {
+	if kind == "" {
+		return ""
+	}
+	return "\n\n### Browser Panel\n\n" +
+		"The `mcp__" + kind + "__*` tools drive a browser panel the user watches next to this conversation. " +
+		"Use it to check web work yourself: start the dev server, open its page, interact with it and read the result instead of assuming it works. " +
+		"The panel only loads http://localhost and http://127.0.0.1 pages and has no logins or cookies. " +
+		"Prefer accessibility snapshots for finding elements; take a screenshot when the visual result matters.\n"
 }
 
 func pick(interactive bool, yes, no string) string {

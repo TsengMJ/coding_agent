@@ -382,3 +382,19 @@ func TestLabeledModelRecordsUnderToolCall(t *testing.T) {
 		t.Fatalf("calls = %+v", tr.LLMCalls)
 	}
 }
+
+func TestModelRecordsTheBrowserMCP(t *testing.T) {
+	s, r := newRecorder(t)
+	m := WrapModel(llm.NewFakeModel(llm.NewAssistantMessage("a")))
+	ctx := WithBrowserMCP(WithRecorder(context.Background(), r), "playwright")
+	if _, err := m.Generate(ctx, llm.ChatRequest{Messages: []llm.Message{llm.NewUserMessage("q")}}); err != nil {
+		t.Fatal(err)
+	}
+	tr, err := s.Load("thread-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tr.LLMCalls[0].BrowserMCP; got != "playwright" {
+		t.Fatalf("BrowserMCP = %q", got)
+	}
+}

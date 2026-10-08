@@ -31,8 +31,18 @@ func TestSystemPromptHeadless(t *testing.T) {
 
 func TestSystemPromptInteractive(t *testing.T) {
 	got, _ := SystemPrompt(Options{Cwd: "/w", Interactive: true})
-	if !strings.Contains(got, "an interactive TUI") {
+	if !strings.Contains(got, "an interactive desktop app") {
 		t.Fatal("interactive prompt missing mode description")
+	}
+}
+
+func TestSystemPromptDescribesTheBrowserPanel(t *testing.T) {
+	got, _ := SystemPrompt(Options{Cwd: "/w", Interactive: true, BrowserMCP: "playwright"})
+	if !strings.Contains(got, "### Browser Panel") || !strings.Contains(got, "localhost") {
+		t.Fatalf("prompt without browser section:\n%s", got)
+	}
+	if plain, _ := SystemPrompt(Options{Cwd: "/w", Interactive: true}); strings.Contains(plain, "### Browser Panel") {
+		t.Fatal("browser section without browser tools")
 	}
 }
 

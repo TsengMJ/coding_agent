@@ -42,6 +42,9 @@ type Settings struct {
 	// MCPAllowTools are MCP tool names or path.Match patterns that run
 	// without approval (mcp.allow_tools).
 	MCPAllowTools []string
+	// BrowserMCP drives the desktop browser panel: "playwright" (default)
+	// or "chrome-devtools" (browser.mcp); a run may pick the other.
+	BrowserMCP string
 	// MaxRetries overrides llm.DefaultMaxRetries when non-nil (retries.max_retries).
 	MaxRetries *int
 	// ServerURL is the `quill serve` URL clients use (server.url, $QUILL_SERVER).

@@ -11,6 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/tsengmingchun/quill/apps/agent/backend/ossandbox"
+	"github.com/tsengmingchun/quill/apps/agent/code/browser"
 )
 
 // Environment variables that override config.toml.
@@ -54,6 +55,9 @@ type fileConfig struct {
 	MCP     struct {
 		AllowTools []string `toml:"allow_tools"`
 	} `toml:"mcp"`
+	Browser struct {
+		MCP string `toml:"mcp"`
+	} `toml:"browser"`
 }
 
 // fileResolver resolves defaults < config.toml < environment. CLI flags are
@@ -73,7 +77,7 @@ func (r *fileResolver) Settings() (*Settings, error) {
 func (r *fileResolver) Sources() []Source { return r.sources }
 
 func (r *fileResolver) Reload() error {
-	s := &Settings{ApprovalMode: ApprovalYolo, Sandbox: defaultSandboxSettings()}
+	s := &Settings{ApprovalMode: ApprovalYolo, Sandbox: defaultSandboxSettings(), BrowserMCP: string(browser.Playwright)}
 	src := Source{Scope: ScopeUser, Path: r.paths.ConfigFile}
 	err := loadUserFile(r.paths.ConfigFile, s)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -137,6 +141,11 @@ func loadUserFile(path string, s *Settings) error {
 		return fmt.Errorf("config %s: mcp.allow_tools: %w", path, err)
 	}
 	s.MCPAllowTools = fc.MCP.AllowTools
+	kind, err := browser.ParseKind(fc.Browser.MCP)
+	if err != nil {
+		return fmt.Errorf("config %s: browser.mcp: %w", path, err)
+	}
+	s.BrowserMCP = string(kind)
 	if err := applySandbox(&s.Sandbox, fc.Sandbox); err != nil {
 		return fmt.Errorf("config %s: sandbox.%w", path, err)
 	}

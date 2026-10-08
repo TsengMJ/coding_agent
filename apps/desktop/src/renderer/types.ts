@@ -234,3 +234,9 @@ export interface Info {
   auto_approve: boolean;
   version: string;
 }
+
+export interface BrowserStatus {
+  connected: boolean;
+  default: string;
+  kinds: string[];
+}

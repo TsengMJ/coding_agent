@@ -326,8 +326,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	defer svc.Close()
 	h, err := server.NewAppHandler(server.AppOptions{
-		API:   server.NewHandler(svc),
-		Token: token,
+		API:     server.NewHandler(svc),
+		Token:   token,
+		Browser: svc,
 		Info: func(ctx context.Context) (server.Info, error) {
 			thread, err := server.DefaultThread(ctx, svc, e.cwd)
 			if err != nil {

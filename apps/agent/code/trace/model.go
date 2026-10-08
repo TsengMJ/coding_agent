@@ -114,7 +114,7 @@ func (m *Model) record(sc scope, req llm.ChatRequest, reply *llm.Message, start 
 	}
 	seq, recErr := sc.rec.RecordLLMCall(LLMCallInput{
 		Namespace: sc.ns, Model: model, Request: req, Response: reply,
-		Start: start, Duration: time.Since(start), Err: err,
+		Start: start, Duration: time.Since(start), Err: err, BrowserMCP: sc.browser,
 	})
 	if recErr != nil {
 		sc.rec.warn(recErr)

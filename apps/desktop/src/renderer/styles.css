@@ -262,8 +262,66 @@ pre,
 .main {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+}
+
+.work {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.browser-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 45%;
+  min-width: 360px;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+}
+
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.browser-address {
+  flex: 1;
+  min-width: 0;
+}
+
+.browser-address input {
+  width: 100%;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+
+.browser-view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #fff;
+}
+
+.browser-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  background: var(--bg, transparent);
 }
 
 .header {

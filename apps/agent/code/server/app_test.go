@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -133,5 +134,48 @@ func TestNewAppHandlerNeedsAPITokenAndInfo(t *testing.T) {
 	}
 	if _, err := NewAppHandler(AppOptions{API: http.NotFoundHandler(), Token: "x"}); err == nil {
 		t.Fatal("missing info accepted")
+	}
+}
+
+type fakeBrowserControl struct {
+	endpoint string
+}
+
+func (f *fakeBrowserControl) SetBrowserEndpoint(u string) error {
+	if u != "" && !strings.HasPrefix(u, "http://127.0.0.1:") {
+		return errors.New("not loopback")
+	}
+	f.endpoint = u
+	return nil
+}
+
+func (f *fakeBrowserControl) BrowserStatus() BrowserStatus {
+	return BrowserStatus{Connected: f.endpoint != "", Default: "playwright"}
+}
+
+func TestAppRegistersTheBrowserPanel(t *testing.T) {
+	bc := &fakeBrowserControl{}
+	h := newAppHandler(t, AppOptions{Browser: bc})
+	auth := map[string]string{TokenHeader: testToken}
+	if w := serveApp(h, "PUT", "/browser", `{"cdp_url":"http://127.0.0.1:9333"}`, auth); w.Code != http.StatusNoContent || bc.endpoint != "http://127.0.0.1:9333" {
+		t.Fatalf("put: %d %q endpoint=%q", w.Code, w.Body.String(), bc.endpoint)
+	}
+	w := serveApp(h, "GET", "/browser", "", auth)
+	var st BrowserStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil || !st.Connected || st.Default != "playwright" {
+		t.Fatalf("status = %+v, %v", st, err)
+	}
+	if w := serveApp(h, "PUT", "/browser", `{"cdp_url":"http://example.com:1"}`, auth); w.Code != http.StatusBadRequest {
+		t.Fatalf("remote endpoint: %d", w.Code)
+	}
+	if w := serveApp(h, "PUT", "/browser", `{"cdp_url":""}`, auth); w.Code != http.StatusNoContent || bc.endpoint != "" {
+		t.Fatalf("clear: %d endpoint=%q", w.Code, bc.endpoint)
+	}
+}
+
+func TestAppBrowserUnavailable(t *testing.T) {
+	h := newAppHandler(t, AppOptions{})
+	if w := serveApp(h, "PUT", "/browser", `{"cdp_url":""}`, map[string]string{TokenHeader: testToken}); w.Code != http.StatusNotImplemented {
+		t.Fatalf("got %d", w.Code)
 	}
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/tsengmingchun/quill/apps/agent/agent"
 	codeagent "github.com/tsengmingchun/quill/apps/agent/code/agent"
+	"github.com/tsengmingchun/quill/apps/agent/code/browser"
 	"github.com/tsengmingchun/quill/apps/agent/code/config"
 	"github.com/tsengmingchun/quill/apps/agent/code/cost"
 	"github.com/tsengmingchun/quill/apps/agent/code/mcp"
@@ -54,6 +55,8 @@ type Config struct {
 	Tracer tracing.Tracer
 	// MCP supplies tools from MCP servers; Service.Close closes it.
 	MCP mcp.Session
+	// ConnectMCP starts the browser MCP servers; nil uses mcp.Connect.
+	ConnectMCP func(context.Context, []mcp.ServerConfig) (mcp.Session, error)
 }
 
 // ResumeTraceTag marks the run of a turn that resumes after an approval, so
@@ -83,6 +86,7 @@ type Service struct {
 	tracer       tracing.Tracer
 	mcp          mcp.Session
 	mcpTools     []tool.Tool
+	browsers     *browserManager
 
 	mu     sync.Mutex
 	agents map[agentKey]*agentEntry
@@ -92,6 +96,8 @@ type Service struct {
 type agentKey struct {
 	cwd         string
 	interactive bool
+	// browser is browserTools.key; empty without the panel.
+	browser string
 }
 
 type agentEntry struct {
@@ -140,7 +146,18 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 			return nil, err
 		}
 	}
+	connect := cfg.ConnectMCP
+	if connect == nil {
+		connect = mcp.Connect
+	}
+	browserKind := browser.Playwright
+	if cfg.Settings != nil && cfg.Settings.BrowserMCP != "" {
+		if browserKind, err = browser.ParseKind(cfg.Settings.BrowserMCP); err != nil {
+			return nil, err
+		}
+	}
 	s := &Service{
+		browsers:     newBrowserManager(browserKind, connect),
 		mcp:          cfg.MCP,
 		mcpTools:     mcpTools,
 		webModel:     webModel,
@@ -181,6 +198,23 @@ func resultsTTL(s *config.Settings) time.Duration {
 	return DefaultResultsTTL
 }
 
+// SetBrowserEndpoint registers the desktop browser panel's DevTools
+// endpoint (empty unregisters it) and drops agents built on the old one.
+func (s *Service) SetBrowserEndpoint(cdpURL string) error {
+	err := s.browsers.SetEndpoint(cdpURL)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.agents {
+		if k.browser != "" {
+			delete(s.agents, k)
+		}
+	}
+	return err
+}
+
+// BrowserStatus reports whether a panel is registered and the MCP choices.
+func (s *Service) BrowserStatus() BrowserStatus { return s.browsers.Status() }
+
 // Storage reports where threads are kept: "postgres" or "memory".
 func (s *Service) Storage() string { return s.store.Kind }
 
@@ -199,6 +233,9 @@ func (s *Service) Close() error {
 		}
 	}
 	s.store.Close()
+	if cerr := s.browsers.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
 	if s.mcp != nil {
 		if cerr := s.mcp.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close mcp: %w", cerr)
@@ -397,7 +434,11 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 		return err
 	}
 	ctx = withRunModel(ctx, rm)
-	a, err := s.agentFor(ctx, req)
+	bt, err := s.browsers.toolsFor(ctx, req.BrowserMCP)
+	if err != nil {
+		return err
+	}
+	a, err := s.agentFor(ctx, req, bt)
 	if err != nil {
 		return err
 	}
@@ -419,6 +460,7 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	}
 	ctx, tr := s.startTrace(ctx, req.ThreadID)
 	defer tr.stop()
+	ctx = trace.WithBrowserMCP(ctx, string(bt.kind))
 	var runErr error
 	for ev, err := range a.Stream(ctx, in, cfg, runtime.StreamValues, runtime.StreamMessages) {
 		if err != nil {
@@ -519,6 +561,11 @@ func validate(req *RunRequest) error {
 	if req.BuildPlan && (req.Mode == ModePlan || req.Resume != nil) {
 		return fmt.Errorf("%w: build_plan needs messages and agent mode", ErrBadRequest)
 	}
+	if req.BrowserMCP != "" {
+		if _, err := browser.ParseKind(req.BrowserMCP); err != nil {
+			return fmt.Errorf("%w: %v", ErrBadRequest, err)
+		}
+	}
 	return nil
 }
 
@@ -559,8 +606,8 @@ func (s *Service) release(threadID string) {
 // agentFor returns the cached agent for the run's cwd, building it at most
 // once per key. The build runs outside s.mu so it never delays acquire and
 // release for other threads.
-func (s *Service) agentFor(ctx context.Context, req RunRequest) (agent.Agent, error) {
-	key := agentKey{cwd: req.Cwd, interactive: req.Interactive}
+func (s *Service) agentFor(ctx context.Context, req RunRequest, bt browserTools) (agent.Agent, error) {
+	key := agentKey{cwd: req.Cwd, interactive: req.Interactive, browser: bt.key()}
 	s.mu.Lock()
 	e, ok := s.agents[key]
 	if !ok {
@@ -588,7 +635,8 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest) (agent.Agent, er
 			Interactive:  req.Interactive,
 			NoVerifyGate: s.noVerifyGate,
 			Tracer:       s.tracer,
-			MCPTools:     s.mcpTools,
+			MCPTools:     slices.Concat(s.mcpTools, bt.tools),
+			BrowserMCP:   string(bt.kind),
 		})
 	})
 	if e.err != nil {

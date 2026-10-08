@@ -13,6 +13,8 @@ type scopeKey struct{}
 type scope struct {
 	rec *Recorder
 	ns  []string
+	// browser names the browser MCP the run's tools come from.
+	browser string
 }
 
 // WithRecorder makes model and backend wrappers below ctx record to rec.
@@ -28,6 +30,17 @@ func WithNamespace(ctx context.Context, part string) context.Context {
 		return ctx
 	}
 	sc.ns = append(slices.Clone(sc.ns), part)
+	return context.WithValue(ctx, scopeKey{}, sc)
+}
+
+// WithBrowserMCP records on every model call below ctx which browser MCP
+// ("playwright", "chrome-devtools") the run uses, for A/B comparisons.
+func WithBrowserMCP(ctx context.Context, kind string) context.Context {
+	sc := scopeFrom(ctx)
+	if sc.rec == nil {
+		return ctx
+	}
+	sc.browser = kind
 	return context.WithValue(ctx, scopeKey{}, sc)
 }
 
