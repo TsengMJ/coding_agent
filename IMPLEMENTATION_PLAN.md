@@ -963,7 +963,7 @@
 - 驗證關卡仍然最多擋 2 次；環境錯誤仍然計入卡住偵測，只是訊息不同。
 - hard-go 重跑 A：`micro_failed` 不再是環境錯誤，stuck 不再叫 agent 換程式碼假設，步數與成本比 RL8 的 A 低。
 **Tests**: 見各 stage。
-**Status**: In Progress（程式碼完成，等 bench 數據）
+**Status**: In Progress（程式碼完成、bench 跑完一次，等使用者看數據）
 
 - E1 分類器（`a7a1d20`、`851d884`）：
   - `envOfMessage` 判斷單一錯誤訊息；`classifyRunTests` 的 build_errors 和 `classifyDiagnostics` 的 error 每一筆先過它。全部是環境錯誤時判為 environment 並帶 `Env`，有程式碼錯誤時判為 compile / syntax，`Details` 只放程式碼錯誤。
