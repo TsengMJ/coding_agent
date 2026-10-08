@@ -13,19 +13,6 @@ import type {
   Trace,
 } from "./types";
 
-const TOKEN_KEY = "quill-token";
-
-// takeToken moves the token from the URL fragment quill opened into
-// session storage, so it is not left in the address bar or history.
-export function takeToken(): string {
-  const m = /(?:^|[#&])token=([^&]+)/.exec(window.location.hash);
-  if (m) {
-    sessionStorage.setItem(TOKEN_KEY, m[1]);
-    history.replaceState(null, "", window.location.pathname + window.location.search);
-  }
-  return sessionStorage.getItem(TOKEN_KEY) ?? "";
-}
-
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -34,16 +21,13 @@ export class ApiError extends Error {
   }
 }
 
+// Api calls the agent through the quill:// protocol; the Electron main
+// process adds the session token, so this page never holds it.
 export class Api {
-  private token: string;
-  constructor(token: string) {
-    this.token = token;
-  }
-
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
     const resp = await fetch("api" + path, {
       ...init,
-      headers: { ...(init.headers ?? {}), "X-Quill-Token": this.token, "Content-Type": "application/json" },
+      headers: { ...(init.headers ?? {}), "Content-Type": "application/json" },
     });
     if (!resp.ok) {
       let msg = `HTTP ${resp.status}`;

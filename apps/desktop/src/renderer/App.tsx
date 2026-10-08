@@ -357,8 +357,8 @@ export function App({ api }: { api: Api }) {
       .catch((e: Error) => {
         setFatal(
           e instanceof ApiError && e.status === 403
-            ? "This page needs the session token. Open the URL that quill printed in the terminal."
-            : `Cannot reach quill: ${e.message}`,
+            ? "The agent service refused the session token. Restart `quill serve`, then reload (Cmd/Ctrl+R)."
+            : `Cannot reach the agent service: ${e.message} Reload (Cmd/Ctrl+R) after starting it.`,
         );
       });
   }, [api, loadThread]);

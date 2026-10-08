@@ -248,9 +248,11 @@ quill threads                      # 列出這個目錄的 threads（-all 列出
 
 ### GUI
 
-`quill` 預設在 `127.0.0.1` 的隨機 port 開一個網頁介面並自動開瀏覽器（`-no-open` 只印出網址）。網址裡的 `#token=` 是這次啟動才有效的存取碼，不會送進 server log；API 只接受 loopback Host 與同源請求。
+GUI 是 Electron 桌面 app（`apps/desktop`），和 agent 服務分開啟動：先在專案目錄跑 `make serve`（`quill serve`），再開另一個終端機跑 `make desktop`。第一次要先 `make desktop-install`（需要 Node）。
 
-重新啟動 GUI 時，預設開啟目前目錄最近有對話內容的 thread；`-thread <id>` 可指定，`-r` 可明確要求最近的 thread。側欄的 ✎ 可替已開始的 thread 命名，名稱會隨 thread 保存；執行中暫停切換 thread，避免把串流內容顯示到另一段對話。
+`quill serve` 啟動時產生一次性的 token，連同網址寫進 `~/.quill/agent.json`（權限 0600，結束時刪除）；desktop app 讀這個檔，由 main process 把 `quill://app/api/*` 轉送到 agent 並帶上 `X-Quill-Token`，renderer 拿不到 token。API 只接受 loopback Host、帶正確 token 的請求，瀏覽器來源還要同源。`QUILL_AGENT_TOKEN` 可以同時指定兩邊的 token。agent 沒啟動時 app 會顯示提示，啟動後按 Cmd/Ctrl+R 重新載入即可。
+
+desktop app 預設開啟 agent 目錄最近有對話內容的 thread。側欄的 ✎ 可替已開始的 thread 命名，名稱會隨 thread 保存；執行中暫停切換 thread，避免把串流內容顯示到另一段對話。
 
 - 時間軸是收合結構（`main · LLM #n`、tool call 樹、subagent 縮排），可以一路往上捲到 thread 開頭。
 - 點 tool call 展開詳細內容：grep 依檔案分組並標出命中、read_file 帶行號、execute 顯示終端輸出、exit code 與沙箱 badge（見 [docs/sandbox.md](docs/sandbox.md#在-gui-看指令有沒有跑在沙箱裡)）、edit/write 以 GitHub 風格 diff（unified / split）呈現；另有 Arguments、Output、Raw JSON 分頁。
@@ -271,7 +273,7 @@ GUI 的 session 有 Agent / Plan 兩種模式：
 
 完整的 LLM 輸入、檔案 diff 與 subagent 訊息記在 Postgres（重複內容只存一次）；`fetch_url` 擷取網頁用的模型呼叫也會記下，GUI 在該 tool call 的詳細內容顯示，GUI 從 `GET /threads/{id}/trace` 與 `GET /threads/{id}/trace/llm/{seq}` 讀取。
 
-前端原始碼在 `code/gui/web`（React + Vite），建置結果 `code/gui/dist` 有進版控，一般 `go build` 不需要 Node。改前端後執行 `make web`（需要 Node）重新產生，`make web-test` 跑前端測試；開發時先跑 `quill -no-open`，再到 `code/gui/web` 執行 `QUILL_GUI_URL=http://127.0.0.1:<port> npm run dev`，用 Vite 的網址加上同一段 `#token=...` 開啟即可熱更新。
+桌面 app 的原始碼在 `apps/desktop`：`src/main` 是 Electron main process（視窗、`quill://` protocol、轉送 API），`src/renderer` 是 React + Vite 介面。建置結果在 `apps/desktop/out`，不進版控；agent 的 `go build` 不需要 Node。`make desktop-check` 跑 typecheck、測試與建置（`make check` 也會跑）。改介面時可以用熱更新：`make serve` 之後在 `apps/desktop` 執行 `npm run dev:renderer`（Vite dev server 會讀 `~/.quill/agent.json` 把 `/api` 轉給 agent），再用 `QUILL_RENDERER_URL=http://localhost:5173 npm start` 讓 Electron 載入 dev server（main process 要先 `npm run build` 過）。
 
 server 的 HTTP 介面：`GET /healthz`、`GET /info`、`PUT /default-model`、`POST /runs`（回傳 NDJSON：`delta`、`message`、`interrupt`、`trace`、`done`、`error`）、`GET /threads?cwd=&limit=`、`GET /threads/{id}`、`GET /threads/{id}/trace`、`GET /threads/{id}/trace/llm/{seq}`。
 

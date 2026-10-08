@@ -132,13 +132,14 @@ flowchart TD
 - **DNS 解析一次、連線釘在驗證過的 IP 上**：自訂 `DialContext` 只撥驗證過的位址，所以第二次 DNS 查詢回傳內網 IP 也沒用（防 DNS rebinding）；不走 proxy；
 - **不自動跟隨 redirect**（`CheckRedirect` 回 `ErrUseLastResponse`），自己處理最多 5 跳，每一跳都重新解析、驗證、釘 IP，避免「公開網址 302 到內網」繞過。
 
-## 10. 本機 GUI 的存取控制
+## 10. 本機 agent 服務的存取控制
 
-[code/gui/gui.go](../../apps/agent/code/gui/gui.go)：
+[code/server/app.go](../../apps/agent/code/server/app.go)、[code/server/agentfile.go](../../apps/agent/code/server/agentfile.go)：
 
 - 只綁 loopback，且每個請求的 `Host` 必須是 loopback（防 DNS rebinding）；
-- 每次啟動產生隨機 session token，放在網址的 `#token=`（fragment 不會送進 server log）；API 必須帶 token，用 `subtle.ConstantTimeCompare` 比對；
-- 瀏覽器有送 `Origin` 時必須同源。
+- `quill serve` 每次啟動產生隨機 token，和網址一起寫進 `~/.quill/agent.json`（0600，結束時只刪自己 PID 寫的檔）；每個請求都要帶 `X-Quill-Token`，用 `subtle.ConstantTimeCompare` 比對；
+- 瀏覽器有送 `Origin` 時必須同源；
+- desktop app 由 Electron main process 讀 token 並轉送請求，renderer（以及之後內嵌瀏覽器裡跑的網頁）拿不到 token。
 
 ## 11. 供應鏈：專案 `.env` 不能打開 tracing
 

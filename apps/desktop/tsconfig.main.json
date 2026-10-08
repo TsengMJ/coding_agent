@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "rootDir": "src/main",
+    "outDir": "out/main",
+    "types": ["node"]
+  },
+  "include": ["src/main"],
+  "exclude": ["src/main/**/*.test.ts"]
+}

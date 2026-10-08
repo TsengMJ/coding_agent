@@ -1,0 +1,7 @@
+{
+  "name": "quill",
+  "private": true,
+  "workspaces": [
+    "apps/desktop"
+  ]
+}

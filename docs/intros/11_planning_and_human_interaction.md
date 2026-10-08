@@ -22,7 +22,7 @@ Cursor 與 Claude Code 都區分「執行中會修正的 todo」與「唯讀研�
 - **`merge: true` 依 id 部分更新**：只送變動的項目，不用每次重送整份清單（省 token）；舊資料自動補 id。
 - prompt 改成**先探索再寫**、項目要具體可驗證；還沒查清楚的寫成 `Investigate: ...`。
 - Stage 15c：明說 `write_todos` 可以和其他工具放在**同一個回應**（只是不能同一回應呼叫兩次），減少「只更新 todo」的回合。
-- TUI / GUI 顯示 checklist 與 notes。
+- GUI 顯示 checklist 與 notes。
 
 ## 2. Plan 模式（Stage 13c–e）
 
@@ -57,39 +57,31 @@ flowchart LR
 - 選擇題提問（可多選，另有自由輸入的 Other）。
 - 走 HITL 中斷，但只允許 respond / reject；設定 `InterruptOnConfig.Always`，**YOLO 模式下仍會中斷**——它是在問問題，不是在要權限。
 - 只在 interactive 註冊；headless 的 prompt 明確說「不要問澄清問題」。
-- GUI 在卡片上作答；TUI 用方向鍵 / 數字選、空白鍵切換多選；REPL 輸入逗號分隔的編號或直接打字。
+- GUI 在卡片上作答；`-n` 在終端機輸入逗號分隔的編號或直接打字。
 
 ## 4. 介面
 
-### 4.1 瀏覽器 GUI（Stage 9，預設）
+### 4.1 桌面 GUI（Stage 9，後改為 Electron）
 
-實作：[code/gui](../../apps/agent/code/gui/gui.go)（Go）、`code/gui/web`（React + Vite，約 5,400 行）。
+實作：[apps/desktop](../../apps/desktop)（Electron main process + React + Vite renderer）。
 
-- **單一 binary**：建置結果 `code/gui/dist` 進版控並 `embed`，一般 `go build` 不需要 Node。
-- **時間軸**：保留 TUI 的收合結構（`main · LLM #n`、tool call 樹、subagent 縮排），虛擬捲動，可一路捲到 thread 開頭。
+- **agent 與介面分開**：`quill serve` 是獨立的服務，desktop app 讀 `~/.quill/agent.json` 找到它；main process 透過 `quill://` protocol 轉送 API 並注入 token，renderer 拿不到 token。
+- **時間軸**：收合結構（`main · LLM #n`、tool call 樹、subagent 縮排），虛擬捲動，可一路捲到 thread 開頭。
 - **展開詳情**：grep 依檔案分組並標出命中、read_file 帶行號、execute 顯示終端輸出與 exit code、edit/write 以 GitHub 風格 diff（unified / split）呈現；另有 Arguments、Output、Raw JSON 分頁。
 - **LLM 檢視器**：點 LLM 那一行打開側欄，看這次呼叫**實際送出的 messages**（標出和上一次相比新增的部分）、回覆、提供的 tools 與 token 用量。這對 debug prompt 與 cache 非常有用。
 - 每個 turn 結尾有 Files changed 摘要；核准卡片顯示 diff 預覽。
 - 篩選 Edits / Commands / Errors / LLM calls、搜尋、鍵盤操作（`j/k`、`e`、`/`、`i`、`G`）。
 - 存取控制見 08；斷線續接見 09。
 
-### 4.2 TUI（Stage 6e、6.5b、7e）
+### 4.2 headless
 
-Bubble Tea 全螢幕介面：
+早期的 Bubble Tea TUI 與逐行 REPL 已移除，終端機只保留 `quill -n` 一次性執行。
 
-- token 串流、核准框（`a` 核准 / `r` 拒絕附理由 / `A` 本次全部核准）、unified diff 預覽。
-- **效能**：已完成的訊息依寬度快取渲染結果（每個寬度只渲染一次）；捲上去時串流不會把畫面拉回底部；spinner 的 tick 只重繪進行中的 entry。
-- assistant 訊息用 glamour 渲染 markdown。
-- subagent 活動巢狀顯示，等待模型時顯示 thinking 列與經過時間，取消後不殘留 spinner。
-
-### 4.3 REPL 與 headless
-
-- 非終端機或 `-plain` 時改用逐行 REPL。
 - 腳本 / CI：`-q`（stdout 只有回覆）、`-no-stream`、`-timeout`（逾時 exit 124，`Ctrl-C` exit 130，對齊 `timeout(1)` 慣例）、`quill threads -json`（帶 `schema_version` 的 JSON envelope）。
 
-### 4.4 共用的指令系統（Stage 10c–e）
+### 4.3 指令系統（Stage 10c–e）
 
-- `commands.Registry`：alias、未知指令建議、help；TUI / REPL 共用 handler，GUI 透過 `GET /commands` 做自動完成。
+- `commands.Registry`：alias、未知指令建議、help；GUI 透過 `GET /commands` 做自動完成。
 - `/model [spec] [--default]`：執行中切換模型，subagent 跟著換，thread 記住模型，`--default` 寫回 config.toml。
 - `/tokens`、`/context`、`/cost`：context 用量百分比、依價格表（含 cache read 價）計算成本。
 - `/compact`、`/plan`、`/build`、`/yolo`、`/new`、`/threads`、`/resume`。
@@ -106,5 +98,5 @@ Bubble Tea 全螢幕介面：
 
 可能的追問：
 
-- **為什麼 GUI 預設而不是 TUI？** coding agent 的輸出（diff、長指令輸出、巢狀 subagent）需要展開 / 收合與搜尋，瀏覽器比終端機適合；TUI 仍保留給純終端環境。
-- **dist 進版控不會很髒嗎？** 換來的是 `go install` 就能用、不需要 Node；改前端時用 `make web` 重建，有 `make web-test`。
+- **為什麼捨棄 TUI 只留 GUI？** coding agent 的輸出（diff、長指令輸出、巢狀 subagent）需要展開 / 收合與搜尋，GUI 比終端機適合；之後還要在 app 裡內嵌瀏覽器讓 agent 自我驗證，終端機做不到。
+- **為什麼用 Electron 而不是讓 Go 內嵌網頁？** 內嵌瀏覽器面板（WebContentsView）與 CDP 只有 Electron 這類 Chromium 外殼能提供；agent 與介面分成兩個程序，也讓 `quill -n` 與 benchmark 完全不依賴 Node。

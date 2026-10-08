@@ -1,4 +1,4 @@
-.PHONY: help build check agent-check agent-test agent-vet agent-fmt run serve install test-sandbox test-sandbox-linux bench-prepare bench-gate bench-smoke
+.PHONY: help build check agent-check agent-test agent-vet agent-fmt desktop-install desktop-check desktop run serve install test-sandbox test-sandbox-linux bench-prepare bench-gate bench-smoke
 
 .DEFAULT_GOAL := help
 
@@ -28,7 +28,7 @@ build: ## Build bin/quill and bin/quillbench
 	go build -C $(AGENT) -o $(BIN)/quill ./cmd/quill
 	go build -C $(AGENT) -o $(BIN)/quillbench ./cmd/quillbench
 
-check: agent-check ## Run every check
+check: agent-check desktop-check ## Run every check
 
 agent-check: agent-fmt agent-vet agent-test ## Run gofmt, go vet and go test on the agent
 
@@ -45,6 +45,17 @@ agent-fmt: ## Fail if any agent file is not gofmt-clean
 		echo "run: (cd $(AGENT) && gofmt -w .)"; \
 		exit 1; \
 	fi
+
+desktop-install: ## Install the desktop app dependencies (npm workspace)
+	npm ci
+
+desktop-check: ## Typecheck, test and build the desktop app
+	npm --workspace apps/desktop run typecheck
+	npm --workspace apps/desktop test
+	npm --workspace apps/desktop run build
+
+desktop: ## Build and open the desktop app (start `make serve` first)
+	npm --workspace apps/desktop run dev
 
 # The binaries run from the repository root so the project .env and paths
 # resolve here, not inside apps/agent.
