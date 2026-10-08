@@ -94,20 +94,14 @@ func (b *LocalShellBackend) Execute(ctx context.Context, command string, timeout
 	runCtx, cancel := context.WithTimeout(ctx, effective)
 	defer cancel()
 
-	cmd, err := b.command(runCtx, command)
+	cmd, err := b.PrepareCommand(runCtx, command)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("Error executing command: %v", err), 1)
-	}
-	cmd.Dir = b.root
-	cmd.Env = b.env()
-	if b.opts.Sandbox != nil && !sandboxBypassed(ctx) {
-		cmd.Env = append(cmd.Env, b.opts.Policy.ProxyEnv()...)
 	}
 	stdout := &cappedBuffer{limit: b.opts.MaxOutputBytes}
 	stderr := &cappedBuffer{limit: b.opts.MaxOutputBytes}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = time.Second
-	setProcessGroup(cmd)
 	err = cmd.Run()
 	// Background children (`cmd &`) would otherwise outlive the tool call.
 	_ = killProcessGroup(cmd)
@@ -277,6 +271,30 @@ func sandboxBypassed(ctx context.Context) bool {
 	v, _ := ctx.Value(withoutSandboxKey{}).(bool)
 	return v
 }
+
+// PrepareCommand builds the `sh -c` command Execute would run: in the
+// root directory, with the backend's environment and sandbox, in its own
+// process group that KillProcessGroup and ctx cancellation kill.
+func (b *LocalShellBackend) PrepareCommand(ctx context.Context, command string) (*exec.Cmd, error) {
+	if b.rootErr != nil {
+		return nil, b.rootErr
+	}
+	cmd, err := b.command(ctx, command)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Dir = b.root
+	cmd.Env = b.env()
+	if b.opts.Sandbox != nil && !sandboxBypassed(ctx) {
+		cmd.Env = append(cmd.Env, b.opts.Policy.ProxyEnv()...)
+	}
+	setProcessGroup(cmd)
+	return cmd, nil
+}
+
+// KillProcessGroup kills every process left in the group of a command
+// from PrepareCommand.
+func KillProcessGroup(cmd *exec.Cmd) error { return killProcessGroup(cmd) }
 
 func (b *LocalShellBackend) command(ctx context.Context, command string) (*exec.Cmd, error) {
 	if b.opts.Sandbox == nil || sandboxBypassed(ctx) {

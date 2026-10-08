@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	core "github.com/tsengmingchun/quill/apps/agent/agent"
 	"github.com/tsengmingchun/quill/apps/agent/code/codetools"
+	"github.com/tsengmingchun/quill/apps/agent/code/process"
 	"github.com/tsengmingchun/quill/apps/agent/llm"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/planmode"
 	rt "github.com/tsengmingchun/quill/apps/agent/runtime"
@@ -121,6 +123,45 @@ func TestCLIAgentSendsToolScreenshotsAsUserImages(t *testing.T) {
 	last := msgs[len(msgs)-1]
 	if last.Role != llm.RoleUser || !slices.ContainsFunc(last.Content, func(c llm.ContentBlock) bool { return c.Type == llm.BlockImage }) {
 		t.Fatalf("last message = %+v, want the screenshot in a user message", last)
+	}
+}
+
+func TestProcessToolsAreInteractiveAndReviewedLikeExecute(t *testing.T) {
+	procs := process.NewManager()
+	defer procs.Close()
+	model := llm.NewFakeModel(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "p", Name: process.StartName, Args: map[string]any{"command": "sleep 30"}}}})
+	a, err := CreateCLIAgent(context.Background(), Options{Model: model, Cwd: t.TempDir(), NoWebTools: true, Interactive: true,
+		Plans: planmode.NewMemoryStore(), Processes: procs, Checkpointer: rt.NewMemoryCheckpointer()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.Invoke(context.Background(), core.Input{Messages: []llm.Message{llm.NewUserMessage("start the dev server")}}, rt.RunConfig{ThreadID: "t"})
+	var paused *rt.InterruptError
+	if !errors.As(err, &paused) {
+		t.Fatalf("start_process ran without review: %v", err)
+	}
+	var offered []string
+	for _, spec := range model.Requests()[0].Tools {
+		offered = append(offered, spec.Name)
+	}
+	for _, name := range []string{process.StartName, process.ReadName, process.StopName} {
+		if !slices.Contains(offered, name) {
+			t.Errorf("tools %v missing %s", offered, name)
+		}
+	}
+
+	headless := llm.NewFakeModel(llm.NewAssistantMessage("ok"))
+	b, err := CreateCLIAgent(context.Background(), Options{Model: headless, Cwd: t.TempDir(), NoWebTools: true, NoVerifyGate: true, AutoApprove: true, Processes: procs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Invoke(context.Background(), core.Input{Messages: []llm.Message{llm.NewUserMessage("hi")}}, rt.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range headless.Requests()[0].Tools {
+		if spec.Name == process.StartName {
+			t.Fatal("headless runs must not start background processes")
+		}
 	}
 }
 

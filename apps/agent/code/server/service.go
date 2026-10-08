@@ -19,6 +19,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/code/config"
 	"github.com/tsengmingchun/quill/apps/agent/code/cost"
 	"github.com/tsengmingchun/quill/apps/agent/code/mcp"
+	"github.com/tsengmingchun/quill/apps/agent/code/process"
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
 	"github.com/tsengmingchun/quill/apps/agent/code/storage"
 	"github.com/tsengmingchun/quill/apps/agent/code/trace"
@@ -87,6 +88,7 @@ type Service struct {
 	mcp          mcp.Session
 	mcpTools     []tool.Tool
 	browsers     *browserManager
+	processes    *process.Manager
 
 	mu     sync.Mutex
 	agents map[agentKey]*agentEntry
@@ -158,6 +160,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	s := &Service{
 		browsers:     newBrowserManager(browserKind, connect),
+		processes:    process.NewManager(),
 		mcp:          cfg.MCP,
 		mcpTools:     mcpTools,
 		webModel:     webModel,
@@ -226,6 +229,7 @@ func (s *Service) ModelInfo() llm.ModelInfo { return s.defaultModel.model.Info()
 func (s *Service) DefaultModel() string { return s.defaultModel.spec }
 
 func (s *Service) Close() error {
+	s.processes.Close()
 	err := s.traces.Close()
 	if c, ok := s.tracer.(interface{ Close() error }); ok {
 		if cerr := c.Close(); cerr != nil && err == nil {
@@ -637,6 +641,7 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest, bt browserTools)
 			Tracer:       s.tracer,
 			MCPTools:     slices.Concat(s.mcpTools, bt.tools),
 			BrowserMCP:   string(bt.kind),
+			Processes:    s.processes,
 		})
 	})
 	if e.err != nil {

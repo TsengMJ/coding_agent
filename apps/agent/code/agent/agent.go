@@ -20,6 +20,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/code/cache"
 	"github.com/tsengmingchun/quill/apps/agent/code/codetools"
 	"github.com/tsengmingchun/quill/apps/agent/code/config"
+	"github.com/tsengmingchun/quill/apps/agent/code/process"
 	"github.com/tsengmingchun/quill/apps/agent/code/trace"
 	"github.com/tsengmingchun/quill/apps/agent/internal/notimpl"
 	"github.com/tsengmingchun/quill/apps/agent/llm"
@@ -57,6 +58,9 @@ type Options struct {
 	// MCPTools come from connected MCP servers; unless AutoApprove, each
 	// needs approval except those in Settings.MCPAllowTools.
 	MCPTools []tool.Tool
+	// Processes, in interactive runs on the host shell, backs the
+	// start_process tools; processes are kept per thread.
+	Processes *process.Manager
 	// WebModel reads fetched pages for fetch_url prompts; nil uses Model.
 	WebModel llm.ChatModel
 	// ReviewModel, when set, runs the independent reviewer the headless
@@ -115,6 +119,10 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		}
 	}
 	sandboxed := shellSandboxed(b)
+	var procTools []tool.Tool
+	if shell, ok := b.(process.Preparer); ok && opts.Interactive && opts.Processes != nil {
+		procTools = process.Tools(opts.Processes, shell)
+	}
 	b = withHostRoutes(b, userSkillRoots(opts.UserDir, opts.AgentName), opts.Artifacts, opts.Cwd)
 	skillSources := existingSkillSources(ctx, b, SkillSources(opts.UserDir, opts.AgentName))
 	b = backend.WithVersionGuard(trace.WrapBackend(b))
@@ -228,6 +236,9 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	default:
 		mws = append(mws, destructiveGuard{})
 	}
+	if review, ok := interrupts[executeToolName]; ok && len(procTools) > 0 {
+		interrupts[process.StartName] = review
+	}
 	if sandboxed {
 		mws = append(mws, sandboxedShell{
 			mode:             opts.Settings.Sandbox.Mode,
@@ -254,7 +265,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 		quill.WithModel(opts.Model),
 		quill.WithBackend(b),
 		quill.WithSystemPrompt(prompt),
-		quill.WithTools(slices.Concat(tools, opts.ExtraTools, opts.MCPTools)...),
+		quill.WithTools(slices.Concat(tools, procTools, opts.ExtraTools, opts.MCPTools)...),
 		quill.WithMiddleware(append(mws, trace.Middleware{})...),
 		quill.WithCheckpointer(opts.Checkpointer),
 		quill.WithStore(opts.Store),
@@ -386,7 +397,7 @@ func browserSection(kind string) string {
 	}
 	return "\n\n### Browser Panel\n\n" +
 		"The `mcp__" + kind + "__*` tools drive a browser panel the user watches next to this conversation. " +
-		"Use it to check web work yourself: start the dev server, open its page, interact with it and read the result instead of assuming it works. " +
+		"Use it to check web work yourself: start the dev server with start_process (execute would stop it when the call returns), open its page, interact with it and read the result instead of assuming it works. " +
 		"The panel only loads http://localhost and http://127.0.0.1 pages and has no logins or cookies. " +
 		"Prefer accessibility snapshots for finding elements; take a screenshot when the visual result matters.\n"
 }

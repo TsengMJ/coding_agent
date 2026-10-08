@@ -295,6 +295,7 @@ mcp = "playwright"   # 或 "chrome-devtools"
 ```
 
 - 工具名稱是 `mcp__playwright__*` / `mcp__chrome-devtools__*`，和其他 MCP 工具一樣在 manual 模式要核准（可用 `[mcp] allow_tools` 放行）。會跳出面板的功能被拿掉：Playwright 的 `browser_run_code_unsafe`（在面板外執行 Node 程式）、Chrome DevTools 的 `upload_file`，以及會把檔案寫到任意路徑的參數（`filePath`、`outputDirPath` 等）。Playwright 的快照與 log 寫在暫存目錄，不會出現在專案裡。
+- dev server 用 `start_process` 啟動（`execute` 結束時會殺掉它留下的背景行程）：和 `execute` 一樣在專案根目錄、同一個沙箱裡執行，核准規則也相同；`read_process_output` 看新的輸出，`stop_process` 連同子行程一起停掉。行程跟著 thread（每個 thread 最多同時 4 個），跨 turn 保留，`quill serve` 結束時全部停止。只有 desktop app 的互動 session 有這組工具。
 
 ### Plan 模式與 todo
 
