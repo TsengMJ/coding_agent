@@ -1,5 +1,11 @@
-# The two HARD Go tasks of smoke50, for a cheap RL8 repair loop ablation:
-# run once with the repair loop and once with
+# HARD Go tasks for repair loop ablations: run once with the repair loop and
+# once with
 # -disable failure_class,repair_state,micro,repro,planner,stuck,checkpoint,reviewer.
+# The first two are smoke50's HARD Go tasks (RL8 runs used only these two);
+# the rest add one task per Go repository from hard51_ids.txt (lowest ID).
 instance_flipt-io__flipt-c188284ff0c094a4ee281afebebd849555ebee59
 instance_future-architect__vuls-ca3f6b1dbf2cd24d1537bfda43e788443ce03a0c
+instance_flipt-io__flipt-2ca5dfb3513e4e786d2b037075617cccc286d5c3
+instance_future-architect__vuls-5af1a227339e46c7abf3f2815e4c636a0c01098e
+instance_gravitational__teleport-1316e6728a3ee2fc124e2ea0cc6a02044c87a144-v626ec2a48416b10a88641359a169d99e935ff037
+instance_navidrome__navidrome-69e0a266f48bae24a11312e9efbe495a337e4c84
