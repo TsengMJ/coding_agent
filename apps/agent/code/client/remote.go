@@ -1,0 +1,338 @@
+package client
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"iter"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/tsengmingchun/quill/apps/agent/code/config"
+	"github.com/tsengmingchun/quill/apps/agent/code/server"
+	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
+	"github.com/tsengmingchun/quill/apps/agent/code/trace"
+)
+
+// ServerEnvVar names the `quill serve` URL clients connect to.
+const ServerEnvVar = config.ServerEnvVar
+
+// maxEventBytes caps one NDJSON line (a message with large tool output).
+const maxEventBytes = 64 << 20
+
+// Remote talks to `quill serve` over HTTP.
+type Remote struct {
+	base  *url.URL
+	token string
+	hc    *http.Client
+}
+
+var _ server.Server = (*Remote)(nil)
+
+// NewRemote returns a client for the server at baseURL (e.g.
+// http://127.0.0.1:8123) that sends token with every request.
+func NewRemote(baseURL, token string) (*Remote, error) {
+	u, err := url.Parse(strings.TrimRight(baseURL, "/"))
+	if err != nil {
+		return nil, fmt.Errorf("server URL %q: %w", baseURL, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+		return nil, fmt.Errorf("server URL %q: want http://host:port", baseURL)
+	}
+	return &Remote{base: u, token: token, hc: &http.Client{}}, nil
+}
+
+// Ping checks that the server is reachable.
+func (r *Remote) Ping(ctx context.Context) error {
+	resp, err := r.do(ctx, http.MethodGet, "/healthz", nil, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return checkStatus(resp)
+}
+
+// DefaultModel asks the server which model runs use by default; empty when
+// the server does not say.
+func (r *Remote) DefaultModel(ctx context.Context) (string, error) {
+	resp, err := r.do(ctx, http.MethodGet, "/healthz", nil, nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp); err != nil {
+		return "", err
+	}
+	var body struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("decode healthz: %w", err)
+	}
+	return body.Model, nil
+}
+
+func (r *Remote) Run(ctx context.Context, req server.RunRequest) iter.Seq2[server.Event, error] {
+	return func(yield func(server.Event, error) bool) {
+		body, err := json.Marshal(req)
+		if err != nil {
+			yield(server.Event{}, err)
+			return
+		}
+		resp, err := r.do(ctx, http.MethodPost, "/runs", nil, body)
+		if err != nil {
+			yield(server.Event{}, err)
+			return
+		}
+		defer resp.Body.Close()
+		if err := checkStatus(resp); err != nil {
+			yield(server.Event{}, err)
+			return
+		}
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 64<<10), maxEventBytes)
+		for sc.Scan() {
+			var ev server.Event
+			if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+				yield(server.Event{}, fmt.Errorf("decode server event: %w", err))
+				return
+			}
+			switch ev.Kind {
+			case server.EventDone:
+				return
+			case server.EventError:
+				yield(server.Event{}, errors.New(ev.Error))
+				return
+			}
+			if !yield(ev, nil) {
+				return
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			yield(server.Event{}, err)
+			return
+		}
+		if err := sc.Err(); err != nil {
+			yield(server.Event{}, fmt.Errorf("read server stream: %w", err))
+			return
+		}
+		yield(server.Event{}, errors.New("server closed the stream before the run finished"))
+	}
+}
+
+func (r *Remote) GetThread(ctx context.Context, threadID string) (*server.ThreadState, error) {
+	resp, err := r.do(ctx, http.MethodGet, "/threads/"+url.PathEscape(threadID), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+	var ts server.ThreadState
+	if err := json.NewDecoder(resp.Body).Decode(&ts); err != nil {
+		return nil, fmt.Errorf("decode thread: %w", err)
+	}
+	return &ts, nil
+}
+
+func (r *Remote) GetHistory(ctx context.Context, threadID string, before, limit int) (*server.HistoryPage, error) {
+	path := "/threads/" + url.PathEscape(threadID) + "/history?limit=" + strconv.Itoa(limit)
+	if before > 0 {
+		path += "&before=" + strconv.Itoa(before)
+	}
+	resp, err := r.do(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+	var page server.HistoryPage
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return nil, fmt.Errorf("decode history: %w", err)
+	}
+	return &page, nil
+}
+
+func (r *Remote) GetUsage(ctx context.Context, threadID string) (*server.ThreadUsage, error) {
+	resp, err := r.do(ctx, http.MethodGet, "/threads/"+url.PathEscape(threadID)+"/usage", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+	var u server.ThreadUsage
+	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
+		return nil, fmt.Errorf("decode usage: %w", err)
+	}
+	return &u, nil
+}
+
+func (r *Remote) ListThreads(ctx context.Context, f sessions.Filter) ([]sessions.Info, error) {
+	q := url.Values{}
+	if f.Cwd != "" {
+		q.Set("cwd", f.Cwd)
+	}
+	if f.Limit > 0 {
+		q.Set("limit", strconv.Itoa(f.Limit))
+	}
+	resp, err := r.do(ctx, http.MethodGet, "/threads", q, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+	var list []sessions.Info
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, fmt.Errorf("decode threads: %w", err)
+	}
+	return list, nil
+}
+
+func (r *Remote) RenameThread(ctx context.Context, threadID, title string) (*sessions.Info, error) {
+	body, err := json.Marshal(map[string]string{"title": title})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := r.do(ctx, http.MethodPatch, "/threads/"+url.PathEscape(threadID), nil, body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+	var info sessions.Info
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("decode renamed thread: %w", err)
+	}
+	return &info, nil
+}
+
+func (r *Remote) Compact(ctx context.Context, threadID string) (*server.CompactResult, error) {
+	resp, err := r.do(ctx, http.MethodPost, "/threads/"+url.PathEscape(threadID)+"/compact", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+	var res server.CompactResult
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, fmt.Errorf("decode compact result: %w", err)
+	}
+	return &res, nil
+}
+
+func (r *Remote) GetTrace(ctx context.Context, threadID string) (*trace.Trace, error) {
+	var t trace.Trace
+	if err := r.getJSON(ctx, "/threads/"+url.PathEscape(threadID)+"/trace", &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *Remote) GetTraceSummary(ctx context.Context, threadID string) (*trace.Trace, error) {
+	var t trace.Trace
+	if err := r.getJSON(ctx, "/threads/"+url.PathEscape(threadID)+"/trace/summary", &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *Remote) GetLLMCall(ctx context.Context, threadID string, seq int) (*trace.LLMCallDetail, error) {
+	var d trace.LLMCallDetail
+	err := r.getJSON(ctx, "/threads/"+url.PathEscape(threadID)+"/trace/llm/"+strconv.Itoa(seq), &d)
+	var nf notFound
+	if errors.As(err, &nf) {
+		return nil, fmt.Errorf("%w: %v", trace.ErrNotFound, err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// notFound marks an HTTP 404 from getJSON.
+type notFound struct{ error }
+
+func (r *Remote) getJSON(ctx context.Context, path string, v any) error {
+	resp, err := r.do(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp); err != nil {
+		if resp.StatusCode == http.StatusNotFound {
+			return notFound{err}
+		}
+		return err
+	}
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return fmt.Errorf("decode %s: %w", path, err)
+	}
+	return nil
+}
+
+func (r *Remote) Close() error { return nil }
+
+func (r *Remote) do(ctx context.Context, method, path string, q url.Values, body []byte) (*http.Response, error) {
+	u := *r.base
+	u.Path += path
+	u.RawQuery = q.Encode()
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), rd)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if r.token != "" {
+		req.Header.Set(server.TokenHeader, r.token)
+	}
+	resp, err := r.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("quill server %s: %w", r.base, err)
+	}
+	return resp, nil
+}
+
+func checkStatus(resp *http.Response) error {
+	if resp.StatusCode < 300 {
+		return nil
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if json.Unmarshal(raw, &body) == nil && body.Error != "" {
+		return fmt.Errorf("server: %s (HTTP %d)", body.Error, resp.StatusCode)
+	}
+	return fmt.Errorf("server: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+}

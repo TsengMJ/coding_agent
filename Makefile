@@ -1,10 +1,13 @@
-.PHONY: help test vet fmt build check run serve install web web-test test-sandbox test-sandbox-linux bench-prepare bench-gate bench-smoke
+.PHONY: help build check agent-check agent-test agent-vet agent-fmt run serve install test-sandbox test-sandbox-linux bench-prepare bench-gate bench-smoke
 
 .DEFAULT_GOAL := help
 
-# Package path for tests. Example: make test PKG=./runtime
+AGENT := apps/agent
+BIN := $(CURDIR)/bin
+
+# Package path for agent tests, relative to apps/agent. Example: make agent-test PKG=./runtime
 PKG ?= ./...
-# Extra arguments for go test. Example: make test ARGS='-count=1 -v'
+# Extra arguments for go test. Example: make agent-test ARGS='-count=1 -v'
 ARGS ?=
 # Prompt passed to quill. Example: make run PROMPT='summarize README.md'
 PROMPT ?=
@@ -18,55 +21,54 @@ ADDR ?= 127.0.0.1:8123
 help: ## Show targets
 	@echo "Usage: make <target> [PKG=./...] [ARGS='-v'] [PROMPT='...'] [THREAD=id] [MODEL=provider:model]"
 	@echo ""
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-test: ## Run tests
-	go test $(ARGS) $(PKG)
+build: ## Build bin/quill and bin/quillbench
+	go build -C $(AGENT) ./...
+	go build -C $(AGENT) -o $(BIN)/quill ./cmd/quill
+	go build -C $(AGENT) -o $(BIN)/quillbench ./cmd/quillbench
 
-vet: ## Run go vet
-	go vet ./...
+check: agent-check ## Run every check
 
-fmt: ## Fail if any file is not gofmt-clean
-	@out=$$(gofmt -l .); \
+agent-check: agent-fmt agent-vet agent-test ## Run gofmt, go vet and go test on the agent
+
+agent-test: ## Run agent tests
+	cd $(AGENT) && go test $(ARGS) $(PKG)
+
+agent-vet: ## Run go vet on the agent
+	cd $(AGENT) && go vet ./...
+
+agent-fmt: ## Fail if any agent file is not gofmt-clean
+	@out=$$(cd $(AGENT) && gofmt -l .); \
 	if [ -n "$$out" ]; then \
 		echo "$$out"; \
-		echo "run: gofmt -w ."; \
+		echo "run: (cd $(AGENT) && gofmt -w .)"; \
 		exit 1; \
 	fi
 
-build: ## Build all packages and ./quill
-	go build ./...
-	go build -o quill ./cmd/quill
-
-check: fmt vet test ## Run fmt, vet, and tests
-
-run: ## Run one prompt: make run PROMPT="..."
+# The binaries run from the repository root so the project .env and paths
+# resolve here, not inside apps/agent.
+run: build ## Run one prompt: make run PROMPT="..."
 	@test -n "$(PROMPT)" || { echo 'usage: make run PROMPT="your prompt"'; exit 1; }
-	go run ./cmd/quill $(if $(MODEL),-model=$(MODEL),) $(if $(THREAD),-thread=$(THREAD),) -n "$(PROMPT)"
+	$(BIN)/quill $(if $(MODEL),-model=$(MODEL),) $(if $(THREAD),-thread=$(THREAD),) -n "$(PROMPT)"
 
-serve: ## Run the agent server: make serve [ADDR=127.0.0.1:8123] [MODEL=...]
-	go run ./cmd/quill serve -addr=$(ADDR) $(if $(MODEL),-model=$(MODEL),)
+serve: build ## Run the agent server for the desktop app: make serve [ADDR=127.0.0.1:8123] [MODEL=...]
+	$(BIN)/quill serve -addr=$(ADDR) $(if $(MODEL),-model=$(MODEL),)
 
 install: ## Install quill into $(go env GOPATH)/bin
-	go install ./cmd/quill
-
-web: ## Rebuild the GUI bundle into code/gui/dist (needs Node)
-	cd code/gui/web && npm ci && npm run build
-
-web-test: ## Typecheck and test the GUI frontend (needs Node)
-	cd code/gui/web && npm ci && npm run typecheck && npm test
+	go install -C $(AGENT) ./cmd/quill
 
 test-sandbox: ## Run the shell sandbox integration tests on this machine (real sandbox-exec / bwrap)
-	QUILL_SANDBOX_IT=1 go test -count=1 -run Sandbox ./backend/ossandbox/ ./backend/ ./code/agent/
+	cd $(AGENT) && QUILL_SANDBOX_IT=1 go test -count=1 -run Sandbox ./backend/ossandbox/ ./backend/ ./code/agent/
 
 test-sandbox-linux: ## Run the Linux (bubblewrap) sandbox integration tests in a Docker container
-	./scripts/test_sandbox_linux.sh
+	$(AGENT)/scripts/test_sandbox_linux.sh
 
-bench-prepare: ## Fetch and verify SWE-bench Pro V2 tasks, fill bench_tasks (needs POSTGRES_CONN_STRING)
-	go run ./cmd/quillbench prepare
+bench-prepare: build ## Fetch and verify SWE-bench Pro V2 tasks, fill bench_tasks (needs POSTGRES_CONN_STRING)
+	$(BIN)/quillbench prepare
 
-bench-gate: ## Grade gold (oracle) and empty (nop) patches on smoke50; all must pass / fail
-	go run ./cmd/quillbench gate
+bench-gate: build ## Grade gold (oracle) and empty (nop) patches on smoke50; all must pass / fail
+	$(BIN)/quillbench gate
 
-bench-smoke: ## Run quill on smoke50: make bench-smoke [MODEL=provider:model]
-	go run ./cmd/quillbench run -subset smoke50 $(if $(MODEL),-model=$(MODEL),)
+bench-smoke: build ## Run quill on smoke50: make bench-smoke [MODEL=provider:model]
+	$(BIN)/quillbench run -subset smoke50 $(if $(MODEL),-model=$(MODEL),)

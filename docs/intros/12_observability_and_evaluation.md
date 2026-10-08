@@ -11,7 +11,7 @@
 
 ## 1. Trace：記錄一切（Stage 9a）
 
-實作：[code/trace](../../code/trace/trace.go)。
+實作：[code/trace](../../apps/agent/code/trace/trace.go)。
 
 | 記什麼 | 怎麼記 |
 |---|---|
@@ -92,7 +92,7 @@ R1 的目標是「不改 agent 行為，只讓量測可信」：
 | `quillbench refs import` + `compare -ref` | 匯入別的 harness（mini-swe-agent 等）的逐題成績做同題比較 |
 | `quillbench analyze <run>...` | 從 trace 重算指標、分類失敗、離線重播、元件觸發次數 |
 
-實作：[code/bench/stats.go](../../code/bench/stats.go)。為什麼用這些：
+實作：[code/bench/stats.go](../../apps/agent/code/bench/stats.go)。為什麼用這些：
 
 - **Wilson** 而不是常態近似：樣本小（10–50 題）、比例接近 0 或 1 時常態近似會給出荒謬的區間。
 - **McNemar**：兩個版本跑同一組題目，資料是配對的；只看「A 解出 B 沒解出」與相反的題數。Stage 12 的 A/B 是 8/10 vs 8/10、p = 1.0——**10 題看不出差異**，這是我在文件裡誠實記錄的。

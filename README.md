@@ -1,6 +1,6 @@
 # Quill
 
-Quill 是用 Go 寫的 coding agent：一套可組裝的 agent SDK、上面的 `quill` CLI / TUI / GUI，以及評測工具 `quillbench`。
+Quill 是 coding agent：Go 寫的 agent SDK 與 agent 服務（`quill serve`、headless 的 `quill -n`）、Electron 桌面 app，以及評測工具 `quillbench`。
 
 - 分階段計畫：[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)
 - GUI 後續優先順序：[`GUI_ROADMAP.md`](GUI_ROADMAP.md)
@@ -13,10 +13,17 @@ Quill 是用 Go 寫的 coding agent：一套可組裝的 agent SDK、上面的 `
 - Python 的 sync / async 雙版本 API（如 `ls` / `als`）在 Go 統一為帶 `context.Context` 的單一版本。
 - Python 的 `AgentMiddleware` 以 Go「可選介面」表達：middleware 只需實作 `Name()`，再依需要實作各 hook 介面。
 
-## 分層
+## 專案結構
 
 ```
-cmd/quill, code/*        CLI
+apps/agent               Go module github.com/tsengmingchun/quill/apps/agent（agent SDK、quill、quillbench）
+docs                     設計文件
+```
+
+## 分層（apps/agent）
+
+```
+cmd/quill, code/*        CLI 與 agent 服務
 quill (根套件)            CreateAgent：組裝預設 middleware、subagents、profiles
 middleware/*             Agent middleware（filesystem、subagents、summarization ...）
 backend                  檔案/shell 後端（state、store、filesystem、sandbox、composite ...）
@@ -32,21 +39,24 @@ internal/notimpl         未實作 sentinel error
 ## 開發指令
 
 ```sh
-make test                         # go test ./...
-make test PKG=./runtime ARGS=-v   # 單一 package、額外參數
-make check                        # gofmt、vet、test
+make check                              # 全部檢查
+make agent-check                        # agent 的 gofmt、vet、test
+make agent-test PKG=./runtime ARGS=-v   # 單一 package（相對於 apps/agent）、額外參數
+make build                              # 產生 bin/quill、bin/quillbench
 make run PROMPT='summarize README.md'
 make run PROMPT='hi' MODEL=openai:gpt-5.5
-make run PROMPT='continue' THREAD=thread-id   # 續跑 thread（需要設定 Postgres 才能跨行程保存）
-make serve                                    # 常駐 server，預設 127.0.0.1:8123
-make install                                  # go install ./cmd/quill
+make run PROMPT='continue' THREAD=thread-id   # 續跑 thread
+make serve                                    # agent 服務，預設 127.0.0.1:8123
+make install                                  # go install apps/agent/cmd/quill
 ```
+
+`make run`、`make serve` 與 bench 指令會先建置到 `bin/`，再從根目錄執行，所以根目錄的 `.env` 照常載入。
 
 `quill` 的 prompt 可以用 `-n`，也可以直接當參數：
 
 ```sh
-go run ./cmd/quill -n 'summarize README.md'
-go run ./cmd/quill summarize README.md
+quill -n 'summarize README.md'
+quill summarize README.md
 ```
 
 ### 寫檔與執行指令
@@ -67,14 +77,14 @@ go run ./cmd/quill summarize README.md
 - 語言依 `language` 參數、`files` 副檔名、根目錄標記檔（`go.mod`、`pyproject.toml` 等 Python 標記、`package.json`）依序決定
 - `edit_file` 的 `old_string` 出現多次時，錯誤訊息會列出前 5 處的行號與前一行
 
-`-n` 與 quillbench 這類 headless 執行另外掛了驗證閘門（`code/agent/verify.go`）：這一輪改過檔案，之後卻沒有通過的測試或 build（`run_tests` 或 `execute` 跑 `go test`、`npm test`、`pytest` 等），agent 想結束時會被擋回去繼續驗證，最多擋 2 次；測試因 `ECONNREFUSED` 失敗時會附上啟動對應服務（Redis、MongoDB、PostgreSQL、MySQL）的提示。檢查失敗時，閘門會先 `git stash`（含未追蹤檔）在原始 HEAD 上重跑同一個檢查再還原：HEAD 上也失敗的測試不擋，HEAD 上通過的明確告訴 agent 是它造成的 regression；重跑又通過的視為 flaky。結束前另外檢查一次 diff：殘留檔（`dump.rdb`、log、`__pycache__` 等）、改到的既有測試，以及任務 `## Requirements` 清單逐項對照。TUI 與 GUI 不掛。
+`-n` 與 quillbench 這類 headless 執行另外掛了驗證閘門（`code/agent/verify.go`）：這一輪改過檔案，之後卻沒有通過的測試或 build（`run_tests` 或 `execute` 跑 `go test`、`npm test`、`pytest` 等），agent 想結束時會被擋回去繼續驗證，最多擋 2 次；測試因 `ECONNREFUSED` 失敗時會附上啟動對應服務（Redis、MongoDB、PostgreSQL、MySQL）的提示。檢查失敗時，閘門會先 `git stash`（含未追蹤檔）在原始 HEAD 上重跑同一個檢查再還原：HEAD 上也失敗的測試不擋，HEAD 上通過的明確告訴 agent 是它造成的 regression；重跑又通過的視為 flaky。結束前另外檢查一次 diff：殘留檔（`dump.rdb`、log、`__pycache__` 等）、改到的既有測試，以及任務 `## Requirements` 清單逐項對照。GUI 不掛。
 
 `write_file`、`edit_file`、`apply_patch`、`delete`、`execute`、`run_tests`、`diagnostics` 執行前會先問你（`ls`、`read_file`、`grep`、`glob`、`git_status`、`git_diff` 不問）：
 
-- TUI：跳出核准框，`a` 核准、`r` 拒絕（可輸入理由，理由會回傳給模型）、`A` 本次全部核准
+- GUI：核准卡片上看 diff 預覽後核准，或附理由拒絕（理由會回傳給模型）
 - `-n` 且 stdin 是終端機：逐一問 `approve? [y]es / [a]ll / [N]o / or type a reason to reject`
 - `-n` 但 stdin 不是終端機（管線、CI）：自動拒絕並告訴模型沒有人可以核准
-- `-y`（或 TUI 裡的 `/yolo`、config.toml 的 `startup.mode = "yolo"`）：全部自動核准
+- `-y`（或 config.toml 的 `startup.mode = "yolo"`）：全部自動核准
 - `shell.allow_list`：符合的 `execute` 指令免核准；`run_tests`、`diagnostics` 會依專案啟動不同的執行器，清單要包含它們可能用到的全部指令才免核准（`run_tests`：`go`、`npx`、`npm`、`node`、`python3`、`python`；`diagnostics`：`go`、`npx`、`node`、`python3`、`python`、`ruff`）（見下方設定檔）
 
 核准框會顯示 `write_file` / `edit_file` / `apply_patch` 對照磁碟上現有檔案的 unified diff。
@@ -87,14 +97,14 @@ go run ./cmd/quill summarize README.md
 
 #### 快速開始
 
-macOS 不用任何設定，沙箱預設就開著；Linux 先裝 bubblewrap（`sudo apt install bubblewrap`）。GUI、TUI、`-n` 都套用同一套沙箱：
+macOS 不用任何設定，沙箱預設就開著；Linux 先裝 bubblewrap（`sudo apt install bubblewrap`）。`quill serve` 與 `-n` 都套用同一套沙箱：
 
 ```sh
 cd 你的專案
 quill sandbox -- touch ~/x          # 先確認：應該被擋（Operation not permitted / Read-only file system）
 quill sandbox -- go test ./...      # 專案內的建置、測試照常
-quill                               # GUI（-tui 終端介面、-n '...' 單次執行）
-quill -sandbox read-only            # 這次只讀：模型不能改任何檔案
+quill serve                         # 桌面 app 用的 agent 服務
+quill -sandbox read-only -n '...'   # 這次只讀：模型不能改任何檔案
 ```
 
 需要讓 agent 安裝套件（`go get`、`npm install`、`pip install`）時，在 `~/.quill/config.toml` 加上：
@@ -207,16 +217,16 @@ mkdir /tmp/demo && cd /tmp/demo
 quill -n '建立 main.go 印出 hello，然後 go run main.go'
 ```
 
-### 常駐 server 與 TUI（邊寫邊測）
+### agent 服務（`quill serve`）
 
 ```sh
-# 終端 A：常駐 server（只綁 loopback；先在 ~/.quill/.env 設定 QUILL_POSTGRES_CONN_STRING 與 QUILL_REDIS_URL）
+# 終端 A：在專案目錄啟動 agent 服務（只綁 loopback；先在 ~/.quill/.env 設定 QUILL_POSTGRES_CONN_STRING 與 QUILL_REDIS_URL）
+cd ~/work/demo
 quill serve                        # 或 make serve；-addr 127.0.0.1:8123、-model provider:model
 
-# 終端 B：任何專案目錄
+# 終端 B：同一台機器
 export QUILL_SERVER=http://127.0.0.1:8123
-cd ~/work/demo
-quill                              # 開啟瀏覽器 GUI；-tui 改用全螢幕 TUI，非終端機或加 -plain 時改用逐行 REPL
+quill -n '加上 --upper 參數'       # 交給 server 執行
 quill -r                           # 接續這個目錄最近的 thread
 quill -thread <id>                 # 接續指定 thread
 quill -n '加上 --upper 參數' -r    # 單次續跑
@@ -224,13 +234,14 @@ quill threads                      # 列出這個目錄的 threads（-all 列出
 ```
 
 - 沒設 `QUILL_SERVER`（或 `-server`）時，agent 直接在 `quill` 行程內執行。
+- `quill serve` 的每個請求都要帶 `X-Quill-Token`，Host 必須是 loopback，瀏覽器送的 Origin 必須和 Host 相同。啟動時把網址與 token 寫進 `~/.quill/agent.json`（只有自己可讀），結束時刪除；桌面 app 與 `quill -server` 從這裡讀 token。要固定 token 時設 `QUILL_AGENT_TOKEN`（server 與 client 都看這個變數）。這是因為 agent 用瀏覽器打開的本機頁面也跑在 localhost，不能讓它們直接呼叫 agent API。
 - quill 需要 Postgres 與 Redis，任一個沒設定或連不上就啟動失敗。把 `QUILL_POSTGRES_CONN_STRING`（相容 `POSTGRES_CONN_STRING`）與 `QUILL_REDIS_URL`（相容 `REDIS_URL`）放在 `~/.quill/.env`。
   - Postgres 存重啟後要讀回的內容：thread 與待核准的 tool call（`quill_checkpoints`、`quill_threads`）、計畫（`quill_plans`）、trace（`quill_trace_records`、`quill_trace_blobs`）、摘要前的完整對話（`conversation_history`）。
   - Redis 存可重新產生的快取，會過期：網頁原文（24 小時）、搜尋 / 擷取 / Context7 結果、被移出 context 的大型 tool 輸出（`storage.results_ttl`，預設 7 天）。過期後讀取會提示重跑工具。
   - 舊版留下的 `~/.quill/plans/` 與 `~/.quill/traces/` 已不再使用，可以刪除。
   - `quillbench` 仍使用 `POSTGRES_CONN_STRING`，可連到同一容器的另一個資料庫。
 - 一個 thread 綁定建立它的目錄，換目錄使用同一個 thread 會被拒絕；同一個 thread 同時只能跑一個 run。
-- 回覆會邊產生邊顯示（token 串流）；tool call 的參數要等模型說完才會出現。完成的回覆在 TUI 裡以 markdown 渲染。
+- 回覆會邊產生邊顯示（token 串流）；tool call 的參數要等模型說完才會出現。完成的回覆在 GUI 裡以 markdown 渲染。
 - `quill serve` 收到 Ctrl-C / SIGTERM 時停止接新 run，進行中的 run 最多有 30 秒收尾，之後被取消；再按一次 Ctrl-C 立即結束。被取消的 tool call 下一輪會自動補上「未完成」的結果，thread 可以直接接續。
 - 模型呼叫遇到 429、5xx、連線錯誤，或 HTTP 200 卻沒有任何 choices（串流則是什麼都沒送出）的空回應會自動重試（預設 2 次，`retries.max_retries` 可調；串流已經送出內容後就不重試）；串流超過 5 分鐘沒有新資料視為卡住並報錯。
 - 每個 thread 只保留最新 10 筆 checkpoint，長對話不會讓 checkpoint 表無限成長。
@@ -241,7 +252,7 @@ quill threads                      # 列出這個目錄的 threads（-all 列出
 
 重新啟動 GUI 時，預設開啟目前目錄最近有對話內容的 thread；`-thread <id>` 可指定，`-r` 可明確要求最近的 thread。側欄的 ✎ 可替已開始的 thread 命名，名稱會隨 thread 保存；執行中暫停切換 thread，避免把串流內容顯示到另一段對話。
 
-- 時間軸保留 TUI 的收合結構（`main · LLM #n`、tool call 樹、subagent 縮排），可以一路往上捲到 thread 開頭。
+- 時間軸是收合結構（`main · LLM #n`、tool call 樹、subagent 縮排），可以一路往上捲到 thread 開頭。
 - 點 tool call 展開詳細內容：grep 依檔案分組並標出命中、read_file 帶行號、execute 顯示終端輸出、exit code 與沙箱 badge（見 [docs/sandbox.md](docs/sandbox.md#在-gui-看指令有沒有跑在沙箱裡)）、edit/write 以 GitHub 風格 diff（unified / split）呈現；另有 Arguments、Output、Raw JSON 分頁。
 - 輸入框可附圖片：直接貼上、拖進輸入框或按 Attach image。支援 PNG、JPEG、GIF、WebP，單張 5 MB、合計 10 MB；目前只有 OpenAI 相容的 provider（OpenAI、OpenRouter）會送出圖片，模型本身要支援 vision。圖片存在 thread 裡，之後每一輪都會一起送給模型。
 - 點 LLM 那一行（或 `inspect`）打開側欄，看這次呼叫實際送出的 messages（標出和上一次相比新增的部分）、回覆、提供的 tools 與 token 用量。
@@ -250,34 +261,21 @@ quill threads                      # 列出這個目錄的 threads（-all 列出
 
 ### Plan 模式與 todo
 
-互動 session（GUI、TUI、REPL）有 Agent / Plan 兩種模式：
+GUI 的 session 有 Agent / Plan 兩種模式：
 
 - **Agent**（預設）：直接動手。多步驟的工作會先探索、再用 `write_todos` 列出具體的 todo（每項有 `id`、`content`、`status`，可選 `notes`；狀態有 `pending`、`in_progress`、`completed`、`cancelled`）。之後用 `merge: true` 依 `id` 只更新變動的項目。還沒查清楚的事情以 `Investigate:` 開頭列出。
-- **Plan**：GUI 輸入框旁的 Agent/Plan 切換，或 TUI/REPL 的 `/plan`。只開放唯讀工具（`ls`、`read_file`、`glob`、`grep`、`web_search`、`fetch_url`、`resolve_library_id`、`query_docs`、`git_status`、`git_diff`），其他工具一律擋下。模型先研究，有需要用 `ask_user` 問你，最後呼叫 `create_plan`，把計畫存進 Postgres（id 為 `<thread>-<名稱>`）後停下來。計畫是查證過的結果：包含發現（附路徑）、做法、驗證方式與風險，結尾是 todo checklist，不應再有待調查的項目。
+- **Plan**：GUI 輸入框旁的 Agent/Plan 切換，或 `/plan`。只開放唯讀工具（`ls`、`read_file`、`glob`、`grep`、`web_search`、`fetch_url`、`resolve_library_id`、`query_docs`、`git_status`、`git_diff`），其他工具一律擋下。模型先研究，有需要用 `ask_user` 問你，最後呼叫 `create_plan`，把計畫存進 Postgres（id 為 `<thread>-<名稱>`）後停下來。計畫是查證過的結果：包含發現（附路徑）、做法、驗證方式與風險，結尾是 todo checklist，不應再有待調查的項目。
 - **Build**：核准計畫只是標記，要按 GUI 的 Build 或輸入 `/build` 才會切回 Agent 模式開始實作。計畫的 todo 會成為 thread 的 todo list（第一項設為 `in_progress`），模型依序完成並回報進度。同一個 thread 再進 Plan 模式修改時，會覆寫同一個計畫。
 
-`ask_user` 會中斷 run 等你回答（選項可多選，另有自由輸入的 Other），即使開了自動核准也一樣。GUI 在核准卡片上作答；TUI 用方向鍵或數字選擇、空白鍵切換多選、Esc 略過；REPL 輸入以逗號分隔的選項編號，或直接打字當作 Other。`POST /runs` 用 `mode`（`agent` / `plan`，plan 需要 `interactive`）與 `build_plan` 控制模式，`GET /threads/{id}` 會回傳 `todos` 與 `plan`。
+`ask_user` 會中斷 run 等你回答（選項可多選，另有自由輸入的 Other），即使開了自動核准也一樣。GUI 在核准卡片上作答；`-n` 在終端機輸入以逗號分隔的選項編號，或直接打字當作 Other。`POST /runs` 用 `mode`（`agent` / `plan`，plan 需要 `interactive`）與 `build_plan` 控制模式，`GET /threads/{id}` 會回傳 `todos` 與 `plan`。
 
 完整的 LLM 輸入、檔案 diff 與 subagent 訊息記在 Postgres（重複內容只存一次）；`fetch_url` 擷取網頁用的模型呼叫也會記下，GUI 在該 tool call 的詳細內容顯示，GUI 從 `GET /threads/{id}/trace` 與 `GET /threads/{id}/trace/llm/{seq}` 讀取。
 
 前端原始碼在 `code/gui/web`（React + Vite），建置結果 `code/gui/dist` 有進版控，一般 `go build` 不需要 Node。改前端後執行 `make web`（需要 Node）重新產生，`make web-test` 跑前端測試；開發時先跑 `quill -no-open`，再到 `code/gui/web` 執行 `QUILL_GUI_URL=http://127.0.0.1:<port> npm run dev`，用 Vite 的網址加上同一段 `#token=...` 開啟即可熱更新。
 
-TUI 按鍵（`quill -tui`）：
+server 的 HTTP 介面：`GET /healthz`、`GET /info`、`PUT /default-model`、`POST /runs`（回傳 NDJSON：`delta`、`message`、`interrupt`、`trace`、`done`、`error`）、`GET /threads?cwd=&limit=`、`GET /threads/{id}`、`GET /threads/{id}/trace`、`GET /threads/{id}/trace/llm/{seq}`。
 
-| 按鍵 / 指令 | 作用 |
-| --- | --- |
-| Enter | 送出 |
-| Ctrl-C | 執行中：取消這次 run；閒置：清空輸入框，輸入框已空則離開 |
-| Ctrl-D | 離開 |
-| PgUp / PgDn | 捲動對話 |
-| `/new`、`/thread`、`/threads`、`/resume <id>` | 新 thread、顯示 id、選擇 thread、切換 thread |
-| `/yolo` | 切換自動核准 |
-| `/plan`、`/build` | 切換 Plan 模式、實作最新的計畫 |
-| `/help`、`/quit` | 說明、離開 |
-
-server 的 HTTP 介面：`GET /healthz`、`POST /runs`（回傳 NDJSON：`delta`、`message`、`interrupt`、`trace`、`done`、`error`）、`GET /threads?cwd=&limit=`、`GET /threads/{id}`、`GET /threads/{id}/trace`、`GET /threads/{id}/trace/llm/{seq}`。
-
-不要在 `go run ./cmd/quill` 後面加 `--`：Go 的 `flag` 套件會把 `--` 之後的東西都當成一般參數，`-n` 就會變成 prompt 的一部分。
+不要在 `quill` 的 prompt 前面加 `--`：Go 的 `flag` 套件會把 `--` 之後的東西都當成一般參數，`-n` 就會變成 prompt 的一部分。
 
 模型設定：`-model` 優先，其次是環境變數 `QUILL_MODEL`、config.toml 的 `models.default`，預設 `openai:gpt-5.5`。格式是 `provider:model`，只以第一個 `:` 切分，所以 OpenRouter 的 slug 可以直接寫：
 
@@ -331,18 +329,20 @@ make bench-prepare                 # 固定 commit 的 task 目錄、驗證 SHA2
 make bench-gate                    # 驗收評分器：官方 patch（oracle）要全過、空 patch（nop）要全不過
 make bench-smoke MODEL=openrouter:z-ai/glm-5.3   # 跑 smoke50
 
-go run ./cmd/quillbench run -limit 3 -model openrouter:moonshotai/kimi-k3   # 先試前 3 題
-go run ./cmd/quillbench run -resume <run-id>          # 中斷後接續（已完成的題目不重跑）
-go run ./cmd/quillbench report <run-id>               # 解題率（Wilson 95% 區間）、分語言 / repo / 難度、失敗分類、過程指標
-go run ./cmd/quillbench compare <base-run> <new-run>  # 同題配對：McNemar、paired bootstrap、翻轉的題目
-go run ./cmd/quillbench history                       # 歷次執行
-go run ./cmd/quillbench refs import -harness mini-swe-agent -model glm-5.3 eval_results.json
-go run ./cmd/quillbench compare -ref mini-swe-agent/glm-5.3 <run-id>          # 和別人同題比較
+# 以下用 make build 產生的 bin/quillbench，在根目錄執行
+
+./bin/quillbench run -limit 3 -model openrouter:moonshotai/kimi-k3   # 先試前 3 題
+./bin/quillbench run -resume <run-id>          # 中斷後接續（已完成的題目不重跑）
+./bin/quillbench report <run-id>               # 解題率（Wilson 95% 區間）、分語言 / repo / 難度、失敗分類、過程指標
+./bin/quillbench compare <base-run> <new-run>  # 同題配對：McNemar、paired bootstrap、翻轉的題目
+./bin/quillbench history                       # 歷次執行
+./bin/quillbench refs import -harness mini-swe-agent -model glm-5.3 eval_results.json
+./bin/quillbench compare -ref mini-swe-agent/glm-5.3 <run-id>          # 和別人同題比較
 ```
 
 - 資料放在 `~/.quill/bench/`：task repo、metadata、每次嘗試的 log 與 agent trace（`logs/<run>/<instance>/t<trial>/`）、markdown 報表（`reports/`）。
 - 每題映像約 1 GB（`ghcr.io/scaleapi/swe-bench_pro-v2`，linux/amd64）；磁碟吃緊時加 `-prune-images`，網路慢時建議先跑 `bench-gate` 把映像拉好。
 - `-max-cost`（預設每題 3 美元）與 `-max-steps`（預設 250）是額外上限；`infra_error` 不算分，可用 `-retry-infra` 重跑。
 - `-disable baseline,diff_review,test_edits,progress,budget` 關掉個別 agent 功能做消融比較，會記在 run 的 config。`test_edits`：結束前若改過既有測試，先把這些測試檔暫時換回原版、在目前的程式碼上跑一次，原版失敗就列出來，請 agent 還原測試修正程式，或指出任務哪一條要求這個行為改變。`progress`：同一個呼叫連續兩次以同樣方式失敗、中間沒有編輯、shell 指令或新的使用者訊息時，第三次不執行。`budget`：headless run 用掉 80% 的時間或步數後，每個請求尾端提醒收斂。
-- `go run ./cmd/quillbench analyze <run-id>...` 從 trace 重算過程指標並分類失敗，報表最後有離線重播（progress monitor 會介入幾次），最後是各元件實際觸發的次數（verify gate 各種類、progress、budget、危險指令、version guard、grep regex 重試、service hint、shell 截斷），以及 HEAD baseline 的每次判定（regression、pre-existing、flaky ...，記在 attempt 的 process JSON），用來找出從不觸發的元件。
+- `./bin/quillbench analyze <run-id>...` 從 trace 重算過程指標並分類失敗，報表最後有離線重播（progress monitor 會介入幾次），最後是各元件實際觸發的次數（verify gate 各種類、progress、budget、危險指令、version guard、grep regex 重試、service hint、shell 截斷），以及 HEAD baseline 的每次判定（regression、pre-existing、flaky ...，記在 attempt 的 process JSON），用來找出從不觸發的元件。
 - 比較別的 harness 需要逐題成績：CSV（`instance_id,resolved[,steps,cost_usd]`）或 `{"instance_id": true}` JSON。

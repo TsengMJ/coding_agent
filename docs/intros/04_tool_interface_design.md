@@ -30,7 +30,7 @@
 
 `ls`、`read_file`、`write_file`、`edit_file`、`delete`、`glob`、`grep`、`execute`。
 
-- **虛擬根目錄**：quill 把專案目錄當成 `/`，檔案工具不能碰根目錄以外的路徑。[backend/filesystem.go](../../backend/filesystem.go) 先 `EvalSymlinks` 解析真實路徑再檢查前綴，所以 `..` 和 symlink 都逃不出去；刪除 symlink 只刪 link 本身。
+- **虛擬根目錄**：quill 把專案目錄當成 `/`，檔案工具不能碰根目錄以外的路徑。[backend/filesystem.go](../../apps/agent/backend/filesystem.go) 先 `EvalSymlinks` 解析真實路徑再檢查前綴，所以 `..` 和 symlink 都逃不出去；刪除 symlink 只刪 link 本身。
 - **`read_file`**：帶行號、可分頁（offset / limit，預設 2000 行），大檔讀取有上限。
 - **`edit_file`**：`old_string` 出現多次時，錯誤訊息列出前 5 處的**行號與前一行**，模型可以直接補上下文讓它唯一。
 - **工具依 backend 能力出現**：backend 不能執行指令就沒有 `execute`；不支援刪除就沒有 `delete`。
@@ -72,7 +72,7 @@ quillbench 用 `docker cp` 複製 repo，每個檔案的 stat 都變了；git �
 
 ## 3. `apply_patch` 的容錯比對
 
-模型寫的 patch 常有空白或標點的小差異。[code/codetools/patch.go](../../code/codetools/patch.go) 的 `seekSequence` 逐層放寬比對：
+模型寫的 patch 常有空白或標點的小差異。[code/codetools/patch.go](../../apps/agent/code/codetools/patch.go) 的 `seekSequence` 逐層放寬比對：
 
 1. 完全相同；
 2. 忽略行尾空白；
@@ -83,7 +83,7 @@ quillbench 用 `docker cp` 複製 repo，每個檔案的 stat 都變了；git �
 
 ## 4. Shell 輸出
 
-實作：[backend/local_shell.go](../../backend/local_shell.go)。
+實作：[backend/local_shell.go](../../apps/agent/backend/local_shell.go)。
 
 - **程序群組**：`Setpgid`，逾時或取消時 `kill(-pgid)`，背景子程序一起殺掉，不會留下殭屍 server。
 - **保留頭尾**（R2）：原本只保留前 100KB，**測試摘要通常在尾端**，正好被丟掉。改成頭尾各保留一半，中間標 `[... output omitted ...]`，並說明省略了幾個位元組、建議用 grep / head / tail 重跑。截斷在 rune 邊界。
@@ -92,7 +92,7 @@ quillbench 用 `docker cp` 複製 repo，每個檔案的 stat 都變了；git �
 
 ## 5. 大型輸出 offload（eviction）
 
-實作：[middleware/filesystem/eviction.go](../../middleware/filesystem/eviction.go)。
+實作：[middleware/filesystem/eviction.go](../../apps/agent/middleware/filesystem/eviction.go)。
 
 - tool 結果超過 **20k tokens**：完整內容寫到 `/.quill/large_tool_results/<id>`（quill 路由到 Redis，預設保留 7 天），回給模型的是路徑 + **頭 5 行、尾 5 行**的帶行號預覽 + 如何用 `read_file` 分頁讀回。
 - 使用者訊息超過 50k tokens 同樣處理，存到 `conversation_history`（Postgres），只 evict 一次，state 本身不變。

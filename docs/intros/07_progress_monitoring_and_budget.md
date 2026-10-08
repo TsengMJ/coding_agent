@@ -17,7 +17,7 @@ R1 標出 9 個「同一呼叫重複 ≥5 次」的 attempt。逐一看 trace �
 
 ## 2. ProgressMonitor
 
-實作：[code/agent/progress.go](../../code/agent/progress.go)（`WrapToolCall`）。
+實作：[code/agent/progress.go](../../apps/agent/code/agent/progress.go)（`WrapToolCall`）。
 
 ### 規則
 
@@ -65,7 +65,7 @@ var volatile = regexp.MustCompile(`0x[0-9a-fA-F]+|[0-9a-f]{12,}|\d+(?:\.\d+)?`)
 
 ## 3. 預算提醒
 
-實作：[code/agent/budget.go](../../code/agent/budget.go)（只在 headless）。
+實作：[code/agent/budget.go](../../apps/agent/code/agent/budget.go)（只在 headless）。
 
 - 用掉 **80%** 的 deadline（ctx 的 deadline）或步數上限之後，每次請求尾端加一則 request-only 訊息（`lc_source: budget`）：「完成手上的修改、跑一次相關測試、給最終回覆並說明哪些沒驗證，不要開新的調查」。
 - 放在尾端、不寫進 state：**不破壞 cache 前綴**（見 05）。
@@ -77,7 +77,7 @@ var volatile = regexp.MustCompile(`0x[0-9a-fA-F]+|[0-9a-f]{12,}|\d+(?:\.\d+)?`)
 
 | 上限 | 位置 | 預設 |
 |---|---|---|
-| 步數（recursion limit） | [agent/loop.go](../../agent/loop.go) | `runtime.DefaultRecursionLimit`，可依 run 設定 |
+| 步數（recursion limit） | [agent/loop.go](../../apps/agent/agent/loop.go) | `runtime.DefaultRecursionLimit`，可依 run 設定 |
 | quill `-timeout` | CLI | 逾時 exit 124，Ctrl-C exit 130 |
 | quillbench 每題時間 | 官方 locked protocol | 50 分鐘 |
 | quillbench 每題成本 / 步數 | `-max-cost` / `-max-steps` | $3 / 250 步 |

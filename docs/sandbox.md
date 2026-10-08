@@ -51,23 +51,22 @@ quill sandbox -print-policy -- true              # 印出實際規則
 
 `quill sandbox` 用的就是 agent 執行指令時的同一套規則，所以這裡能跑的，agent 也能跑。被擋時 macOS 通常顯示 `Operation not permitted`，Linux 顯示 `Read-only file system` 或 `Permission denied`。
 
-## 在 GUI、TUI 與腳本中使用
+## 在桌面 app 與腳本中使用
 
-沙箱設定和介面無關，GUI、TUI、`-n` 都一樣：
+沙箱設定和介面無關，桌面 app（經由 `quill serve`）與 `-n` 都一樣：
 
 ```sh
-quill                               # GUI（預設的互動介面）
-quill -tui                          # 終端介面
-quill -n '跑測試並修好'              # 單次執行
-quill -sandbox read-only            # 這次只讀，任何介面都可以加
-QUILL_SANDBOX_MODE=read-only quill  # 同上，用環境變數
+quill serve                                   # 桌面 app 用的 agent 服務
+quill -n '跑測試並修好'                        # 單次執行
+quill serve -sandbox read-only                # 這次只讀
+QUILL_SANDBOX_MODE=read-only quill -n '...'   # 同上，用環境變數
 ```
 
-常駐 server 的用法，沙箱由 server 端決定：
+用 `quill serve` 時，沙箱由 server 端決定：
 
 ```sh
 quill serve -sandbox workspace-write    # server 讀 ~/.quill/config.toml，-sandbox 覆寫 mode
-quill -server http://127.0.0.1:8123     # 客戶端的 -sandbox 不會生效
+quill -server http://127.0.0.1:8123 -n '...'   # 客戶端的 -sandbox 不會生效
 ```
 
 ### 和核准的關係

@@ -38,13 +38,13 @@ internal/notimpl               未實作 sentinel error
 
 | 介面 | 位置 | 職責 | 實作 |
 |---|---|---|---|
-| `llm.ChatModel` | [llm/model.go](../../llm/model.go) | `Generate` / `Stream` / `Info` / `Profile` | OpenAI、OpenRouter、FakeModel（測試用）、動態切換 wrapper、計費 wrapper |
-| `tool.Tool` | [tool/tool.go](../../tool/tool.go) | `Name` / `Description` / `Schema` / `Invoke`；可選 `Effector` 宣告副作用 | 檔案工具、codetools、web 工具、`task` ... |
-| `backend.Backend` | [backend/protocol.go](../../backend/protocol.go) | `Ls/Read/Write/Edit/Grep/Glob/Upload/Download`；可選 `SandboxBackend`（`Execute`）、`Deleter` | StateBackend、FilesystemBackend、LocalShellBackend、DockerExecBackend、CompositeBackend、StoreBackend、VersionGuard |
-| `runtime.Checkpointer` | [runtime/checkpoint.go](../../runtime/checkpoint.go) | `Put/Latest/List/DeleteThread` | Memory、Postgres |
-| `agent.Middleware` | [agent/middleware.go](../../agent/middleware.go) | 只要求 `Name()`，其他 hook 都是可選介面 | 約 20 個 middleware |
+| `llm.ChatModel` | [llm/model.go](../../apps/agent/llm/model.go) | `Generate` / `Stream` / `Info` / `Profile` | OpenAI、OpenRouter、FakeModel（測試用）、動態切換 wrapper、計費 wrapper |
+| `tool.Tool` | [tool/tool.go](../../apps/agent/tool/tool.go) | `Name` / `Description` / `Schema` / `Invoke`；可選 `Effector` 宣告副作用 | 檔案工具、codetools、web 工具、`task` ... |
+| `backend.Backend` | [backend/protocol.go](../../apps/agent/backend/protocol.go) | `Ls/Read/Write/Edit/Grep/Glob/Upload/Download`；可選 `SandboxBackend`（`Execute`）、`Deleter` | StateBackend、FilesystemBackend、LocalShellBackend、DockerExecBackend、CompositeBackend、StoreBackend、VersionGuard |
+| `runtime.Checkpointer` | [runtime/checkpoint.go](../../apps/agent/runtime/checkpoint.go) | `Put/Latest/List/DeleteThread` | Memory、Postgres |
+| `agent.Middleware` | [agent/middleware.go](../../apps/agent/agent/middleware.go) | 只要求 `Name()`，其他 hook 都是可選介面 | 約 20 個 middleware |
 
-**能力用「可選介面」表達**：例如 backend 有沒有 `Execute`，決定 agent 有沒有 `execute` 工具；backend 有沒有 `Delete`，決定有沒有 `delete` 工具。包一層 wrapper（例如 VersionGuard）時，要把原本的可選能力保留下來，所以 [backend/versionguard.go](../../backend/versionguard.go) 會依原 backend 有哪些能力，組出對應的匿名 struct。
+**能力用「可選介面」表達**：例如 backend 有沒有 `Execute`，決定 agent 有沒有 `execute` 工具；backend 有沒有 `Delete`，決定有沒有 `delete` 工具。包一層 wrapper（例如 VersionGuard）時，要把原本的可選能力保留下來，所以 [backend/versionguard.go](../../apps/agent/backend/versionguard.go) 會依原 backend 有哪些能力，組出對應的匿名 struct。
 
 ## 4. Middleware：Python `AgentMiddleware` 的 Go 版
 
@@ -62,7 +62,7 @@ Python 是一個基底類別、子類別覆寫方法；Go 改成「實作哪個�
 
 ## 5. 組裝：`CreateAgent` 與 `CreateCLIAgent`
 
-### 5.1 核心 SDK 的預設 stack（[assembly.go](../../assembly.go)）
+### 5.1 核心 SDK 的預設 stack（[assembly.go](../../apps/agent/assembly.go)）
 
 ```
 Skills → Filesystem → SubAgent → Summarization → PatchToolCalls → AsyncSubAgent
@@ -75,7 +75,7 @@ Skills → Filesystem → SubAgent → Summarization → PatchToolCalls → Asyn
 - 預設會多一個 `general-purpose` subagent，繼承主 agent 的工具。
 - private state key（例如摘要事件）會告訴 subagent middleware，不傳給 subagent。
 
-### 5.2 quill 的組裝（[code/agent/agent.go](../../code/agent/agent.go)）
+### 5.2 quill 的組裝（[code/agent/agent.go](../../apps/agent/code/agent/agent.go)）
 
 **Backend 由內到外包四層：**
 

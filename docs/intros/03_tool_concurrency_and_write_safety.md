@@ -25,7 +25,7 @@
 
 ## 1. 依副作用排程（R2）
 
-定義在 [tool/tool.go](../../tool/tool.go)：
+定義在 [tool/tool.go](../../apps/agent/tool/tool.go)：
 
 ```go
 const (
@@ -48,7 +48,7 @@ func (e Effect) Conflicts(o Effect) bool {
 設計重點：
 
 - **安全的預設值**：`EffectExec` 是 iota 的零值，**沒宣告的工具一律獨佔執行**。新增工具忘了宣告只會變慢，不會出錯。
-- **依賴而不是分批**：[agent/loop.go](../../agent/loop.go) 的 `nodeTools` 裡，第 i 個呼叫只等「前面和它衝突的呼叫」完成，不衝突的照樣平行。所以：
+- **依賴而不是分批**：[agent/loop.go](../../apps/agent/agent/loop.go) 的 `nodeTools` 裡，第 i 個呼叫只等「前面和它衝突的呼叫」完成，不衝突的照樣平行。所以：
   - `read_file ×5` → 全部平行；
   - `edit_file a.go` + `read_file b.go` → 平行；
   - `edit_file a.go` + `run_tests` → `run_tests` 是 Exec，等編輯完成才跑，**一定看得到修改**；
@@ -61,7 +61,7 @@ func (e Effect) Conflicts(o Effect) bool {
 
 ## 2. VersionGuard：先讀再改、拒絕過期寫入
 
-實作：[backend/versionguard.go](../../backend/versionguard.go)。
+實作：[backend/versionguard.go](../../apps/agent/backend/versionguard.go)。
 
 ```go
 func (g *VersionGuard) check(ctx context.Context, p string) string {
@@ -90,7 +90,7 @@ func (g *VersionGuard) check(ctx context.Context, p string) string {
 
 ## 3. `apply_patch`：全有或全無
 
-實作：[code/codetools/applypatch.go](../../code/codetools/applypatch.go)、[code/codetools/patch.go](../../code/codetools/patch.go)。
+實作：[code/codetools/applypatch.go](../../apps/agent/code/codetools/applypatch.go)、[code/codetools/patch.go](../../apps/agent/code/codetools/patch.go)。
 
 1. **先規劃、後寫入**：`PlanPatch` 讀所有相關檔案、套用所有 hunk、算出每個檔案的最終內容；任何一個 hunk 對不上就整個失敗，**一個檔案都不寫**。
 2. **寫入時記 undo**：`writePlanned` 依序寫入 / 刪除 / 搬移；中途失敗就回滾。

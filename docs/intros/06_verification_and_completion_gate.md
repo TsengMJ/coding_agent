@@ -32,7 +32,7 @@ Agent 最常見的失敗不是「不會寫」，而是「**不知道自己沒做
 
 ## 整體流程
 
-實作：[code/agent/verify.go](../../code/agent/verify.go)（`AfterAgent` hook）。
+實作：[code/agent/verify.go](../../apps/agent/code/agent/verify.go)（`AfterAgent` hook）。
 
 ```mermaid
 flowchart TD
@@ -87,7 +87,7 @@ Redis 的 `--save '' --dir /tmp` 是踩坑後加的：原本的指令在 `/app` 
 
 ## 3. HEAD baseline：這個失敗是我造成的嗎？（R5）
 
-實作：[code/agent/baseline.go](../../code/agent/baseline.go)。
+實作：[code/agent/baseline.go](../../apps/agent/code/agent/baseline.go)。
 
 **流程**：
 
@@ -115,7 +115,7 @@ Redis 的 `--save '' --dir /tmp` 是踩坑後加的：原本的指令在 `/app` 
 
 ## 4. Test edits：是不是改測試來配合實作？（R10）
 
-實作：[code/agent/testedits.go](../../code/agent/testedits.go)。
+實作：[code/agent/testedits.go](../../apps/agent/code/agent/testedits.go)。
 
 - 檢查通過之後，從 `git status` 找出**被修改的既有測試檔**（新增的不算）。
 - 只把這些測試檔 `git stash push -- <files>`，用**原版測試**跑在**目前的程式碼**上，再還原。
@@ -125,7 +125,7 @@ Redis 的 `--save '' --dir /tmp` 是踩坑後加的：原本的指令在 `/app` 
 
 ## 5. Diff review：結束前看一次工作樹（R5）
 
-實作：[code/agent/diffreview.go](../../code/agent/diffreview.go)。
+實作：[code/agent/diffreview.go](../../apps/agent/code/agent/diffreview.go)。
 
 `git status --porcelain` 之後提出三件事：
 

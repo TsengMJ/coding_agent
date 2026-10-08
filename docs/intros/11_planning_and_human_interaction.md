@@ -16,7 +16,7 @@ Cursor 與 Claude Code 都區分「執行中會修正的 todo」與「唯讀研�
 
 ## 1. `write_todos`（Stage 13a、15c）
 
-實作：[middleware/todolist/todolist.go](../../middleware/todolist/todolist.go)。
+實作：[middleware/todolist/todolist.go](../../apps/agent/middleware/todolist/todolist.go)。
 
 - 項目：`{id, content, status, notes?}`；狀態 `pending` / `in_progress` / `completed` / `cancelled`。
 - **`merge: true` 依 id 部分更新**：只送變動的項目，不用每次重送整份清單（省 token）；舊資料自動補 id。
@@ -26,7 +26,7 @@ Cursor 與 Claude Code 都區分「執行中會修正的 todo」與「唯讀研�
 
 ## 2. Plan 模式（Stage 13c–e）
 
-實作：[middleware/planmode](../../middleware/planmode/planmode.go)。
+實作：[middleware/planmode](../../apps/agent/middleware/planmode/planmode.go)。
 
 ```mermaid
 flowchart LR
@@ -52,7 +52,7 @@ flowchart LR
 
 ## 3. `ask_user`（Stage 13b）
 
-實作：[code/askuser/askuser.go](../../code/askuser/askuser.go)。
+實作：[code/askuser/askuser.go](../../apps/agent/code/askuser/askuser.go)。
 
 - 選擇題提問（可多選，另有自由輸入的 Other）。
 - 走 HITL 中斷，但只允許 respond / reject；設定 `InterruptOnConfig.Always`，**YOLO 模式下仍會中斷**——它是在問問題，不是在要權限。
@@ -63,7 +63,7 @@ flowchart LR
 
 ### 4.1 瀏覽器 GUI（Stage 9，預設）
 
-實作：[code/gui](../../code/gui/gui.go)（Go）、`code/gui/web`（React + Vite，約 5,400 行）。
+實作：[code/gui](../../apps/agent/code/gui/gui.go)（Go）、`code/gui/web`（React + Vite，約 5,400 行）。
 
 - **單一 binary**：建置結果 `code/gui/dist` 進版控並 `embed`，一般 `go build` 不需要 Node。
 - **時間軸**：保留 TUI 的收合結構（`main · LLM #n`、tool call 樹、subagent 縮排），虛擬捲動，可一路捲到 thread 開頭。

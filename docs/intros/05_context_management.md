@@ -36,7 +36,7 @@ flowchart LR
 
 ## 1. Summarization middleware
 
-實作：[middleware/summarization/summarization.go](../../middleware/summarization/summarization.go)、[cutoff.go](../../middleware/summarization/cutoff.go)。
+實作：[middleware/summarization/summarization.go](../../apps/agent/middleware/summarization/summarization.go)、[cutoff.go](../../apps/agent/middleware/summarization/cutoff.go)。
 
 ### 觸發條件依模型決定（`ComputeDefaults`）
 
@@ -81,7 +81,7 @@ provider 要求每個 tool call 後面一定有對應的 tool result。`cutoffIn
 
 ### Overflow 自動重試
 
-provider 回 `context_length_exceeded` / `maximum context length` 時，[llm/openai.go](../../llm/openai.go) 把它包成 `llm.ErrContextOverflow`。摘要 middleware 看到就**強制摘要一次再重送**；壓縮後還是太長才真的報錯。這保護了 token 估算不準的情況（估算用的是近似計數器）。
+provider 回 `context_length_exceeded` / `maximum context length` 時，[llm/openai.go](../../apps/agent/llm/openai.go) 把它包成 `llm.ErrContextOverflow`。摘要 middleware 看到就**強制摘要一次再重送**；壓縮後還是太長才真的報錯。這保護了 token 估算不準的情況（估算用的是近似計數器）。
 
 ### 舊參數截斷
 
@@ -109,7 +109,7 @@ provider 回 `context_length_exceeded` / `maximum context length` 時，[llm/ope
 
 ### 做法
 
-實作：[code/agent/context_middleware.go](../../code/agent/context_middleware.go)。
+實作：[code/agent/context_middleware.go](../../apps/agent/code/agent/context_middleware.go)。
 
 - **固定的內容**（模型身分、quillbench 的固定 project context）留在 system message。
 - **會變的內容**（git status）改成只存在於該次請求的**尾端 system 訊息**，帶 `lc_source: live_context` metadata：

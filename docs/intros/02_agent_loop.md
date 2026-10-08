@@ -17,7 +17,7 @@ Coding agent 的核心要長什麼樣？要不要做 Planner / Executor / Review
 
 ## 5 個節點的圖
 
-實作：[agent/loop.go](../../agent/loop.go)，建在 langgraphgo 的 `MessageGraph` 上（這一版的 `StateGraph.Compile` 不支援 `InterruptBefore`，所以選 MessageGraph）。
+實作：[agent/loop.go](../../apps/agent/agent/loop.go)，建在 langgraphgo 的 `MessageGraph` 上（這一版的 `StateGraph.Compile` 不支援 `InterruptBefore`，所以選 MessageGraph）。
 
 ```mermaid
 flowchart TD
@@ -90,7 +90,7 @@ func Interrupt(ctx context.Context, value any) (any, error) {
 
 ## Structured output（ToolStrategy）
 
-實作：[agent/structured.go](../../agent/structured.go)。
+實作：[agent/structured.go](../../apps/agent/agent/structured.go)。
 
 - 有 `ResponseFormat` 時，在**最內層**模型呼叫加一個合成工具（名稱取 schema 的 `title`），所以 middleware 過濾工具時不會把它拿掉。
 - 模型呼叫它且通過 schema 驗證（type / enum / required / additionalProperties / items）→ 寫進 `structured_response`，直接跳到 `after_agent` 結束。

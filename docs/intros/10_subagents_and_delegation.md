@@ -21,7 +21,7 @@
 
 ## 1. `task` 工具的基本行為
 
-實作：[middleware/subagents/subagents.go](../../middleware/subagents/subagents.go)。
+實作：[middleware/subagents/subagents.go](../../apps/agent/middleware/subagents/subagents.go)。
 
 - 參數：`subagent_type`、`description`（要完整交代任務，subagent 看不到主 agent 的對話）。
 - **context 隔離**：subagent 從一則只有任務描述的 user 訊息開始，只回傳最後的報告給主 agent，中間的讀檔、搜尋都不進主 context。
@@ -35,12 +35,12 @@
 
 | 類型 | 工具 | 用途與限制 | 實作 |
 |---|---|---|---|
-| `general-purpose` | 主 agent 的全部工具 | 預設存在；**不繼承 HITL**，權限的 interrupt 改成 deny（subagent 不能暫停父 run 等核准） | [assembly.go](../../assembly.go) `generalPurpose` |
-| `explorer` | `ls`、`read_file`、`glob`、`grep`、`git_status`、`git_diff` | 唯讀；描述寫明「單一定義或用法，直接 grep / read_file 比較快」 | [code/agent/explorer.go](../../code/agent/explorer.go) |
-| `web-researcher` | web 工具 + 唯讀檔案工具 | 有 Brave / Context7 key 才存在；每次最多 4 次搜尋、8 頁；回報結論、引用 URL、適用版本、來源衝突；啟動它的 `task` 需要核准 | [code/agent/researcher.go](../../code/agent/researcher.go) |
-| 自訂（AGENTS.md） | 繼承主 agent 工具 | `~/.quill/<agent>/agents/<name>/AGENTS.md` 或 `<project>/.quill/agents/<name>/AGENTS.md`（專案優先），frontmatter 可指定 model；格式錯直接報錯並附路徑；不能蓋掉內建的 | [code/subagents](../../code/subagents/subagents.go) |
-| fork | 同 general-purpose | **繼承完整對話**；必須明確選擇 | [middleware/subagents/fork.go](../../middleware/subagents/fork.go) |
-| async remote | 5 個工具操作遠端 LangGraph server | `start/check/update/cancel_async_task`、`list_async_tasks`；由遠端控制生命週期 | [middleware/asyncsubagents](../../middleware/asyncsubagents/asyncsubagents.go) |
+| `general-purpose` | 主 agent 的全部工具 | 預設存在；**不繼承 HITL**，權限的 interrupt 改成 deny（subagent 不能暫停父 run 等核准） | [assembly.go](../../apps/agent/assembly.go) `generalPurpose` |
+| `explorer` | `ls`、`read_file`、`glob`、`grep`、`git_status`、`git_diff` | 唯讀；描述寫明「單一定義或用法，直接 grep / read_file 比較快」 | [code/agent/explorer.go](../../apps/agent/code/agent/explorer.go) |
+| `web-researcher` | web 工具 + 唯讀檔案工具 | 有 Brave / Context7 key 才存在；每次最多 4 次搜尋、8 頁；回報結論、引用 URL、適用版本、來源衝突；啟動它的 `task` 需要核准 | [code/agent/researcher.go](../../apps/agent/code/agent/researcher.go) |
+| 自訂（AGENTS.md） | 繼承主 agent 工具 | `~/.quill/<agent>/agents/<name>/AGENTS.md` 或 `<project>/.quill/agents/<name>/AGENTS.md`（專案優先），frontmatter 可指定 model；格式錯直接報錯並附路徑；不能蓋掉內建的 | [code/subagents](../../apps/agent/code/subagents/subagents.go) |
+| fork | 同 general-purpose | **繼承完整對話**；必須明確選擇 | [middleware/subagents/fork.go](../../apps/agent/middleware/subagents/fork.go) |
+| async remote | 5 個工具操作遠端 LangGraph server | `start/check/update/cancel_async_task`、`list_async_tasks`；由遠端控制生命週期 | [middleware/asyncsubagents](../../apps/agent/middleware/asyncsubagents/asyncsubagents.go) |
 
 ### 唯讀限制怎麼實作
 
@@ -54,7 +54,7 @@ explorer 與 web-researcher 用 `researchLimits`：工具清單只給唯讀工�
 
 ## 3. 背景執行（Stage 14e）
 
-實作：[middleware/subagents/background.go](../../middleware/subagents/background.go)。
+實作：[middleware/subagents/background.go](../../apps/agent/middleware/subagents/background.go)。
 
 ```mermaid
 sequenceDiagram
@@ -91,7 +91,7 @@ sequenceDiagram
 
 ### 做法
 
-- [code/agent/delegation.go](../../code/agent/delegation.go) 產生 `## Subagents` 段落：何時委派、何時自己做、要完整交代任務、**委派後不要自己重做**（手動測試看到主 agent 委派 web-researcher 後又自己重複搜尋）。
+- [code/agent/delegation.go](../../apps/agent/code/agent/delegation.go) 產生 `## Subagents` 段落：何時委派、何時自己做、要完整交代任務、**委派後不要自己重做**（手動測試看到主 agent 委派 web-researcher 後又自己重複搜尋）。
 - 新增唯讀的 `explorer`。
 - Plan 模式下 `task` 只接受唯讀 subagent。
 

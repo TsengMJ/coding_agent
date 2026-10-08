@@ -21,7 +21,7 @@ Coding agent 的 run 動輒數十分鐘，中間會遇到：
 
 ## 1. Checkpoint
 
-實作：[agent/loop.go](../../agent/loop.go)（`stepCallback`、`save`）、[runtime/checkpoint.go](../../runtime/checkpoint.go)、[runtime/postgres.go](../../runtime/postgres.go)。
+實作：[agent/loop.go](../../apps/agent/agent/loop.go)（`stepCallback`、`save`）、[runtime/checkpoint.go](../../apps/agent/runtime/checkpoint.go)、[runtime/postgres.go](../../apps/agent/runtime/postgres.go)。
 
 - **每個節點結束就存一次**（langgraphgo 的 `OnGraphStep` callback），存的是整個 state（訊息 + 各 middleware 的 state key）與步數。
 - 中斷時另外存 `PendingInterrupts`（待核准的 tool call）與 `ResumeFrom`（要從哪個節點繼續）。
@@ -37,7 +37,7 @@ checkpoint 在節點**結束後**才存。工具執行到一半被取消或 cras
 
 ### 做法
 
-[middleware/patchtoolcalls/patchtoolcalls.go](../../middleware/patchtoolcalls/patchtoolcalls.go) 在每次 run 開始（`BeforeAgent`）掃描歷史，替沒有結果的 tool call 補上一則 error tool message。
+[middleware/patchtoolcalls/patchtoolcalls.go](../../apps/agent/middleware/patchtoolcalls/patchtoolcalls.go) 在每次 run 開始（`BeforeAgent`）掃描歷史，替沒有結果的 tool call 補上一則 error tool message。
 
 R3 的關鍵修改是**訊息內容**。原本寫「可能被取消」，模型容易照樣重跑。現在：
 
@@ -55,7 +55,7 @@ R3 的關鍵修改是**訊息內容**。原本寫「可能被取消」，模型�
 
 ### 做法
 
-實作：[code/server/runs.go](../../code/server/runs.go)。
+實作：[code/server/runs.go](../../apps/agent/code/server/runs.go)。
 
 - **server 持有 run**：`liveRuns.start` 用獨立的 context 跑 run，事件存在 `liveRun.events`。
 - `GET /threads/{id}/events`：**從頭重播**再持續跟隨；閒置時回 204。
@@ -77,7 +77,7 @@ GUI 端配合：
 
 ## 4. 並行控制：thread 鎖與目錄綁定
 
-實作：[code/server/service.go](../../code/server/service.go)。
+實作：[code/server/service.go](../../apps/agent/code/server/service.go)。
 
 - **同一個 thread 同時只能有一個 run**，第二個回 `ErrThreadBusy`（HTTP 409）。
 - **thread 綁定建立它的目錄**：換目錄使用同一個 thread 會被拒絕（避免 agent 對錯的 repo 動手）；`cwd` 必須是存在的絕對路徑。
@@ -93,7 +93,7 @@ GUI 端配合：
 
 ## 6. LLM 呼叫的可靠性
 
-實作：[llm/transport.go](../../llm/transport.go)。
+實作：[llm/transport.go](../../apps/agent/llm/transport.go)。
 
 | 情況 | 處理 |
 |---|---|

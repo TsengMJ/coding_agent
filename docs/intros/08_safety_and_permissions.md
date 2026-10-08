@@ -44,11 +44,11 @@ flowchart TD
 
 ## 1. 路徑沙箱（virtual mode）
 
-[backend/filesystem.go](../../backend/filesystem.go)：專案根目錄當作 `/`；先 `EvalSymlinks` 解析真實路徑，確認仍在根目錄內才操作。`..` 與 symlink 逃逸都有測試；刪除 symlink 只刪 link。
+[backend/filesystem.go](../../apps/agent/backend/filesystem.go)：專案根目錄當作 `/`；先 `EvalSymlinks` 解析真實路徑，確認仍在根目錄內才操作。`..` 與 symlink 逃逸都有測試；刪除 symlink 只刪 link。
 
 ## 2. 人工核准（HITL）
 
-實作：[middleware/hitl/hitl.go](../../middleware/hitl/hitl.go)、[code/agent/agent.go](../../code/agent/agent.go) 的 `DefaultInterruptOn`。
+實作：[middleware/hitl/hitl.go](../../apps/agent/middleware/hitl/hitl.go)、[code/agent/agent.go](../../apps/agent/code/agent/agent.go) 的 `DefaultInterruptOn`。
 
 | 需要核准 | 不需要 |
 |---|---|
@@ -62,7 +62,7 @@ flowchart TD
 
 ## 3. Shell allow-list
 
-實作：[code/agent/shell_allow.go](../../code/agent/shell_allow.go)。
+實作：[code/agent/shell_allow.go](../../apps/agent/code/agent/shell_allow.go)。
 
 - 指令以 `|`、`;`、`&&`、`||` 切段，**每段的第一個字**都在清單內才免核准。
 - 含 `$(`、反引號、`$VAR`、`${`、重導向（`>`、`<`、`>>`、`<<`）、背景 `&`、換行、tab 的指令**一律要核准**。所以 `ls | grep x` 免核准，`ls "$(rm -rf /)"` 與 `ls &` 仍會問。
@@ -71,7 +71,7 @@ flowchart TD
 
 ## 4. 破壞性指令（R9）
 
-實作：[code/agent/shell_risk.go](../../code/agent/shell_risk.go)。用固定的 regex 規則判定，**不靠 LLM**：
+實作：[code/agent/shell_risk.go](../../apps/agent/code/agent/shell_risk.go)。用固定的 regex 規則判定，**不靠 LLM**：
 
 | 規則 | 原因 |
 |---|---|
@@ -94,7 +94,7 @@ flowchart TD
 
 ## 5. 環境變數最小化（R9）
 
-實作：[backend/secrets.go](../../backend/secrets.go)、`LocalShellOptions.HideSecretEnv`。
+實作：[backend/secrets.go](../../apps/agent/backend/secrets.go)、`LocalShellOptions.HideSecretEnv`。
 
 - shell 子程序看不到名稱像 credential 的變數：`*_API_KEY`、`*_TOKEN`、`*_SECRET`、`*_PASSWORD`、`*_CONN_STRING` 等。
 - 需要時以 `QUILL_SHELL_PASS_ENV=GITHUB_TOKEN,NPM_TOKEN` 放行。
@@ -103,7 +103,7 @@ flowchart TD
 
 ## 6. Trace 遮蔽（R9）
 
-實作：[code/trace/redact.go](../../code/trace/redact.go)。
+實作：[code/trace/redact.go](../../apps/agent/code/trace/redact.go)。
 
 - Store 建立時記下 credential 變數的**值**（≥ 8 字元），寫入前連同常見 token 格式（`sk-...`、`ctx7sk-...`、`ghp_...`、`AKIA...`、`xox?-...`、`AIza...`）與 URL 中的密碼換成 `[REDACTED]`。
 - 只替換 JSON 字串內容，紀錄仍是合法 JSON；處理 JSON 跳脫字元與跳脫換行。
@@ -113,7 +113,7 @@ flowchart TD
 
 ## 7. 檔案權限規則（SDK 功能）
 
-實作：[middleware/permissions/permissions.go](../../middleware/permissions/permissions.go)。
+實作：[middleware/permissions/permissions.go](../../apps/agent/middleware/permissions/permissions.go)。
 
 - 規則：`{operations: [read|write], paths: [glob], mode: allow|deny|interrupt}`，**依序比對、第一個符合的生效、都不符合就 allow**（對齊 Python）。
 - 用 doublestar 比對：和 Python 的 wcmatch 不同，`*` 與 `**` 也會匹配 dotfile，所以 deny `/secrets/**` 會蓋到 `/secrets/.env`（更安全的預設）。
@@ -122,11 +122,11 @@ flowchart TD
 
 ## 8. Plan 模式的唯讀限制
 
-[middleware/planmode/planmode.go](../../middleware/planmode/planmode.go)：只開放 `ls`、`read_file`、`glob`、`grep`、`web_search`、`fetch_url`、Context7、`git_status`、`git_diff`。**兩層都擋**：`WrapModelCall` 把其他工具從清單中拿掉（模型看不到），`WrapToolCall` 再擋一次（就算模型硬呼叫也不會執行）。`task` 只能委派給唯讀 subagent。
+[middleware/planmode/planmode.go](../../apps/agent/middleware/planmode/planmode.go)：只開放 `ls`、`read_file`、`glob`、`grep`、`web_search`、`fetch_url`、Context7、`git_status`、`git_diff`。**兩層都擋**：`WrapModelCall` 把其他工具從清單中拿掉（模型看不到），`WrapToolCall` 再擋一次（就算模型硬呼叫也不會執行）。`task` 只能委派給唯讀 subagent。
 
 ## 9. 網路：SSRF 防護
 
-[code/tools/fetch.go](../../code/tools/fetch.go)：
+[code/tools/fetch.go](../../apps/agent/code/tools/fetch.go)：
 
 - `BlockedIP` 拒絕私有、loopback、link-local（含雲端 metadata 的 `169.254.169.254`）、multicast、保留與文件用網段；IPv4-mapped 與 6to4 位址會取出內嵌的 IPv4 再檢查；
 - **DNS 解析一次、連線釘在驗證過的 IP 上**：自訂 `DialContext` 只撥驗證過的位址，所以第二次 DNS 查詢回傳內網 IP 也沒用（防 DNS rebinding）；不走 proxy；
@@ -134,7 +134,7 @@ flowchart TD
 
 ## 10. 本機 GUI 的存取控制
 
-[code/gui/gui.go](../../code/gui/gui.go)：
+[code/gui/gui.go](../../apps/agent/code/gui/gui.go)：
 
 - 只綁 loopback，且每個請求的 `Host` 必須是 loopback（防 DNS rebinding）；
 - 每次啟動產生隨機 session token，放在網址的 `#token=`（fragment 不會送進 server log）；API 必須帶 token，用 `subtle.ConstantTimeCompare` 比對；
@@ -146,7 +146,7 @@ Stage 18e：專案目錄的 `.env` **不能設定** `LANGSMITH_*` / `LANGCHAIN_*
 
 ## 12. OS 層 Process Sandbox
 
-實作：[backend/ossandbox](../../backend/ossandbox/)（policy、Seatbelt、bubblewrap、proxy）、[code/agent/sandbox.go](../../code/agent/sandbox.go)、[code/agent/sandbox_escape.go](../../code/agent/sandbox_escape.go)。使用與設定見 [docs/sandbox.md](../sandbox.md)；本節講設計。
+實作：[backend/ossandbox](../../apps/agent/backend/ossandbox/)（policy、Seatbelt、bubblewrap、proxy）、[code/agent/sandbox.go](../../apps/agent/code/agent/sandbox.go)、[code/agent/sandbox_escape.go](../../apps/agent/code/agent/sandbox_escape.go)。使用與設定見 [docs/sandbox.md](../sandbox.md)；本節講設計。
 
 **架構**：跨平台的 `Policy`（Mode、WritableRoots、DenyWrite、DenyRead、Network、Proxy）加上 `Sandbox` interface（產生包好的 `*exec.Cmd`）；`LocalShellBackend.Execute` 透過它建立指令。只包 shell 子程序，agent 行程本身不受限（它要連 LLM、Postgres、Redis）。
 

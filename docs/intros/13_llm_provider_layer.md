@@ -12,7 +12,7 @@
 
 ## 1. 介面
 
-實作：[llm/model.go](../../llm/model.go)、[llm/message.go](../../llm/message.go)。
+實作：[llm/model.go](../../apps/agent/llm/model.go)、[llm/message.go](../../apps/agent/llm/message.go)。
 
 - `ChatModel`：`Generate(ctx, req)`、`Stream(ctx, req) iter.Seq2[Chunk, error]`、`Info()`（provider、model 名稱）、`Profile()`（`MaxInputTokens` 等）。
 - 訊息由 content blocks 組成（text、reasoning、image……），保留 cache marker 等 metadata；tool call、tool call ID、status（success / error）、usage、timing 都是訊息的欄位。
@@ -21,7 +21,7 @@
 
 ## 2. Provider 與 model spec
 
-實作：[llm/registry.go](../../llm/registry.go)、[llm/providers.go](../../llm/providers.go)、[llm/openrouter.go](../../llm/openrouter.go)。
+實作：[llm/registry.go](../../apps/agent/llm/registry.go)、[llm/providers.go](../../apps/agent/llm/providers.go)、[llm/openrouter.go](../../apps/agent/llm/openrouter.go)。
 
 - 格式 `provider:model`，**只以第一個 `:` 切分**，所以 OpenRouter 的 slug（`openrouter:openai/gpt-6-luna-pro`）可以直接寫。
 - `RegisterProvider` / `InitChatModel`：provider 註冊表，對應 Python 的 `init_chat_model`。
@@ -30,7 +30,7 @@
 
 ## 3. 串流組裝
 
-實作：[llm/openai_stream.go](../../llm/openai_stream.go)。
+實作：[llm/openai_stream.go](../../apps/agent/llm/openai_stream.go)。
 
 - SSE 經 tee 取出文字 delta 即時送給 UI；tool call **依 index 組回**（同一個 tool call 的 name 與 arguments 分散在多個 chunk）。
 - 最後一個 chunk（`Done`）帶完整訊息，迴圈用它寫進 state，確保串流與非串流的結果一致。
@@ -49,10 +49,10 @@
 
 ## 5. Profile 表：context window 與價格
 
-- [llm/profile_table.go](../../llm/profile_table.go)：模型的 `MaxInputTokens`，以前綴比對。摘要門檻（80% window）、system prompt 裡的「Your context window is N tokens」都從這裡來。
+- [llm/profile_table.go](../../apps/agent/llm/profile_table.go)：模型的 `MaxInputTokens`，以前綴比對。摘要門檻（80% window）、system prompt 裡的「Your context window is N tokens」都從這裡來。
 - **不在表內的模型**假設 200k window，退回 170k 觸發摘要。（踩過坑：曾經退回 16k，導致每幾步就摘要一次，見 05。）
 - 價格表內嵌，並可用 `~/.quill/prices.json` 覆寫；成本計算區分 input、output、**cache read**；未定價的模型明確標示。
-- Harness profile（[profiles](../../profiles/harness.go)）可依模型調整 system prompt 前後綴、工具描述、排除特定 middleware 或工具。
+- Harness profile（[profiles](../../apps/agent/profiles/harness.go)）可依模型調整 system prompt 前後綴、工具描述、排除特定 middleware 或工具。
 
 ## 6. 執行中切換模型（Stage 10d）
 
@@ -63,7 +63,7 @@
 
 ## 7. Token 計算
 
-[llm/tokens.go](../../llm/tokens.go) 的 `ApproximateTokenCounter`（對應 langchain `count_tokens_approximately`）：約 4 字元 1 token、每則訊息加 3、圖片固定 85。估算不準的部分由 overflow 重試兜底；實際用量以 provider 回傳的 usage 為準（成本與 quillbench 指標都用 usage）。
+[llm/tokens.go](../../apps/agent/llm/tokens.go) 的 `ApproximateTokenCounter`（對應 langchain `count_tokens_approximately`）：約 4 字元 1 token、每則訊息加 3、圖片固定 85。估算不準的部分由 overflow 重試兜底；實際用量以 provider 回傳的 usage 為準（成本與 quillbench 指標都用 usage）。
 
 ## 8. 推理內容（reasoning）
 
