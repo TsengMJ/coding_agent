@@ -283,7 +283,7 @@ var triggerColumns = []string{
 // repairColumns orders the repair loop trigger table.
 var repairColumns = []string{
 	TriggerRepairTool, "delta_fixed", "delta_progressed", "delta_unchanged", "delta_changed", "delta_regressed",
-	"micro_rolled_back", "micro_failed", TriggerRepro, "gate_widen", TriggerStuckReset, TriggerStuckRefusal,
+	"micro_rolled_back", "micro_failed", "micro_environment", TriggerRepro, "gate_widen", TriggerStuckReset, TriggerStuckRefusal,
 	TriggerCheckpoint, TriggerRollback, "gate_review", "review_approve", "review_request_changes", TriggerReviewError,
 }
 

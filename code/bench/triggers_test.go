@@ -77,7 +77,8 @@ func TestTriggersCountsRepairLoopNotes(t *testing.T) {
 	refused := toolMsg("c4", "[stuck] Edit not applied: you are stuck (same_failure: ...)")
 	rolledBack := toolMsg("c5", "Error: edit rolled back: it introduced a syntax error\n\n[micro] {\"status\":\"rolled_back\",\"diagnostics\":[]}")
 	compile := toolMsg("c6", "Successfully replaced\n\n[micro] {\"status\":\"failed\",\"diagnostics\":[]}")
-	repro := toolMsg("c7", "Successfully replaced\n\n[repro] You edited code before any check in this turn failed.")
+	repro := toolMsg("c7", "Successfully replaced\n\n[repro] You edited code before any check in this turn failed.\n\n"+
+		"[micro] {\"status\":\"environment\",\"env\":\"network\",\"diagnostics\":[]}")
 	widen := synthetic(codeagent.VerifyGateName, "widen", "[verify] Your checks pass, but verification only reached: package")
 	review := synthetic(codeagent.VerifyGateName, "review", "[verify] An independent review of your change found problems.")
 	msgs := []llm.Message{sys, fail, progressed, unchanged, refused, rolledBack, compile, repro, widen, review}
@@ -94,7 +95,7 @@ func TestTriggersCountsRepairLoopNotes(t *testing.T) {
 	want := Triggers{
 		"class_assertion": 3, "delta_progressed": 1, "delta_unchanged": 1,
 		TriggerCheckpoint: 1, TriggerStuckReset: 1, TriggerStuckRefusal: 1,
-		"micro_rolled_back": 1, "micro_failed": 1, TriggerRepro: 1,
+		"micro_rolled_back": 1, "micro_failed": 1, "micro_environment": 1, TriggerRepro: 1,
 		"gate_widen": 1, "gate_review": 1, TriggerRepairTool: 1, TriggerRollback: 1,
 	}
 	if !maps.Equal(got, want) {

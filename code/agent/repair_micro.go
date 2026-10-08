@@ -43,7 +43,8 @@ var checkedExts = map[string]bool{
 // new) is rolled back, all files of the call together, and returned as an
 // error, as SWE-agent's linting editor does. Errors that were already there
 // are only reported. Then it builds / lints the changed files and appends
-// their errors as a [micro] block, without rolling back.
+// their errors as a [micro] block, without rolling back; an error from
+// outside the code is reported once per turn.
 type MicroCheck struct {
 	// Files is the agent's backend: edits are read and rolled back through
 	// it, so the version guard tracks the rollback.
@@ -65,6 +66,7 @@ type fileState struct {
 
 type microNote struct {
 	Status      string         `json:"status"`
+	Env         string         `json:"env,omitempty"`
 	Note        string         `json:"note,omitempty"`
 	Diagnostics []microFinding `json:"diagnostics"`
 	Kept        []string       `json:"kept,omitempty"`
@@ -93,9 +95,72 @@ func (m MicroCheck) WrapToolCall(ctx context.Context, req *core.ToolCallRequest,
 		return m.onSyntaxError(ctx, res, before, after, errs), nil
 	}
 	if diags := m.diagnose(ctx, after); len(diags) > 0 {
-		return appendNote(res, microNote{Status: "failed", Note: "Fix these errors in the changed files before running tests.", Diagnostics: findings(diags)}), nil
+		var history []llm.Message
+		if req.State != nil {
+			history = req.State.Messages
+		}
+		if note, ok := diagnosticsNote(diags, history); ok {
+			return appendNote(res, note), nil
+		}
 	}
 	return res, nil
+}
+
+// diagnosticsNote builds the note for build / lint errors after an edit.
+// Errors in the code are always reported. Errors from outside the code
+// (a download without network, a missing go.sum entry) cannot be fixed by
+// editing, so each problem is reported once per turn.
+func diagnosticsNote(diags []codetools.Diagnostic, history []llm.Message) (microNote, bool) {
+	var code, env []codetools.Diagnostic
+	problem := ""
+	for _, d := range diags {
+		if e, ok := envOfMessage(d.Message); ok {
+			if problem == "" {
+				problem = e
+			}
+			env = append(env, d)
+		} else {
+			code = append(code, d)
+		}
+	}
+	noted := problem != "" && microEnvNoted(history, problem)
+	if len(code) > 0 {
+		note := microNote{Status: "failed", Note: "Fix these errors in the changed files before running tests.", Diagnostics: findings(code)}
+		if problem != "" {
+			note.Env = problem
+			if noted {
+				note.Note += " Other errors come from the environment (" + problem + "), not the code; see the earlier [micro] note."
+			} else {
+				note.Note += " Other errors come from the environment, not the code: " + environmentAdvice(problem)
+			}
+		}
+		return note, true
+	}
+	if noted {
+		return microNote{}, false
+	}
+	return microNote{Status: "environment", Env: problem, Note: environmentAdvice(problem), Diagnostics: findings(env)}, true
+}
+
+// microEnvNoted reports whether a [micro] note in the current turn already
+// named the environment problem env.
+func microEnvNoted(msgs []llm.Message, env string) bool {
+	marker := "\n\n" + microMarker + " "
+	for _, m := range msgs[userTurnStart(msgs):] {
+		if m.Role != llm.RoleTool {
+			continue
+		}
+		_, rest, ok := strings.Cut(m.Text(), marker)
+		if !ok {
+			continue
+		}
+		line, _, _ := strings.Cut(rest, "\n")
+		var n microNote
+		if json.Unmarshal([]byte(line), &n) == nil && n.Env == env {
+			return true
+		}
+	}
+	return false
 }
 
 // onSyntaxError rolls the call back when it introduced a syntax error, or

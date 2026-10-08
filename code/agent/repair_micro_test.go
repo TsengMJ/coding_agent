@@ -38,6 +38,12 @@ func microWorkspace(t *testing.T, dir string, files map[string]string) backend.B
 // the real filesystem tool or apply_patch.
 func runMicro(t *testing.T, m MicroCheck, b backend.Backend, name string, args map[string]any) *tool.Result {
 	t.Helper()
+	return runMicroAfter(t, m, b, nil, name, args)
+}
+
+// runMicroAfter is runMicro with history as the conversation so far.
+func runMicroAfter(t *testing.T, m MicroCheck, b backend.Backend, history []llm.Message, name string, args map[string]any) *tool.Result {
+	t.Helper()
 	var target tool.Tool
 	if name == codetools.ApplyPatchName {
 		target = codetools.NewApplyPatch(b)
@@ -59,7 +65,7 @@ func runMicro(t *testing.T, m MicroCheck, b backend.Backend, name string, args m
 		}
 		return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("Successfully replaced 1 instance(s) of the string in '" + p + "'")}}, nil
 	}
-	req := &core.ToolCallRequest{ToolCall: llm.ToolCall{ID: "e1", Name: name, Args: args}, State: &rt.State{}}
+	req := &core.ToolCallRequest{ToolCall: llm.ToolCall{ID: "e1", Name: name, Args: args}, State: &rt.State{Messages: history}}
 	res, err := m.WrapToolCall(context.Background(), req, next)
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +228,57 @@ func TestMicroCheckReportsCompileErrorsWithoutRollingBack(t *testing.T) {
 	}
 	if strings.Contains(stripNotes(text), microMarker) {
 		t.Fatal("stripNotes should drop the [micro] block")
+	}
+}
+
+func TestMicroCheckReportsAnEnvironmentErrorOncePerTurn(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go not installed")
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module m\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n")
+	b := microWorkspace(t, dir, map[string]string{"a.go": "package m\n\nimport _ \"example.com/dep\"\n\nfunc Two() int { return 3 }\n"})
+	m := MicroCheck{Files: b, Workspace: b.(backend.SandboxBackend), Timeout: time.Minute}
+
+	first := resultText(runMicro(t, m, b, "edit_file", edit("a.go", "return 3", "return 2")))
+	block := microBlock(t, first)
+	if block["status"] != "environment" || block["env"] != "dependency:example.com/dep" || !strings.Contains(block["note"].(string), "go mod tidy") {
+		t.Fatalf("block = %v", block)
+	}
+	history := []llm.Message{
+		llm.NewUserMessage("make Two return 1"),
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "e0", Name: "edit_file", Args: edit("a.go", "return 3", "return 2")}}},
+		llm.NewToolMessage("e0", "edit_file", first),
+	}
+	if second := resultText(runMicroAfter(t, m, b, history, "edit_file", edit("a.go", "return 2", "return 1"))); strings.Contains(second, microMarker) {
+		t.Fatalf("reported the same environment error twice in a turn:\n%s", second)
+	}
+	nextTurn := append(history, llm.NewAssistantMessage("done"), llm.NewUserMessage("now return 0"))
+	if third := resultText(runMicroAfter(t, m, b, nextTurn, "edit_file", edit("a.go", "return 1", "return 0"))); !strings.Contains(third, microMarker) {
+		t.Fatalf("a new turn should report it again:\n%s", third)
+	}
+}
+
+func TestDiagnosticsNoteSeparatesCodeAndEnvironmentErrors(t *testing.T) {
+	code := codetools.Diagnostic{File: "a.go", Line: 4, Severity: "error", Source: "build", Message: "undefined: missing"}
+	env := codetools.Diagnostic{File: "b.go", Line: 9, Severity: "error", Source: "build", Message: proxyUnreachable}
+
+	note, ok := diagnosticsNote([]codetools.Diagnostic{code, env}, nil)
+	if !ok || note.Status != "failed" || len(note.Diagnostics) != 1 || note.Diagnostics[0].Message != "undefined: missing" {
+		t.Fatalf("mixed = %+v", note)
+	}
+	if note.Env != "network" || !strings.Contains(note.Note, "environment") {
+		t.Fatalf("mixed note does not mention the environment error: %+v", note)
+	}
+
+	note, ok = diagnosticsNote([]codetools.Diagnostic{env}, nil)
+	if !ok || note.Status != "environment" || note.Env != "network" || !strings.Contains(note.Note, "Editing the code will not fix") {
+		t.Fatalf("environment only = %+v", note)
+	}
+
+	note, ok = diagnosticsNote([]codetools.Diagnostic{code}, nil)
+	if !ok || note.Status != "failed" || note.Env != "" || note.Note != "Fix these errors in the changed files before running tests." {
+		t.Fatalf("code only = %+v", note)
 	}
 }
 
