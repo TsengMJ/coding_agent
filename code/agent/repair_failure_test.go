@@ -97,6 +97,12 @@ func TestClassifyFailure(t *testing.T) {
 		{"execute timeout", shellCheck("go test ./..."), "Error: Command timed out after 2m0s. For long-running commands, re-run using the timeout parameter.\n\n[Command failed with exit code 124]", FailureTimeout, nil, ""},
 		{"execute build syntax", shellCheck("go build ./..."), "./a.go:3:1: syntax error: unexpected }\n\n[Command failed with exit code 1]", FailureSyntax, nil, ""},
 		{"execute sandbox", shellCheck("go test ./..."), "open /root/x: operation not permitted\n\n[Command failed with exit code 1]\n[sandbox] This failure may come from the sandbox (mode workspace-write): ...", FailureSandbox, nil, ""},
+		{"run_tests build blocked by the network", runTestsCall(), reportJSON(t, goBuildReport(proxyUnreachable)), FailureEnvironment, nil, "network"},
+		{"run_tests missing go.sum entry", runTestsCall(), reportJSON(t, goBuildReport(missingGoSum)), FailureEnvironment, nil, "dependency:github.com/vulsio/goval-dictionary/log"},
+		{"run_tests network and code errors", runTestsCall(), reportJSON(t, goBuildReport(proxyUnreachable, "undefined: ErrUserNotFound")), FailureCompile, nil, ""},
+		{"run_tests own package not created yet", runTestsCall(), reportJSON(t, goBuildReport("no required module provides package go.flipt.io/flipt/internal/oci/ecr; to add it:\n\tgo get go.flipt.io/flipt/internal/oci/ecr")), FailureCompile, nil, ""},
+		{"diagnostics blocked by the network", llm.ToolCall{Name: codetools.DiagnosticsName}, diagJSON(t, codetools.Diagnostic{File: "a.go", Line: 9, Severity: "error", Source: "build", Message: proxyUnreachable}), FailureEnvironment, nil, "network"},
+		{"execute unreachable network", shellCheck("go test ./..."), "go: github.com/x/y@v1.0.0: Get \"https://proxy.golang.org/x\": dial tcp 142.250.0.1:443: connect: network is unreachable\n\n[Command failed with exit code 1]", FailureEnvironment, nil, "network"},
 		{"execute passed", shellCheck("go test ./..."), "ok\tm\t0.1s\n\n[Command succeeded with exit code 0]", FailurePassed, nil, ""},
 		{"execute no tests", shellCheck("npx mocha -g nothing"), "  0 passing (2ms)\n\n[Command succeeded with exit code 0]", FailureNoTests, nil, ""},
 	}
@@ -116,6 +122,48 @@ func TestClassifyFailure(t *testing.T) {
 				t.Fatalf("env = %q, want %q", sig.Env, tc.env)
 			}
 		})
+	}
+}
+
+// Messages from the RL8 traces: a module download in a container without
+// network, and a module missing from go.sum.
+const (
+	proxyUnreachable = `github.com/aws/aws-sdk-go-v2/service/ecr@v1.53.0: Get "https://proxy.golang.org/github.com/aws/aws-sdk-go-v2/service/ecr/@v/v1.53.0.zip": dial tcp: lookup proxy.golang.org on 127.0.0.11:53: dial udp 127.0.0.11:53: connect: network is unreachable`
+	missingGoSum     = "missing go.sum entry for module providing package github.com/vulsio/goval-dictionary/log (imported by github.com/future-architect/vuls/oval); to add:\n\tgo get github.com/future-architect/vuls/oval"
+)
+
+// goBuildReport is a go test report that failed to build with messages.
+func goBuildReport(messages ...string) codetools.TestReport {
+	rep := codetools.TestReport{Status: "failed", Framework: "go"}
+	for i, m := range messages {
+		rep.BuildErrors = append(rep.BuildErrors, codetools.Diagnostic{File: "internal/oci/file.go", Line: 10 + i, Severity: "error", Source: "build", Message: m})
+	}
+	return rep
+}
+
+func TestClassifyFailureKeepsOnlyCodeErrorsBesideEnvironmentOnes(t *testing.T) {
+	s, _ := ClassifyFailure(runTestsCall(), reportJSON(t, goBuildReport(proxyUnreachable, "undefined: ErrUserNotFound")))
+	if len(s.Details) != 1 || !strings.Contains(s.Details[0], "undefined: ErrUserNotFound") {
+		t.Fatalf("details = %q", s.Details)
+	}
+}
+
+func TestFailureAdviceDependsOnTheEnvironmentProblem(t *testing.T) {
+	for _, tc := range []struct {
+		env  string
+		want []string
+	}{
+		{"network", []string{"network", "Editing the code will not fix", "unverified"}},
+		{"dependency:github.com/vulsio/goval-dictionary/log", []string{"go mod tidy", "go.sum"}},
+		{"service:6379", []string{"start the service"}},
+		{"missing_tool:jest", []string{"install"}},
+	} {
+		advice := failureAdvice(Signature{Category: FailureEnvironment, Env: tc.env})
+		for _, w := range tc.want {
+			if !strings.Contains(advice, w) {
+				t.Errorf("%s: advice lacks %q: %s", tc.env, w, advice)
+			}
+		}
 	}
 }
 

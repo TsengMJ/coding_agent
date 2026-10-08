@@ -94,7 +94,8 @@ var (
 	jsModuleMissing = regexp.MustCompile(`Cannot find module '([^']+)'|Cannot find package '([^']+)'`)
 	pyModuleMissing = regexp.MustCompile(`No module named '([^']+)'`)
 	toolMissing     = regexp.MustCompile(`(?m)^(?:sh|bash|/bin/sh)?:?\s*(?:\d+: )?([\w./-]+): (?:command )?not found`)
-	networkFailure  = regexp.MustCompile(`ENOTFOUND|EAI_AGAIN|getaddrinfo|Could not resolve host|Temporary failure in name resolution|dial tcp: lookup|no such host|CONNECT tunnel failed|Tunnel connection failed`)
+	networkFailure  = regexp.MustCompile(`ENOTFOUND|EAI_AGAIN|getaddrinfo|Could not resolve host|Temporary failure in name resolution|dial tcp: lookup|no such host|network is unreachable|CONNECT tunnel failed|Tunnel connection failed`)
+	goSumMissing    = regexp.MustCompile(`missing go\.sum entry for module providing package (\S+)`)
 
 	goTestFail     = regexp.MustCompile(`(?m)^\s*--- FAIL: (\S+)`)
 	pytestFail     = regexp.MustCompile(`(?m)^FAILED \S+::(\S+)`)
@@ -142,13 +143,7 @@ func classifyRunTests(text string) (Signature, bool) {
 		return s, true
 	}
 	if len(rep.BuildErrors) > 0 {
-		s.Category = FailureCompile
-		for _, d := range rep.BuildErrors {
-			if syntaxMessage.MatchString(d.Message) {
-				s.Category = FailureSyntax
-			}
-			s.Details = append(s.Details, diagnosticDetail(d))
-		}
+		classifyBuildErrors(&s, rep.BuildErrors)
 		return s, true
 	}
 	if len(rep.Failures) > 0 {
@@ -184,22 +179,65 @@ func classifyDiagnostics(text string) (Signature, bool) {
 		s.output = normalizeOutput(text)
 		return s, true
 	}
-	s.Category = FailurePassed
+	var errs []codetools.Diagnostic
+	lint := false
 	for _, d := range diags {
-		if d.Severity == "info" {
-			continue
-		}
-		s.Details = append(s.Details, diagnosticDetail(d))
-		switch {
-		case d.Severity == "error" && syntaxMessage.MatchString(d.Message):
-			s.Category = FailureSyntax
-		case d.Severity == "error" && s.Category != FailureSyntax:
-			s.Category = FailureCompile
-		case s.Category == FailurePassed:
-			s.Category = FailureLint
+		switch d.Severity {
+		case "info":
+		case "error":
+			errs = append(errs, d)
+		default:
+			lint = true
+			s.Details = append(s.Details, diagnosticDetail(d))
 		}
 	}
+	switch {
+	case len(errs) > 0:
+		warnings := s.Details
+		s.Details = nil
+		classifyBuildErrors(&s, errs)
+		if s.Category != FailureEnvironment {
+			s.Details = append(s.Details, warnings...)
+		}
+	case lint:
+		s.Category = FailureLint
+	default:
+		s.Category = FailurePassed
+	}
 	return s, true
+}
+
+// classifyBuildErrors sets the category and details of s from build
+// errors: environment when every error is a problem outside the code
+// (a download that could not reach the network, a missing go.sum entry),
+// otherwise compile or syntax with only the errors in the code.
+func classifyBuildErrors(s *Signature, errs []codetools.Diagnostic) {
+	var code, env []codetools.Diagnostic
+	for _, d := range errs {
+		if e, ok := envOfMessage(d.Message); ok {
+			if s.Env == "" {
+				s.Env = e
+			}
+			env = append(env, d)
+		} else {
+			code = append(code, d)
+		}
+	}
+	if len(code) == 0 {
+		s.Category = FailureEnvironment
+		for _, d := range env {
+			s.Details = append(s.Details, diagnosticDetail(d))
+		}
+		return
+	}
+	s.Env = ""
+	s.Category = FailureCompile
+	for _, d := range code {
+		if syntaxMessage.MatchString(d.Message) {
+			s.Category = FailureSyntax
+		}
+		s.Details = append(s.Details, diagnosticDetail(d))
+	}
 }
 
 func classifyExecute(call llm.ToolCall, text string, sandboxed bool) (Signature, bool) {
@@ -261,28 +299,41 @@ func environmentOf(out string, fallback FailureCategory) (FailureCategory, strin
 	if timedOut.MatchString(out) {
 		return FailureTimeout, ""
 	}
-	if refusedMark.MatchString(out) {
-		if m := refusedPort.FindStringSubmatch(out); m != nil {
-			return FailureEnvironment, "service:" + m[1]
-		}
-		return FailureEnvironment, "service"
-	}
-	if m := jsModuleMissing.FindStringSubmatch(out); m != nil {
-		name := m[1] + m[2]
-		if !strings.HasPrefix(name, ".") && !strings.HasPrefix(name, "/") {
-			return FailureEnvironment, "module_not_found:" + name
-		}
-	}
-	if m := pyModuleMissing.FindStringSubmatch(out); m != nil {
-		return FailureEnvironment, "module_not_found:" + m[1]
-	}
-	if m := toolMissing.FindStringSubmatch(out); m != nil {
-		return FailureEnvironment, "missing_tool:" + m[1]
-	}
-	if networkFailure.MatchString(out) {
-		return FailureEnvironment, "network"
+	if env, ok := envOfMessage(out); ok {
+		return FailureEnvironment, env
 	}
 	return fallback, ""
+}
+
+// envOfMessage tells what is missing outside the code when msg shows it:
+// "service:<port>", "module_not_found:<name>", "missing_tool:<name>",
+// "dependency:<package>" or "network".
+func envOfMessage(msg string) (string, bool) {
+	if refusedMark.MatchString(msg) {
+		if m := refusedPort.FindStringSubmatch(msg); m != nil {
+			return "service:" + m[1], true
+		}
+		return "service", true
+	}
+	if m := jsModuleMissing.FindStringSubmatch(msg); m != nil {
+		name := m[1] + m[2]
+		if !strings.HasPrefix(name, ".") && !strings.HasPrefix(name, "/") {
+			return "module_not_found:" + name, true
+		}
+	}
+	if m := pyModuleMissing.FindStringSubmatch(msg); m != nil {
+		return "module_not_found:" + m[1], true
+	}
+	if m := toolMissing.FindStringSubmatch(msg); m != nil {
+		return "missing_tool:" + m[1], true
+	}
+	if networkFailure.MatchString(msg) {
+		return "network", true
+	}
+	if m := goSumMissing.FindStringSubmatch(msg); m != nil {
+		return "dependency:" + m[1], true
+	}
+	return "", false
 }
 
 func (s *Signature) addTest(name, message string) {
@@ -544,7 +595,7 @@ func previousSignature(history []llm.Message, call llm.ToolCall, s Signature) (S
 func failureAdvice(s Signature) string {
 	switch s.Category {
 	case FailureEnvironment:
-		return "The code was not exercised (" + s.Env + "): fix the environment (start the service, install the dependency, restore the network path) and rerun. Change the environment, not the application code."
+		return environmentAdvice(s.Env)
 	case FailureToolError:
 		return "The check itself failed to run: fix the command, its arguments or the test setup, not the application code."
 	case FailureTimeout:
@@ -557,4 +608,20 @@ func failureAdvice(s Signature) string {
 		return "The code does not build, so no test ran: fix these errors first."
 	}
 	return ""
+}
+
+// environmentAdvice tells the model what it can do about an environment
+// problem: what is fixable from here first, reporting it last.
+func environmentAdvice(env string) string {
+	kind, _, _ := strings.Cut(env, ":")
+	switch kind {
+	case "network":
+		return "The code was not exercised: the check needed the network and could not reach it. Editing the code will not fix this. " +
+			"Restore access if you can (commands may run in a sandbox whose network setting blocks it; ask the user), or run checks that need no download. " +
+			"If neither is possible, say in your final answer which changes are unverified."
+	case "dependency":
+		return "The code was not exercised (" + env + "): the module setup lacks a dependency. Run `go mod tidy` (or `go get` the module) and rerun; " +
+			"that changes go.mod / go.sum, not the application code."
+	}
+	return "The code was not exercised (" + env + "): fix the environment (start the service, install the dependency or tool) and rerun. Change the environment, not the application code."
 }
