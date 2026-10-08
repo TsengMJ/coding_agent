@@ -14,6 +14,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/middleware/subagents"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/summarization"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/todolist"
+	"github.com/tsengmingchun/quill/apps/agent/middleware/unsupportedcontent"
 	"github.com/tsengmingchun/quill/apps/agent/profiles"
 	"github.com/tsengmingchun/quill/apps/agent/runtime"
 )
@@ -138,6 +139,18 @@ func TestCallerMiddlewareReplacesByNameAndOtherwiseLandsBeforeTheTail(t *testing
 	}
 	if stack[len(stack)-1] != agent.Middleware(custom) {
 		t.Fatal("caller summarization must replace the default and count the final request")
+	}
+}
+
+func TestUnsupportedContentRunsAfterSummarization(t *testing.T) {
+	stack := stackFor(t, Options{
+		Model:      llm.NewFakeModel(),
+		Backend:    tempBackend(t),
+		Middleware: []agent.Middleware{unsupportedcontent.New(), todolist.New("", "")},
+	})
+	want := []string{"FilesystemMiddleware", "SubAgentMiddleware", "PatchToolCallsMiddleware", "TodoListMiddleware", "SummarizationMiddleware", "UnsupportedContentMiddleware"}
+	if got := middlewareNames(stack); !slices.Equal(got, want) {
+		t.Fatalf("stack = %v, want %v", got, want)
 	}
 }
 

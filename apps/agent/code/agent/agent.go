@@ -28,6 +28,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/middleware/skills"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/subagents"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/todolist"
+	"github.com/tsengmingchun/quill/apps/agent/middleware/unsupportedcontent"
 	rt "github.com/tsengmingchun/quill/apps/agent/runtime"
 	"github.com/tsengmingchun/quill/apps/agent/tool"
 	"github.com/tsengmingchun/quill/apps/agent/tracing"
@@ -164,7 +165,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	if !opts.Interactive && !slices.Contains(opts.Disable, FeatureRepro) {
 		mws = append(mws, ReproReminder{})
 	}
-	mws = append(mws, summ, todolist.New("", ""), mem, &liveContext{cwd: opts.Cwd, model: opts.Model, project: opts.ProjectContext})
+	mws = append(mws, summ, unsupportedcontent.New(), todolist.New("", ""), mem, &liveContext{cwd: opts.Cwd, model: opts.Model, project: opts.ProjectContext})
 	if len(skillSources) > 0 {
 		sk, err := skills.New(skills.Options{Backend: b, Sources: skillSources})
 		if err != nil {

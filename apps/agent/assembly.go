@@ -473,10 +473,14 @@ func mergeMiddleware(stack, extra []agent.Middleware, coreLen int) ([]agent.Midd
 // placeSummarizationLast lets it measure the fully assembled model request,
 // including memory, skills, caller prompts and filtered tools.
 func placeSummarizationLast(stack []agent.Middleware) []agent.Middleware {
-	for i, mw := range stack {
-		if mw.Name() == "SummarizationMiddleware" {
-			out := slices.Delete(slices.Clone(stack), i, i+1)
-			return append(out, mw)
+	// UnsupportedContent goes after summarization, whose cutoff indexes
+	// the history before messages are inserted.
+	for _, name := range []string{"SummarizationMiddleware", "UnsupportedContentMiddleware"} {
+		for i, mw := range stack {
+			if mw.Name() == name {
+				stack = append(slices.Delete(slices.Clone(stack), i, i+1), mw)
+				break
+			}
 		}
 	}
 	return stack

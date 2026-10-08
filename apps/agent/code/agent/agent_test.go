@@ -12,6 +12,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/llm"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/planmode"
 	rt "github.com/tsengmingchun/quill/apps/agent/runtime"
+	"github.com/tsengmingchun/quill/apps/agent/tool"
 )
 
 func TestSystemPromptHeadless(t *testing.T) {
@@ -97,6 +98,29 @@ func TestCLIAgentVerifyGateOnlyWhenHeadless(t *testing.T) {
 				t.Errorf("model calls = %d, want %d", got, tc.wantCalls)
 			}
 		})
+	}
+}
+
+func TestCLIAgentSendsToolScreenshotsAsUserImages(t *testing.T) {
+	shot := &tool.Func{ToolName: "mcp__playwright__browser_take_screenshot", ToolSchema: tool.Schema{"type": "object"},
+		Fn: func(context.Context, *tool.Runtime, map[string]any) (*tool.Result, error) {
+			return &tool.Result{Content: []llm.ContentBlock{llm.TextBlock("Took a screenshot"), {Type: llm.BlockImage, MimeType: "image/png", Base64: "iVBORw0K"}}}, nil
+		}}
+	model := llm.NewFakeModel(
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "s", Name: shot.ToolName, Args: map[string]any{}}}},
+		llm.NewAssistantMessage("looks right"),
+	)
+	a, err := CreateCLIAgent(context.Background(), Options{Model: model, Cwd: t.TempDir(), AutoApprove: true, NoWebTools: true, NoVerifyGate: true, MCPTools: []tool.Tool{shot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(context.Background(), core.Input{Messages: []llm.Message{llm.NewUserMessage("check the page")}}, rt.RunConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	msgs := model.Requests()[1].Messages
+	last := msgs[len(msgs)-1]
+	if last.Role != llm.RoleUser || !slices.ContainsFunc(last.Content, func(c llm.ContentBlock) bool { return c.Type == llm.BlockImage }) {
+		t.Fatalf("last message = %+v, want the screenshot in a user message", last)
 	}
 }
 
