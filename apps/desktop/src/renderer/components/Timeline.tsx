@@ -123,7 +123,7 @@ function TurnHeader({ turn, onReuseUserMessage, reuseDisabled }: { turn: Turn; o
             )}
           </div>
           {userText && <div className="user-msg-text"><Highlighted text={userText} query={query} /></div>}
-          <UserImages message={turn.user} />
+          <Thumbnails message={turn.user} className="user-msg-images" alt="attachment" />
         </div>
       )}
       {turn.notes.map((m, i) => (
@@ -135,17 +135,19 @@ function TurnHeader({ turn, onReuseUserMessage, reuseDisabled }: { turn: Turn; o
   );
 }
 
-function UserImages({ message }: { message: Message }) {
+// Thumbnails shows the images of a user message or a tool result, such as
+// browser screenshots; clicking one enlarges it.
+function Thumbnails({ message, className, alt }: { message?: Message; className: string; alt: string }) {
   const [enlarged, setEnlarged] = useState(-1);
   const images = imagesOf(message);
   if (images.length === 0) return null;
   return (
-    <div className="user-msg-images">
+    <div className={className}>
       {images.map((b, i) => (
         <img
           key={i}
           src={imageSrc(b)}
-          alt={`attachment ${i + 1}`}
+          alt={`${alt} ${i + 1}`}
           className={enlarged === i ? "enlarged" : ""}
           title={enlarged === i ? "Click to shrink" : "Click to enlarge"}
           onClick={() => setEnlarged(enlarged === i ? -1 : i)}
@@ -265,6 +267,7 @@ function ToolRow({ step, last }: { step: ToolStep; last: boolean }) {
           {step.durationMs !== undefined && <span>{formatDuration(step.durationMs)}</span>}
         </span>
       </div>
+      <Thumbnails message={step.result} className="tool-images" alt={`${step.call.name} image`} />
       {open && <ToolDetail step={step} />}
       {step.sub && <SubRunView run={step.sub} />}
     </div>

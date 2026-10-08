@@ -9,6 +9,7 @@ import {
   userContent,
   type ImageAttachment,
 } from "./images";
+import type { Message } from "../types";
 
 const img = (size: number): ImageAttachment => ({ name: "a.png", mimeType: "image/png", base64: "AAAA", size });
 
@@ -51,6 +52,11 @@ describe("image helpers", () => {
   it("finds image blocks and renders their source", () => {
     const blocks = imagesOf({ role: "user", content: userContent("x", [img(1)]) });
     expect(blocks.map(imageSrc)).toEqual(["data:image/png;base64,AAAA"]);
+  });
+
+  it("finds screenshots in tool results", () => {
+    const shot: Message = { role: "tool", tool_call_id: "c1", content: [{ type: "text", text: "Took a screenshot" }, { type: "image", mime_type: "image/jpeg", base64: "BBBB" }] };
+    expect(imagesOf(shot).map(imageSrc)).toEqual(["data:image/jpeg;base64,BBBB"]);
   });
 
   it("notes attached images in the pending text", () => {
