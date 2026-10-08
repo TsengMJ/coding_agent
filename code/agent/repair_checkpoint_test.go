@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	core "github.com/tsengmingchun/quill/agent"
@@ -40,7 +41,7 @@ func TestSaveCheckpointLeavesHeadAndIndexAlone(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "m.go"), mathGo+"\nfunc Mul(a, b int) int { return a * b }\n")
 	writeFile(t, filepath.Join(dir, "new.go"), "package m\n")
 	status := gitOut(t, dir, "status", "--porcelain")
-	commit, err := saveCheckpoint(context.Background(), workspace(t, dir), checkpointRef("t1", 1))
+	_, commit, _, err := saveCheckpoint(context.Background(), workspace(t, dir), "t1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,8 +62,36 @@ func TestSaveCheckpointLeavesHeadAndIndexAlone(t *testing.T) {
 func TestSaveCheckpointNeedsGit(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.go"), "package m\n")
-	if _, err := saveCheckpoint(context.Background(), workspace(t, dir), checkpointRef("t1", 1)); err == nil {
+	if _, _, _, err := saveCheckpoint(context.Background(), workspace(t, dir), "t1"); err == nil {
 		t.Fatal("saved a checkpoint outside git")
+	}
+}
+
+func TestSaveCheckpointNumbersAfterTheLatestRef(t *testing.T) {
+	dir := goRepo(t, nil)
+	sb := workspace(t, dir)
+	if n, _, saved, err := saveCheckpoint(context.Background(), sb, "t1"); err != nil || !saved || n != 1 {
+		t.Fatalf("first: n = %d, saved = %v, err = %v", n, saved, err)
+	}
+	writeFile(t, filepath.Join(dir, "m.go"), mathGo+"// changed\n")
+	n, commit, saved, err := saveCheckpoint(context.Background(), sb, "t1")
+	if err != nil || !saved || n != 2 {
+		t.Fatalf("second: n = %d, saved = %v, err = %v", n, saved, err)
+	}
+	if got := gitOut(t, dir, "rev-parse", "refs/quill/checkpoints/t1/2"); got != commit {
+		t.Fatalf("ref = %q, commit = %q", got, commit)
+	}
+}
+
+func TestSaveCheckpointSkipsAnUnchangedWorkspace(t *testing.T) {
+	sb := workspace(t, goRepo(t, nil))
+	_, first, _, err := saveCheckpoint(context.Background(), sb, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, commit, saved, err := saveCheckpoint(context.Background(), sb, "t1")
+	if err != nil || saved || n != 1 || commit != first {
+		t.Fatalf("n = %d, commit = %q (first %q), saved = %v, err = %v", n, commit, first, saved, err)
 	}
 }
 
@@ -72,7 +101,7 @@ func TestRestoreCheckpoint(t *testing.T) {
 	saved := mathGo + "\nfunc Mul(a, b int) int { return a * b }\n"
 	writeFile(t, filepath.Join(dir, "m.go"), saved)
 	writeFile(t, filepath.Join(dir, "new.go"), "package m\n")
-	commit, err := saveCheckpoint(context.Background(), sb, checkpointRef("t1", 1))
+	_, commit, _, err := saveCheckpoint(context.Background(), sb, "t1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +153,39 @@ func TestCheckpointManagerSavesAfterProgress(t *testing.T) {
 	}
 	if text := runCheckpoint(t, m, history, check, goFailure("TestA", "TestB", "TestC")); strings.Contains(text, checkpointMarker) {
 		t.Fatalf("saved after a regression:\n%s", text)
+	}
+}
+
+func TestCheckpointManagerSavesParallelChecksOnce(t *testing.T) {
+	dir := goRepo(t, nil)
+	m := CheckpointManager{Workspace: workspace(t, dir)}
+	msgs := transcript(failing("TestA", "TestB"), editN(0), failing("TestB"))
+	history, check := msgs[:len(msgs)-2], msgs[len(msgs)-3].ToolCalls[0]
+	texts := make([]string, 2)
+	var wg sync.WaitGroup
+	for i := range texts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			texts[i] = runCheckpoint(t, m, history, check, goFailure("TestB"))
+		}()
+	}
+	wg.Wait()
+	if got := strings.Count(texts[0]+texts[1], checkpointMarker); got != 1 {
+		t.Fatalf("%d checkpoint notes:\n%s\n---\n%s", got, texts[0], texts[1])
+	}
+	if refs := gitOut(t, dir, "for-each-ref", "refs/quill/checkpoints/t1"); strings.Count(refs, "\n") != 0 {
+		t.Fatalf("refs:\n%s", refs)
+	}
+}
+
+func TestCheckpointManagerSkipsAPassingRerun(t *testing.T) {
+	m := CheckpointManager{Workspace: workspace(t, goRepo(t, nil))}
+	pass := step{name: "execute", args: goTest, result: goPassed}
+	msgs := transcript(failing("TestA"), editN(0), pass, editN(1), pass)
+	history, check := msgs[:len(msgs)-2], msgs[len(msgs)-3].ToolCalls[0]
+	if text := runCheckpoint(t, m, history, check, goPassed); strings.Contains(text, checkpointMarker) {
+		t.Fatalf("saved after a pass that was already passing:\n%s", text)
 	}
 }
 

@@ -864,7 +864,7 @@
 **Goal**: 在 git 工作區自動存 checkpoint，讓 agent 能回到較好的狀態，而不是手動一個個復原修改。
 **Success Criteria**:
 - 存檔時機：每個 turn 第一次修改前；每次修改後的檢查是 `fixed` / `progressed`（只靠 rollback 回來的那次不算）。
-- 用暫時 index（複製真的 index 後 `git add -A`、`write-tree`、`commit-tree`）存到 `refs/quill/checkpoints/<thread>/<n>`，含未追蹤檔案；HEAD、index、branch 不動。
+- 用暫時 index（複製真的 index 後 `git add -A`、`write-tree`、`commit-tree`）存到 `refs/quill/checkpoints/<thread>/<n>`，含未追蹤檔案；HEAD、index、branch 不動。`<n>` 是既有 ref 的下一個號碼，只在 ref 不存在時建立；tree 和最新 checkpoint 相同時不存。
 - `rollback {checkpoint: "cpN"}`：檔案回到 checkpoint 的內容，之後新增的檔案刪掉，回報還原與刪除的檔案，提醒先重讀再改。未知 id 回錯誤並列出已存的。
 - 非 git 工作區不掛 middleware、不提供工具；`git` 失敗時不附註也不影響工具結果。
 - 非 AutoApprove 時 `rollback` 需要核准（approve / reject）。
@@ -949,6 +949,9 @@
   - flipt 第 9–14 次請求重播：原樣 42–43%；拿掉 `<repair-state>` 82–88%；改成 system 角色 86–87%；固定上游或加 `prompt_cache_key` 都沒有改善。
   - 修正：`requestTail` 讓 `<repair-state>`、`<project-context>`（互動模式的 git status）、預算提醒都改成尾端 system 訊息。
 - A 的觸發次數（2 題合計）：`repair` 工具 12、delta fixed 1 / unchanged 9、micro 編譯錯誤 21 / 還原 0、repro 1、widen 1、stuck 提醒 5 / 擋下 0、checkpoint 15 / rollback 0、reviewer 1 次（vuls 用滿 50 分鐘，reviewer 在期限到時逾時）。
-- 發現的 RL6 問題（未修）：
+- 發現的 RL6 問題（已修）：
   - 同一個回應平行跑兩個檢查時，兩者看到同樣的歷史，算出同一個 `cpN`，後者覆蓋前者的 ref（vuls 有 cp3、cp5、cp7、cp9、cp11、cp13 各兩個 commit）。
+    - 修正：編號改從既有的 ref 取下一個，`git update-ref <ref> <commit> ""` 只在 ref 不存在時建立，搶輸的重取；工作區和最新 checkpoint 的 tree 相同時不存也不附註，所以平行的檢查只存一次。
   - 檢查前後都通過（`passed → passed`，delta `unchanged`）也算進步而存檔，所以 15 個 checkpoint 大多是 `attempt N: unchanged`。
+    - 修正：checkpoint 改用 `improved`：delta 是 `fixed` / `progressed`，或沒有可比較的前一次而且通過。`madeProgress` 仍給 stuck 用（通過不算卡住）。
+  - 測試：`TestSaveCheckpointNumbersAfterTheLatestRef`、`TestSaveCheckpointSkipsAnUnchangedWorkspace`、`TestCheckpointManagerSavesParallelChecksOnce`、`TestCheckpointManagerSkipsAPassingRerun`。

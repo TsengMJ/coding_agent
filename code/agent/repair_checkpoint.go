@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,8 +41,9 @@ type checkpointNote struct {
 }
 
 // CheckpointManager saves the workspace as a git commit before the first
-// edit of a turn and after each check that an edit fixed or improved, and
-// offers the rollback tool to return to one. Checkpoints live under
+// edit of a turn and after each check that an edit fixed or improved,
+// unless it still matches the latest checkpoint, and offers the rollback
+// tool to return to one. Checkpoints live under
 // refs/quill/checkpoints/<thread>/; HEAD, the index and the branch are
 // untouched. Outside a git repository no checkpoint is saved.
 type CheckpointManager struct {
@@ -61,7 +63,7 @@ func (m CheckpointManager) WrapToolCall(ctx context.Context, req *core.ToolCallR
 	}
 	var note string
 	if mutatingTools[req.ToolCall.Name] && firstEditOfTurn(history) {
-		note = m.save(ctx, history, thread, "before the first edit of this turn")
+		note = m.save(ctx, thread, "before the first edit of this turn")
 	}
 	res, err := next(ctx, req)
 	if err != nil || res == nil {
@@ -88,7 +90,7 @@ func (m CheckpointManager) afterCheck(ctx context.Context, history []llm.Message
 		return ""
 	}
 	last := v.Attempts[len(v.Attempts)-1]
-	if last.at != len(msgs)-1 || len(last.Files) == 0 || !madeProgress(last) {
+	if last.at != len(msgs)-1 || len(last.Files) == 0 || !improved(last) {
 		return ""
 	}
 	kind := "passed"
@@ -99,17 +101,27 @@ func (m CheckpointManager) afterCheck(ctx context.Context, history []llm.Message
 	if last.Result.Category != FailurePassed {
 		reason += ", still failing: " + failureLabel(*last.Result)
 	}
-	return m.save(ctx, history, thread, reason)
+	return m.save(ctx, thread, reason)
 }
 
-// save saves a checkpoint and returns its note, or "" when it could not.
-func (m CheckpointManager) save(ctx context.Context, history []llm.Message, thread, reason string) string {
+// improved reports whether attempt a is worth a checkpoint: its check got
+// better than the last comparable run, or passes with no run to compare
+// with. A pass that was already passing is not.
+func improved(a Attempt) bool {
+	if a.Delta != nil {
+		return a.Delta.Kind == DeltaFixed || a.Delta.Kind == DeltaProgressed
+	}
+	return a.Result.Category == FailurePassed
+}
+
+// save saves a checkpoint and returns its note, or "" when it could not or
+// the workspace still matches the latest checkpoint.
+func (m CheckpointManager) save(ctx context.Context, thread, reason string) string {
 	if m.Workspace == nil {
 		return ""
 	}
-	n := len(checkpoints(history, 0)) + 1
-	commit, err := saveCheckpoint(ctx, m.Workspace, checkpointRef(thread, n))
-	if err != nil {
+	n, commit, saved, err := saveCheckpoint(ctx, m.Workspace, thread)
+	if err != nil || !saved {
 		return ""
 	}
 	return checkpointNoteText(checkpointNote{ID: fmt.Sprintf("cp%d", n), Commit: commit, Reason: reason})
@@ -171,17 +183,22 @@ func checkpoints(msgs []llm.Message, start int) []checkpointNote {
 	return out
 }
 
-func checkpointRef(thread string, n int) string {
+// checkpointRefs is the ref directory of a thread's checkpoints; checkpoint
+// n is <checkpointRefs>/<n>.
+func checkpointRefs(thread string) string {
 	thread = strings.TrimLeft(refUnsafe.ReplaceAllString(thread, "-"), ".-")
 	if thread == "" {
 		thread = "run"
 	}
-	return fmt.Sprintf("%s%s/%d", checkpointRefPrefix, thread, n)
+	return checkpointRefPrefix + thread
 }
 
 // saveCheckpoint commits the working tree, untracked files included, with
-// a temporary index and points ref at the commit.
-func saveCheckpoint(ctx context.Context, sb backend.SandboxBackend, ref string) (string, error) {
+// a temporary index and points the next free checkpoint ref of thread at
+// it. Concurrent calls get different numbers: a ref is only created if it
+// does not exist yet. When the tree matches the latest checkpoint nothing
+// is saved and that checkpoint is returned with saved false.
+func saveCheckpoint(ctx context.Context, sb backend.SandboxBackend, thread string) (n int, commit string, saved bool, err error) {
 	script := `set -e
 cd "$(git rev-parse --show-toplevel)"
 tmp=$(mktemp -d)
@@ -192,18 +209,39 @@ export GIT_INDEX_FILE="$tmp/index"
 git add -A
 tree=$(git write-tree)
 if head=$(git rev-parse -q --verify HEAD); then parent="-p $head"; else parent=""; fi
-commit=$(git -c user.name=quill -c user.email=quill@localhost commit-tree "$tree" $parent -m "quill checkpoint")
-git update-ref ` + ref + ` "$commit"
-echo "$commit"`
+refs=` + checkpointRefs(thread) + `
+commit=""
+tries=0
+while [ "$tries" -lt 20 ]; do
+  tries=$((tries + 1))
+  last=$(git for-each-ref --format='%(refname)' "$refs" | sed 's#.*/##' | grep -E '^[0-9]+$' | sort -n | tail -n 1)
+  if [ -n "$last" ] && [ "$(git rev-parse -q --verify "$refs/$last^{tree}")" = "$tree" ]; then
+    echo "same $last $(git rev-parse "$refs/$last")"
+    exit 0
+  fi
+  if [ -z "$commit" ]; then
+    commit=$(git -c user.name=quill -c user.email=quill@localhost commit-tree "$tree" $parent -m "quill checkpoint")
+  fi
+  n=$((${last:-0} + 1))
+  if git update-ref "$refs/$n" "$commit" "" 2>/dev/null; then
+    echo "new $n $commit"
+    exit 0
+  fi
+done
+echo "no free checkpoint ref under $refs" >&2
+exit 1`
 	out, err := runScript(ctx, sb, script)
 	if err != nil {
-		return "", err
+		return 0, "", false, err
 	}
-	lines := strings.Fields(out)
-	if len(lines) == 0 || !commitSHA.MatchString(lines[len(lines)-1]) {
-		return "", fmt.Errorf("checkpoint: unexpected output %q", clipLine(out, 200))
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	f := strings.Fields(lines[len(lines)-1])
+	if len(f) == 3 && (f[0] == "new" || f[0] == "same") && commitSHA.MatchString(f[2]) {
+		if n, err := strconv.Atoi(f[1]); err == nil && n > 0 {
+			return n, f[2], f[0] == "new", nil
+		}
 	}
-	return lines[len(lines)-1], nil
+	return 0, "", false, fmt.Errorf("checkpoint: unexpected output %q", clipLine(out, 200))
 }
 
 // restoreCheckpoint makes the working tree match commit: changed and
