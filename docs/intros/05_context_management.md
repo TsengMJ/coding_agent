@@ -112,10 +112,11 @@ provider 回 `context_length_exceeded` / `maximum context length` 時，[llm/ope
 實作：[code/agent/context_middleware.go](../../code/agent/context_middleware.go)。
 
 - **固定的內容**（模型身分、quillbench 的固定 project context）留在 system message。
-- **會變的內容**（git status）改成只存在於該次請求的**尾端 user 訊息**，帶 `lc_source: live_context` metadata：
+- **會變的內容**（git status）改成只存在於該次請求的**尾端 system 訊息**，帶 `lc_source: live_context` metadata：
   - 不寫進 state（下一次請求不會帶舊的那份）；
   - 不算 user turn（history 分頁、驗證閘門判斷 turn 起點時都會略過）。
-- 同樣的模式也用在預算提醒（`lc_source: budget`，見 07）。
+  - 必須是 system 角色，不能是 user（RL8 量到的）：OpenAI 把 cache 寫在「最後一則 user 訊息」的結尾，尾端 user 訊息每次換掉，下一次就沒有可沿用的前綴；它還會讓前面的工具呼叫歷史重新渲染，每次多約 17k input tokens。改成 system 後 cache 命中由約 35% 回到約 87%。
+- 同樣的模式（`requestTail`）也用在預算提醒（`lc_source: budget`，見 07）與 `<repair-state>`（`lc_source: repair_state`）。
 - **Memory 重讀也顧 cache**（R8）：`AGENTS.md` 改成每個 invocation 開始時重讀（原本一個 thread 只讀一次，agent 或使用者後來寫進去的內容整個 thread 都看不到），但**只有內容不同才更新 state**，沒改時 system message 位元組完全相同。
 - 測試 `TestSystemMessageIsStableWithinARun`：經過 `write_todos` 與 `write_file` 後，system message 仍然位元組相同，尾端看得到新檔。
 

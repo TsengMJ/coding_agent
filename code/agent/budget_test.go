@@ -27,8 +27,8 @@ func sentBudget(t *testing.T, ctx context.Context, b *budgetNotice, req *core.Mo
 		return ""
 	}
 	last := sent[len(sent)-1]
-	if last.Metadata[rt.SyntheticSourceKey] != BudgetSource {
-		t.Fatalf("tail metadata = %v", last.Metadata)
+	if last.Role != llm.RoleSystem || last.Metadata[rt.SyntheticSourceKey] != BudgetSource {
+		t.Fatalf("tail = %+v", last)
 	}
 	return last.Text()
 }

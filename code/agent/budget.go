@@ -58,10 +58,9 @@ func (b *budgetNotice) WrapModelCall(ctx context.Context, req *core.ModelRequest
 	if len(spent) == 0 {
 		return next(ctx, req)
 	}
-	tail := llm.NewUserMessage(fmt.Sprintf("[budget] This run has used %s. Wrap up now: finish the change you are making, "+
+	tail := requestTail(BudgetSource, fmt.Sprintf("[budget] This run has used %s. Wrap up now: finish the change you are making, "+
 		"run the relevant tests once, and give your final answer, saying what is unverified. Do not start new investigations.",
 		strings.Join(spent, " and ")))
-	tail.Metadata = map[string]any{rt.SyntheticSourceKey: BudgetSource}
 	updated := *req
 	updated.Messages = append(req.Messages[:len(req.Messages):len(req.Messages)], tail)
 	return next(ctx, &updated)

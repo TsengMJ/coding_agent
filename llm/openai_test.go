@@ -71,6 +71,26 @@ func TestOpenAIRequestShape(t *testing.T) {
 	}
 }
 
+func TestOpenAIKeepsTrailingSystemMessageInPlace(t *testing.T) {
+	var body map[string]any
+	m := fakeOpenAI(t, 200, textReply, &body)
+	req := ChatRequest{Messages: []Message{
+		NewSystemMessage("sys"),
+		NewUserMessage("hi"),
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "c1", Name: "ls"}}},
+		NewToolMessage("c1", "ls", "a.txt"),
+		NewSystemMessage("<repair-state>\nphase: patching\n</repair-state>"),
+	}}
+	if _, err := m.Generate(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	msgs := body["messages"].([]any)
+	last := msgs[len(msgs)-1].(map[string]any)
+	if len(msgs) != 5 || last["role"] != "system" || !strings.Contains(last["content"].(string), "<repair-state>") {
+		t.Fatalf("messages = %v", msgs)
+	}
+}
+
 func TestOpenAITextReply(t *testing.T) {
 	m := fakeOpenAI(t, 200, textReply, nil)
 	got, err := m.Generate(context.Background(), ChatRequest{Messages: []Message{NewUserMessage("hi")}})

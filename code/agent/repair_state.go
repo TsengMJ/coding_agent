@@ -442,8 +442,7 @@ func (t RepairTracker) WrapModelCall(ctx context.Context, req *core.ModelRequest
 			v.Next = fmt.Sprintf("Widen verification: %s (%s).", v.Pending[0].describe(), v.Pending[0].Why)
 		}
 	}
-	tail := llm.NewUserMessage(renderRepairState(rec, v))
-	tail.Metadata = map[string]any{rt.SyntheticSourceKey: RepairStateSource}
+	tail := requestTail(RepairStateSource, renderRepairState(rec, v))
 	updated := *req
 	updated.Messages = append(req.Messages[:len(req.Messages):len(req.Messages)], tail)
 	return next(ctx, &updated)

@@ -140,8 +140,8 @@ func TestLiveContextLeavesHistoryAndSystemMessageUnchanged(t *testing.T) {
 	if len(history) != 1 || len(seen) != 2 || !strings.Contains(seen[1].Text(), "Project files: go.mod") {
 		t.Fatalf("history = %d messages, request = %+v", len(history), seen)
 	}
-	if !rt.IsUserTurn(seen[0]) || rt.IsUserTurn(seen[1]) {
-		t.Fatal("the live context message must not count as a user turn")
+	if !rt.IsUserTurn(seen[0]) || rt.IsUserTurn(seen[1]) || seen[1].Role != llm.RoleSystem {
+		t.Fatalf("the live context message must be a system message, not a user turn: %+v", seen[1])
 	}
 }
 

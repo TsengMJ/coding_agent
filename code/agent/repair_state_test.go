@@ -227,7 +227,7 @@ func TestRepairStateIsAddedAfterTheConversation(t *testing.T) {
 		}
 	}
 	tail := sent.Messages[len(sent.Messages)-1]
-	if tail.Role != llm.RoleUser || tail.Metadata[rt.SyntheticSourceKey] != RepairStateSource || rt.IsUserTurn(tail) {
+	if tail.Role != llm.RoleSystem || tail.Metadata[rt.SyntheticSourceKey] != RepairStateSource || rt.IsUserTurn(tail) {
 		t.Fatalf("tail = %+v", tail)
 	}
 	text := tail.Text()
