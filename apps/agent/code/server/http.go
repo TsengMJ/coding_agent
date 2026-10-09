@@ -49,6 +49,7 @@ var (
 //	GET  /threads/{id}/usage -> ThreadUsage (404 when unknown)
 //	GET  /commands        -> []commands.Command (quill slash commands, hidden ones omitted)
 //	GET  /audit           ?limit= -> []audit.Event of the signed-in user, newest first
+//	GET  /readyz          -> 200 when Postgres, Redis (and Docker with workspaces) answer, else 503
 func NewHandler(srv Server) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -218,6 +219,11 @@ func NewHandler(srv Server) http.Handler {
 	})
 	if ws, ok := srv.(WorkspaceServer); ok {
 		addWorkspaceRoutes(mux, ws)
+	}
+	if rc, ok := srv.(readinessChecker); ok {
+		mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+			serveReady(w, r, rc)
+		})
 	}
 	if al, ok := srv.(auditLister); ok {
 		mux.HandleFunc("GET /audit", func(w http.ResponseWriter, r *http.Request) {

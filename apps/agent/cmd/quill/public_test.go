@@ -5,8 +5,15 @@ import (
 	"testing"
 )
 
+func TestPublicRejectsUnknownLogFormat(t *testing.T) {
+	pub := publicFlags{enabled: true, logFormat: "xml"}
+	if err := pub.check(&workspaceFlags{root: "/srv/ws"}); err == nil {
+		t.Fatal("-log-format xml was accepted")
+	}
+}
+
 func TestPublicNeedsWorkspaces(t *testing.T) {
-	pub := publicFlags{enabled: true}
+	pub := publicFlags{enabled: true, logFormat: "json"}
 	if err := pub.check(&workspaceFlags{}); err == nil {
 		t.Fatal("-public without -workspaces was accepted")
 	}

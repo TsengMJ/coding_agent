@@ -92,6 +92,8 @@ func (d *fakeDocker) Exec(_ context.Context, name, _ string, cmd ...string) (int
 	return 0, "", nil
 }
 
+func (d *fakeDocker) Ping(context.Context) error { return nil }
+
 func (d *fakeDocker) running(name string) bool {
 	_, r, _ := d.Inspect(context.Background(), name)
 	return r

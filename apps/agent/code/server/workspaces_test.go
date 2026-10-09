@@ -32,7 +32,7 @@ run)
     shift
   done
   echo id ;;
-start|stop) ;;
+start|stop|version) ;;
 rm) rm -f "$state" ;;
 exec)
   while [ $# -gt 0 ]; do case "$1" in -w|-e) shift 2 ;; -i) shift ;; *) break ;; esac; done

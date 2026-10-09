@@ -343,13 +343,32 @@ func TestServiceRejectsCwdMismatch(t *testing.T) {
 
 func TestServiceRejectsBusyThread(t *testing.T) {
 	svc, _ := newService(t)
-	if !svc.acquire("t1") {
-		t.Fatal("first acquire failed")
+	release, err := svc.acquire(context.Background(), "t1")
+	if err != nil {
+		t.Fatal(err)
 	}
-	defer svc.release("t1")
-	_, err := collect(t, svc, userReq("t1", t.TempDir(), "x"))
+	defer release()
+	_, err = collect(t, svc, userReq("t1", t.TempDir(), "x"))
 	if !errors.Is(err, ErrThreadBusy) {
 		t.Fatalf("want ErrThreadBusy, got %v", err)
+	}
+}
+
+func TestServiceRejectsAThreadLockedByAnotherProcess(t *testing.T) {
+	svc, _ := newService(t)
+	unlock, err := svc.store.Locks.TryLock(context.Background(), "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collect(t, svc, userReq("t1", t.TempDir(), "x")); !errors.Is(err, ErrThreadBusy) {
+		t.Fatalf("want ErrThreadBusy, got %v", err)
+	}
+	if _, err := svc.Compact(context.Background(), "t1"); !errors.Is(err, ErrThreadBusy) {
+		t.Fatalf("compact: want ErrThreadBusy, got %v", err)
+	}
+	unlock()
+	if _, err := collect(t, svc, userReq("t1", t.TempDir(), "x")); errors.Is(err, ErrThreadBusy) {
+		t.Fatalf("run after unlock: %v", err)
 	}
 }
 

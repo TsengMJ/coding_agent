@@ -60,15 +60,18 @@ func (s *Service) recordDecisions(ctx context.Context, req RunRequest, prev *run
 		Detail: map[string]any{"tools": tools, "decisions": types}})
 }
 
-// recordRun logs a finished run with the model spend it added to the thread.
-func (s *Service) recordRun(ctx context.Context, req RunRequest, model string, before, after []llm.Message, runErr error) {
+// recordRun logs a finished run with the model spend it added to the
+// thread, and returns that spend.
+func (s *Service) recordRun(ctx context.Context, req RunRequest, model string, before, after []llm.Message, runErr error) float64 {
 	spent := computeUsage(after, model, s.prices).TotalCostUSD - computeUsage(before, model, s.prices).TotalCostUSD
+	spent = max(spent, 0)
 	detail := map[string]any{"model": model}
 	if runErr != nil {
 		detail["error"] = runErr.Error()
 	}
 	s.record(ctx, audit.Event{Action: audit.ActionRun, ThreadID: req.ThreadID, WorkspaceID: req.WorkspaceID,
-		CostUSD: max(spent, 0), Detail: detail})
+		CostUSD: spent, Detail: detail})
+	return spent
 }
 
 // AuditLog returns the request user's recent audit events.

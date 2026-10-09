@@ -66,9 +66,22 @@ type Storage struct {
 	Durable runtime.Store
 	// Cache holds short-lived lookups (search results, docs).
 	Cache cache.Cache
+	// Locks keep a thread to one run at a time across processes.
+	Locks ThreadLocks
 
 	expiring func(ttl time.Duration) runtime.Store
+	ping     map[string]func(context.Context) error
 	close    func()
+}
+
+// Ping checks each backing service and returns the failures by name
+// ("postgres", "redis"); the memory storage has none.
+func (s *Storage) Ping(ctx context.Context) map[string]error {
+	out := map[string]error{}
+	for name, ping := range s.ping {
+		out[name] = ping(ctx)
+	}
+	return out
 }
 
 // Expiring returns a key-value store whose items expire ttl after their last
@@ -145,6 +158,10 @@ func Open(ctx context.Context, postgresConn, redisURL string) (*Storage, error) 
 	if err != nil {
 		return fail("users", err)
 	}
+	locks, err := NewPostgresLocks(ctx, postgresConn)
+	if err != nil {
+		return fail("locks", err)
+	}
 	return &Storage{
 		Kind:         KindPostgres,
 		Checkpointer: pg,
@@ -156,10 +173,18 @@ func Open(ctx context.Context, postgresConn, redisURL string) (*Storage, error) 
 		Users:        users,
 		Durable:      durable,
 		Cache:        cache.NewRedis(rdb, redisPrefix+":cache"),
+		Locks:        locks,
+		ping: map[string]func(context.Context) error{
+			"postgres": pool.Ping,
+			"redis":    func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
+		},
 		expiring: func(ttl time.Duration) runtime.Store {
 			return runtime.NewRedisStore(rdb, runtime.RedisStoreOptions{Prefix: redisPrefix, TTL: ttl})
 		},
-		close: closeAll,
+		close: func() {
+			locks.Close()
+			closeAll()
+		},
 	}, nil
 }
 
@@ -177,6 +202,7 @@ func NewMemory() *Storage {
 		Users:        auth.NewMemoryStore(),
 		Durable:      runtime.NewInMemoryStore(),
 		Cache:        cache.NewMemory(),
+		Locks:        NewMemoryLocks(),
 		expiring:     func(time.Duration) runtime.Store { return expiring },
 	}
 }

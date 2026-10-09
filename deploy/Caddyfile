@@ -1,0 +1,9 @@
+{$QUILL_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy quill:8123 {
+		# POST /runs streams NDJSON; send each event as soon as it is written.
+		flush_interval -1
+		health_uri /readyz
+		health_interval 30s
+	}
+}

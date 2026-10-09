@@ -167,7 +167,7 @@ func newService(ctx context.Context, e env, model string, ws *workspaceFlags, pu
 	}
 	cfg.Storage = st
 	if pub != nil && pub.enabled {
-		cfg.DailyLimitUSD = pub.dailyLimitUSD
+		cfg.DailyLimitUSD, cfg.Metrics = pub.dailyLimitUSD, pub.metrics
 	}
 	if ws != nil && ws.root != "" {
 		m, err := ws.manager(st.Workspaces)
@@ -333,6 +333,11 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	e, err := loadEnv()
 	if err != nil {
 		return err
+	}
+	if pub.enabled {
+		// Commands run in workspace containers, never under the host
+		// sandbox; its file guard (.git/hooks, .git/config) still applies.
+		e.settings.Sandbox.OnUnavailable = config.SandboxUnavailableWarn
 	}
 	if err := e.applySandbox(*sandboxMode); err != nil {
 		return err

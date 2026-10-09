@@ -70,6 +70,8 @@ type Config struct {
 	// DailyLimitUSD refuses new runs of a signed-in user who has spent this
 	// much today (UTC); zero is no limit.
 	DailyLimitUSD float64
+	// Metrics, when set, counts runs and their spend.
+	Metrics *Metrics
 }
 
 // ResumeTraceTag marks the run of a turn that resumes after an approval, so
@@ -105,6 +107,7 @@ type Service struct {
 	requireWS    bool
 	audit        audit.Log
 	dailyLimit   float64
+	metrics      *Metrics
 
 	mu     sync.Mutex
 	agents map[agentKey]*agentEntry
@@ -182,6 +185,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		requireWS:    cfg.RequireWorkspace,
 		audit:        cfg.Storage.Audit,
 		dailyLimit:   cfg.DailyLimitUSD,
+		metrics:      cfg.Metrics,
 		mcp:          cfg.MCP,
 		mcpTools:     mcpTools,
 		webModel:     webModel,
@@ -402,10 +406,11 @@ func (s *Service) Compact(ctx context.Context, threadID string) (*CompactResult,
 	if threadID == "" {
 		return nil, fmt.Errorf("%w: thread_id is required", ErrBadRequest)
 	}
-	if !s.acquire(threadID) {
-		return nil, ErrThreadBusy
+	release, err := s.acquire(ctx, threadID)
+	if err != nil {
+		return nil, err
 	}
-	defer s.release(threadID)
+	defer release()
 
 	info, err := s.sessions.Get(ctx, threadID)
 	if err != nil {
@@ -465,10 +470,11 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	if err := s.validate(&req); err != nil {
 		return err
 	}
-	if !s.acquire(req.ThreadID) {
-		return ErrThreadBusy
+	release, err := s.acquire(ctx, req.ThreadID)
+	if err != nil {
+		return err
 	}
-	defer s.release(req.ThreadID)
+	defer release()
 
 	info, err := s.sessions.Get(ctx, req.ThreadID)
 	if err != nil {
@@ -520,19 +526,26 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	}
 	s.recordDecisions(ctx, req, prev)
 	var runErr error
+	started := time.Now()
+	s.metrics.runStarted()
 	defer func() {
 		var before []llm.Message
 		if prev != nil {
 			before = prev.State.Messages
 		}
 		var paused *runtime.InterruptError
-		failed := runErr
-		if errors.As(runErr, &paused) {
-			failed = nil
+		failed, outcome := runErr, runOK
+		switch {
+		case errors.As(runErr, &paused):
+			failed, outcome = nil, runInterrupted
+		case runErr != nil:
+			outcome = runFailed
 		}
+		spent := 0.0
 		if latest, err := s.checkpointer.Latest(context.WithoutCancel(ctx), req.ThreadID); err == nil && latest != nil {
-			s.recordRun(ctx, req, rm.spec, before, latest.State.Messages, failed)
+			spent = s.recordRun(ctx, req, rm.spec, before, latest.State.Messages, failed)
 		}
+		s.metrics.runFinished(outcome, time.Since(started), spent)
 	}()
 
 	// sent counts the messages already sent per namespace ("" is the main agent).
@@ -688,20 +701,36 @@ func buildInput(req RunRequest, prev *runtime.Checkpoint) (agent.Input, error) {
 	return agent.Input{Resume: &runtime.Command{Resume: resume}}, nil
 }
 
-func (s *Service) acquire(threadID string) bool {
+// acquire gives the caller the thread until release is called, or fails
+// with ErrThreadBusy while a run in this or another process has it.
+func (s *Service) acquire(ctx context.Context, threadID string) (release func(), err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.busy[threadID] {
-		return false
+		s.mu.Unlock()
+		return nil, ErrThreadBusy
 	}
 	s.busy[threadID] = true
-	return true
-}
-
-func (s *Service) release(threadID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.busy, threadID)
+	s.mu.Unlock()
+	done := func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		delete(s.busy, threadID)
+	}
+	if s.store.Locks == nil {
+		return done, nil
+	}
+	unlock, err := s.store.Locks.TryLock(ctx, threadID)
+	if err != nil {
+		done()
+		if errors.Is(err, storage.ErrLocked) {
+			return nil, ErrThreadBusy
+		}
+		return nil, err
+	}
+	return func() {
+		unlock()
+		done()
+	}, nil
 }
 
 // agentFor returns the cached agent for the run's cwd, building it at most

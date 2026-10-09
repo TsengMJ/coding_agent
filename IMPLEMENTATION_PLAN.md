@@ -120,7 +120,15 @@
 **Goal**: 一份 docker-compose 在一台機器上跑起整套服務。
 **Success Criteria**: `make agent-check` 通過；migration 從空庫與舊 schema 都能升級；`/readyz` 反映依賴狀態；`/metrics` 輸出 Prometheus 格式；兩個 Service 實例搶同一 thread 只有一個成功。
 **Tests**: migration、readyz、metrics、advisory lock（需 `POSTGRES_CONN_STRING`）。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- `migrate` 套件：`migrate/sql/NNNN_name.sql` 內嵌進執行檔，`Up` 在 advisory lock 下逐一以交易套用並記在 `quill_schema_migrations`；資料庫版本比執行檔新時拒絕啟動。`0001_baseline` 收齊原本散在各 store 的 `CREATE TABLE IF NOT EXISTS`（含 langgraphgo 的 `quill_checkpoints`），全部可重入，所以舊資料庫也經由它升級。各 store 建構子不再建表，`storage.Open` 啟動時跑 migration。`bench_*` 表屬於 quillbench 開發工具，維持原樣。
+- Thread 鎖：`storage.ThreadLocks`；Postgres 版是 session advisory lock，每把鎖佔一條連線（獨立的 64 連線 pool，長時間 run 不會吃掉主 pool），行程掛掉時 Postgres 斷線即釋放。`Service.acquire` 先查行程內 map（`Running` 旗標沿用），再拿 store 鎖；另一個行程持有時回 `ErrThreadBusy`（409）。
+- `GET /readyz`：Postgres、Redis、（有 workspace 時）Docker daemon 逐項檢查，任何一項失敗回 503；回應只有項目名稱與 ok / unavailable，錯誤細節寫 log。
+- `-public` 模式：slog JSON log（`-log-format`）、每個請求一行 access log（route 用 mux pattern，不含 thread ID）、`-metrics-addr` 在獨立位址提供 Prometheus `GET /metrics`（請求數、run 數依結果、run 時間、進行中 run、模型花費）。沒有引入 Prometheus client 套件。
+- 部署：`deploy/Dockerfile`（quill + git + docker CLI）、`deploy/workspace.Dockerfile`（預設 `quill-workspace:latest`：Go、Node、Python、build-essential、ripgrep）、`deploy/compose.yaml`（quill、Postgres 17、Redis 7、Caddy 自動 TLS）、`deploy/Caddyfile`（NDJSON 串流 `flush_interval -1`）、`deploy/.env.example`。本機實測：兩個映像都能 build，compose 起來後 readyz 三項 ok、未登入 401、metrics 正常、migration 1 已記錄。
+- 實測發現並修正：容器內沒有 bubblewrap 時 `-public` 無法啟動。workspace 模式指令都在容器內，`-public` 改把 host sandbox 設為 unavailable 時只警告（`.git/hooks`、`.git/config` 的檔案保護仍生效）。
 
 ### Stage S4: 用 PR 交付成果
 **Goal**: agent 完成後開 PR，作者是使用者本人。

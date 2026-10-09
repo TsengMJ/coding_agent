@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -8,9 +9,11 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tsengmingchun/quill/apps/agent"
 	"github.com/tsengmingchun/quill/apps/agent/code/audit"
@@ -23,6 +26,10 @@ type publicFlags struct {
 	enabled       bool
 	dailyLimitUSD float64
 	origins       string
+	metricsAddr   string
+	logFormat     string
+
+	metrics *server.Metrics
 }
 
 func (p *publicFlags) register(fs *flag.FlagSet) {
@@ -31,6 +38,8 @@ func (p *publicFlags) register(fs *flag.FlagSet) {
 	limit, _ := strconv.ParseFloat(os.Getenv("QUILL_DAILY_LIMIT_USD"), 64)
 	fs.Float64Var(&p.dailyLimitUSD, "daily-limit-usd", limit, "with -public: model spend per user per UTC day before runs are refused ($QUILL_DAILY_LIMIT_USD, 0 = no limit)")
 	fs.StringVar(&p.origins, "allowed-origins", os.Getenv("QUILL_ALLOWED_ORIGINS"), "with -public: comma-separated browser origins allowed to call the API ($QUILL_ALLOWED_ORIGINS)")
+	fs.StringVar(&p.metricsAddr, "metrics-addr", os.Getenv("QUILL_METRICS_ADDR"), "with -public: serve Prometheus GET /metrics on this separate address, e.g. :9090 ($QUILL_METRICS_ADDR)")
+	fs.StringVar(&p.logFormat, "log-format", cmp.Or(os.Getenv("QUILL_LOG_FORMAT"), "json"), "with -public: request and server log format on stderr, json or text ($QUILL_LOG_FORMAT)")
 }
 
 // check validates the flags against the workspace flags and marks
@@ -41,6 +50,9 @@ func (p *publicFlags) check(ws *workspaceFlags) error {
 			return errors.New("-daily-limit-usd needs -public")
 		}
 		return nil
+	}
+	if p.logFormat != "json" && p.logFormat != "text" {
+		return fmt.Errorf("-log-format %q: want json or text", p.logFormat)
 	}
 	if ws.root == "" {
 		return errors.New("-public needs -workspaces: remote users may only run in workspace containers")
@@ -67,6 +79,13 @@ func (p *publicFlags) allowedOrigins() []string {
 
 // servePublic runs the team server until ctx is done.
 func servePublic(ctx context.Context, e env, addr, model string, ws *workspaceFlags, pub *publicFlags, stderr io.Writer) error {
+	var handler slog.Handler = slog.NewJSONHandler(stderr, nil)
+	if pub.logFormat == "text" {
+		handler = slog.NewTextHandler(stderr, nil)
+	}
+	log := slog.New(handler)
+	slog.SetDefault(log)
+	pub.metrics = server.NewMetrics(quill.Version)
 	svc, err := newService(ctx, e, model, ws, pub)
 	if err != nil {
 		return fmt.Errorf("start agent: %w", err)
@@ -90,14 +109,29 @@ func servePublic(ctx context.Context, e env, addr, model string, ws *workspaceFl
 	if err != nil {
 		return err
 	}
+	if pub.metricsAddr != "" {
+		go serveMetrics(ctx, pub.metricsAddr, pub.metrics, log)
+	}
 	context.AfterFunc(ctx, func() {
-		fmt.Fprintln(stderr, "quill serve: stopping; running turns get up to 30s to finish (Ctrl-C again to force quit)")
+		log.Info("stopping; running turns get up to 30s to finish")
 	})
-	return server.ServePublic(ctx, addr, h, func(a net.Addr) {
-		fmt.Fprintf(stderr, "quill serve -public listening on %s (model %s, storage %s, workspaces %s)\n",
-			a, svc.DefaultModel(), svc.Storage(), ws.root)
-		fmt.Fprintln(stderr, "  put it behind TLS (e.g. deploy/compose.yaml with Caddy); sessions travel as bearer tokens")
+	return server.ServePublic(ctx, addr, server.Observe(pub.metrics, log, h), func(a net.Addr) {
+		log.Info("quill serve -public listening", "addr", a.String(), "model", svc.DefaultModel(),
+			"storage", svc.Storage(), "workspaces", ws.root, "version", quill.Version)
 	})
+}
+
+// serveMetrics serves GET /metrics until ctx is done. It runs on its own
+// address so the public listener never exposes it.
+func serveMetrics(ctx context.Context, addr string, m *server.Metrics, log *slog.Logger) {
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", server.MetricsHandler(m))
+	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	context.AfterFunc(ctx, func() { _ = hs.Close() })
+	log.Info("metrics listening", "addr", addr)
+	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("metrics server", "err", err)
+	}
 }
 
 // authService reads the GitHub OAuth app and allow list from the

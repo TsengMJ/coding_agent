@@ -38,6 +38,8 @@ type Docker interface {
 	Inspect(ctx context.Context, name string) (exists, running bool, err error)
 	// Exec runs cmd in the container and returns its exit code and output.
 	Exec(ctx context.Context, name, workdir string, cmd ...string) (int, string, error)
+	// Ping fails when the Docker daemon cannot be reached.
+	Ping(ctx context.Context) error
 }
 
 // CLIDocker drives the docker command-line client.
@@ -86,6 +88,11 @@ func (d CLIDocker) Create(ctx context.Context, spec ContainerSpec) error {
 	}
 	args = append(args, "--entrypoint", "sleep", spec.Image, "infinity")
 	_, err := d.run(ctx, args...)
+	return err
+}
+
+func (d CLIDocker) Ping(ctx context.Context) error {
+	_, err := d.run(ctx, "version", "--format", "{{.Server.Version}}")
 	return err
 }
 

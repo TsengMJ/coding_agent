@@ -1,0 +1,84 @@
+# quill team server on one machine: quill, Postgres, Redis and Caddy (TLS).
+#
+#   cp deploy/.env.example deploy/.env    # fill it in
+#   docker build -f deploy/workspace.Dockerfile -t quill-workspace:latest deploy
+#   docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build
+#
+# The schema is migrated when quill starts. Upgrade by pulling the
+# repository and running the same `up -d --build`; running turns get 30s to
+# finish. Back up the postgres-data volume (pg_dump) before upgrading.
+#
+# quill has the host Docker socket, which is root on the host: run it on a
+# machine dedicated to quill.
+name: quill
+
+services:
+  quill:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: quill:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      QUILL_POSTGRES_CONN_STRING: postgres://quill:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/quill?sslmode=disable
+      QUILL_REDIS_URL: redis://redis:6379/0
+      QUILL_WORKSPACES_ROOT: ${QUILL_WORKSPACES_ROOT:?set QUILL_WORKSPACES_ROOT}
+      QUILL_METRICS_ADDR: ":9090"
+    volumes:
+      # quill starts workspace containers on the host daemon, which resolves
+      # bind mounts on the host: the workspace root must have the same path
+      # inside this container as on the host.
+      - ${QUILL_WORKSPACES_ROOT}:${QUILL_WORKSPACES_ROOT}
+      - /var/run/docker.sock:/var/run/docker.sock
+      - quill-home:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # 9090 (/metrics) stays on the compose network for a Prometheus scraper.
+    expose: ["8123", "9090"]
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: quill
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: quill
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quill -d quill"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      QUILL_DOMAIN: ${QUILL_DOMAIN:?set QUILL_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [quill]
+
+volumes:
+  quill-home:
+  postgres-data:
+  caddy-data:

@@ -160,6 +160,9 @@ func (m *Manager) Create(ctx context.Context, owner string, spec Spec, token str
 	return &ws, nil
 }
 
+// Ping fails when the Docker daemon cannot be reached.
+func (m *Manager) Ping(ctx context.Context) error { return m.cfg.Docker.Ping(ctx) }
+
 // Get returns a workspace with its in-use status.
 func (m *Manager) Get(ctx context.Context, id string) (*Workspace, error) {
 	ws, err := m.cfg.Store.Get(ctx, id)

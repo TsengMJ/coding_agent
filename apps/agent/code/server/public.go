@@ -33,9 +33,9 @@ type PublicOptions struct {
 	AllowedOrigins []string
 }
 
-// NewPublicHandler serves the API to remote users: GET /healthz and the
-// /auth/* login routes are open, every other route needs a session from
-// the GitHub device login.
+// NewPublicHandler serves the API to remote users: GET /healthz, GET
+// /readyz and the /auth/* login routes are open, every other route needs a
+// session from the GitHub device login.
 func NewPublicHandler(opts PublicOptions) (http.Handler, error) {
 	if opts.API == nil || opts.Auth == nil || opts.Info == nil {
 		return nil, errors.New("server: API, Auth and Info are required")
@@ -57,6 +57,7 @@ func NewPublicHandler(opts PublicOptions) (http.Handler, error) {
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", opts.API)
+	mux.Handle("GET /readyz", opts.API)
 	opts.Auth.Routes(mux)
 	mux.Handle("/", opts.Auth.Require(private))
 	return checkOrigin(opts.AllowedOrigins, mux), nil
