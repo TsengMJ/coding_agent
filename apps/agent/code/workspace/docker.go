@@ -38,6 +38,9 @@ type Docker interface {
 	Inspect(ctx context.Context, name string) (exists, running bool, err error)
 	// Exec runs cmd in the container and returns its exit code and output.
 	Exec(ctx context.Context, name, workdir string, cmd ...string) (int, string, error)
+	// Output runs cmd in the container and returns its stdout; a non-zero
+	// exit is an error carrying stderr.
+	Output(ctx context.Context, name, workdir string, cmd ...string) ([]byte, error)
 	// Ping fails when the Docker daemon cannot be reached.
 	Ping(ctx context.Context) error
 }
@@ -123,6 +126,22 @@ func (d CLIDocker) Inspect(ctx context.Context, name string) (bool, bool, error)
 		return false, false, err
 	}
 	return true, out == "true", nil
+}
+
+func (d CLIDocker) Output(ctx context.Context, name, workdir string, cmd ...string) ([]byte, error) {
+	args := []string{"exec"}
+	if workdir != "" {
+		args = append(args, "-w", workdir)
+	}
+	args = append(append(args, name), cmd...)
+	c := exec.CommandContext(ctx, d.bin(), args...)
+	var stdout, stderr bytes.Buffer
+	c.Stdout, c.Stderr = &stdout, &stderr
+	c.WaitDelay = 5 * time.Second
+	if err := c.Run(); err != nil {
+		return stdout.Bytes(), fmt.Errorf("%s: %w: %s", strings.Join(cmd, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
 }
 
 func (d CLIDocker) Exec(ctx context.Context, name, workdir string, cmd ...string) (int, string, error) {

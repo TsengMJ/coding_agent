@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/code/browser"
 	"github.com/tsengmingchun/quill/apps/agent/code/config"
 	"github.com/tsengmingchun/quill/apps/agent/code/cost"
+	"github.com/tsengmingchun/quill/apps/agent/code/delivery"
 	"github.com/tsengmingchun/quill/apps/agent/code/mcp"
 	"github.com/tsengmingchun/quill/apps/agent/code/process"
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
@@ -72,6 +74,11 @@ type Config struct {
 	DailyLimitUSD float64
 	// Metrics, when set, counts runs and their spend.
 	Metrics *Metrics
+	// GitHub opens pull requests; nil uses api.github.com.
+	GitHub *delivery.GitHub
+	// PushURL, when set, maps a workspace's repo_url to the URL its
+	// branches are pushed to (tests point it at a local remote).
+	PushURL func(repoURL string) string
 }
 
 // ResumeTraceTag marks the run of a turn that resumes after an approval, so
@@ -108,6 +115,8 @@ type Service struct {
 	audit        audit.Log
 	dailyLimit   float64
 	metrics      *Metrics
+	github       *delivery.GitHub
+	pushURL      func(string) string
 
 	mu     sync.Mutex
 	agents map[agentKey]*agentEntry
@@ -186,6 +195,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		audit:        cfg.Storage.Audit,
 		dailyLimit:   cfg.DailyLimitUSD,
 		metrics:      cfg.Metrics,
+		github:       cmp.Or(cfg.GitHub, &delivery.GitHub{}),
+		pushURL:      cfg.PushURL,
 		mcp:          cfg.MCP,
 		mcpTools:     mcpTools,
 		webModel:     webModel,
@@ -773,6 +784,10 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest, bt browserTools,
 			opts.Backend = s.workspaces.Backend(ws)
 			opts.WorkingDirSection = workspace.WorkingDirSection(ws)
 			opts.UserDir = ""
+			opts.ExtraTools = append(slices.Clip(opts.ExtraTools), s.createPRTool())
+			opts.ExtraInterrupts = map[string]hitl.InterruptOnConfig{
+				createPRToolName: {Always: true, Describe: describeCreatePR},
+			}
 		}
 		e.agent, e.err = codeagent.CreateCLIAgent(ctx, opts)
 	})

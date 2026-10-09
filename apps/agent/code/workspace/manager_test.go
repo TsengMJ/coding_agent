@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,6 +94,14 @@ func (d *fakeDocker) Exec(_ context.Context, name, _ string, cmd ...string) (int
 }
 
 func (d *fakeDocker) Ping(context.Context) error { return nil }
+
+func (d *fakeDocker) Output(ctx context.Context, name, workdir string, cmd ...string) ([]byte, error) {
+	code, out, err := d.Exec(ctx, name, workdir, cmd...)
+	if err == nil && code != 0 {
+		err = fmt.Errorf("exit %d", code)
+	}
+	return []byte(out), err
+}
 
 func (d *fakeDocker) running(name string) bool {
 	_, r, _ := d.Inspect(context.Background(), name)

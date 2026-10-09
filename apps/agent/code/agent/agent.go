@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"runtime"
 	"slices"
 	"strings"
@@ -52,6 +53,9 @@ type Options struct {
 	Backend backend.Backend
 	// ExtraTools are added after the web tools.
 	ExtraTools []tool.Tool
+	// ExtraInterrupts review calls to the named tools on top of the default
+	// review, also when AutoApprove is set.
+	ExtraInterrupts map[string]hitl.InterruptOnConfig
 	// BrowserMCP names the MCP server behind the browser panel tools in
 	// MCPTools ("playwright", "chrome-devtools"); empty without the panel.
 	BrowserMCP string
@@ -236,6 +240,7 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	default:
 		mws = append(mws, destructiveGuard{})
 	}
+	maps.Copy(interrupts, opts.ExtraInterrupts)
 	if review, ok := interrupts[executeToolName]; ok && len(procTools) > 0 {
 		interrupts[process.StartName] = review
 	}

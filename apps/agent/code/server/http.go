@@ -14,6 +14,7 @@ import (
 
 	"github.com/tsengmingchun/quill/apps/agent/code/audit"
 	"github.com/tsengmingchun/quill/apps/agent/code/commands"
+	"github.com/tsengmingchun/quill/apps/agent/code/delivery"
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
 	"github.com/tsengmingchun/quill/apps/agent/code/trace"
 	"github.com/tsengmingchun/quill/apps/agent/code/workspace"
@@ -50,6 +51,8 @@ var (
 //	GET  /commands        -> []commands.Command (quill slash commands, hidden ones omitted)
 //	GET  /audit           ?limit= -> []audit.Event of the signed-in user, newest first
 //	GET  /readyz          -> 200 when Postgres, Redis (and Docker with workspaces) answer, else 503
+//	GET  /threads/{id}/diff -> delivery.Diff of the working tree, untracked files included
+//	POST /threads/{id}/pr  PRRequest -> PRResult (commit, push quill/<thread>, open the pull request)
 func NewHandler(srv Server) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -220,6 +223,29 @@ func NewHandler(srv Server) http.Handler {
 	if ws, ok := srv.(WorkspaceServer); ok {
 		addWorkspaceRoutes(mux, ws)
 	}
+	if ds, ok := srv.(deliveryServer); ok {
+		mux.HandleFunc("GET /threads/{id}/diff", func(w http.ResponseWriter, r *http.Request) {
+			d, err := ds.GetDiff(r.Context(), r.PathValue("id"))
+			if err != nil {
+				writeError(w, statusFor(err), err)
+				return
+			}
+			writeJSONMeasured(w, http.StatusOK, d)
+		})
+		mux.HandleFunc("POST /threads/{id}/pr", func(w http.ResponseWriter, r *http.Request) {
+			var req PRRequest
+			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Errorf("decode pull request: %w", err))
+				return
+			}
+			res, err := ds.CreatePR(r.Context(), r.PathValue("id"), req)
+			if err != nil {
+				writeError(w, statusFor(err), err)
+				return
+			}
+			writeJSON(w, http.StatusOK, res)
+		})
+	}
 	if rc, ok := srv.(readinessChecker); ok {
 		mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 			serveReady(w, r, rc)
@@ -254,6 +280,12 @@ func NewHandler(srv Server) http.Handler {
 // routes that do not go through a Server method taking the thread.
 type threadAuthorizer interface {
 	AuthorizeThread(ctx context.Context, threadID string) error
+}
+
+// deliveryServer backs GET /threads/{id}/diff and POST /threads/{id}/pr.
+type deliveryServer interface {
+	GetDiff(ctx context.Context, threadID string) (*delivery.Diff, error)
+	CreatePR(ctx context.Context, threadID string, req PRRequest) (*PRResult, error)
 }
 
 // auditLister backs GET /audit: the signed-in user's own events.

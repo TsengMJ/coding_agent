@@ -134,7 +134,13 @@
 **Goal**: agent 完成後開 PR，作者是使用者本人。
 **Success Criteria**: `make agent-check` 通過；`create_pr` 需核准；`GET /threads/{id}/diff` 回傳含未追蹤檔的完整差異。
 **Tests**: httptest 假 GitHub API（建 PR、權限不足、PR 已存在）；暫存 git repo 的 commit / push 到 bare remote；diff 含未追蹤檔。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- `code/delivery` 套件：`WorkingDiff`（用暫存 index 算出含未追蹤檔、改名、刪除、二進位的差異，不動使用者的 index；patch 超過 2 MiB 截斷並標示）、`CommitAll`（切到 `quill/<thread>`、作者是 GitHub 使用者的 noreply 信箱、停用 hooks 與簽章）、`Push`、`CreatePullRequest`（PR 已存在時回傳既有 PR；401/403/404 視為權限不足）。
+- 安全設計：workspace 的 `.git/config` 由 agent 控制，所以 host 從不對 workspace repo 跑 git。diff 與 commit 透過 `docker exec` 在容器內執行；push 時容器把 commit 寫成 `.quill/delivery.bundle`，host 以 `O_NOFOLLOW` 讀出（拒絕 symlink），在乾淨的暫存 bare repo（不讀系統 / 全域 git 設定）裡 fetch base 與 bundle、核對 head SHA 後 push；GitHub token 只經由 `http.extraHeader` 環境變數傳給 host 端的 git，從不進容器。
+- API：`GET /threads/{id}/diff`（workspace 對 upstream base 的 merge-base；本地 thread 對 HEAD）是 GUI「Files changed」面板的資料來源；`POST /threads/{id}/pr` 以 thread 鎖保護，成功後寫 `pull_request` audit。
+- `create_pr` 工具只在 workspace thread 提供，透過新的 `agent.Options.ExtraInterrupts` 設 `Always: true`，即使 auto-approve 也一定停下等使用者核准；核准提示顯示 PR 標題。
 
 ### Stage S5: 桌面薄 client、遠端瀏覽器、發佈
 **Goal**: 使用者只裝桌面 app 就能連到遠端服務。

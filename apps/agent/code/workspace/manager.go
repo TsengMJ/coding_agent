@@ -163,6 +163,9 @@ func (m *Manager) Create(ctx context.Context, owner string, spec Spec, token str
 // Ping fails when the Docker daemon cannot be reached.
 func (m *Manager) Ping(ctx context.Context) error { return m.cfg.Docker.Ping(ctx) }
 
+// Docker is the client the manager drives the containers with.
+func (m *Manager) Docker() Docker { return m.cfg.Docker }
+
 // Get returns a workspace with its in-use status.
 func (m *Manager) Get(ctx context.Context, id string) (*Workspace, error) {
 	ws, err := m.cfg.Store.Get(ctx, id)
