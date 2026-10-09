@@ -1,4 +1,4 @@
-.PHONY: help build check agent-check agent-test agent-vet agent-fmt desktop-install desktop-check desktop run serve install test-sandbox test-sandbox-linux bench-prepare bench-gate bench-smoke
+.PHONY: help build check agent-check agent-test agent-vet agent-fmt desktop-install desktop-check desktop run serve install test-sandbox test-sandbox-linux bench-prepare bench-gate bench-smoke bench-release bench-release-check
 
 .DEFAULT_GOAL := help
 
@@ -83,3 +83,10 @@ bench-gate: build ## Grade gold (oracle) and empty (nop) patches on smoke50; all
 
 bench-smoke: build ## Run quill on smoke50: make bench-smoke [MODEL=provider:model]
 	$(BIN)/quillbench run -subset smoke50 $(if $(MODEL),-model=$(MODEL),)
+
+bench-release: build ## Release eval: smoke50 with 2 trials per task [MODEL=provider:model]
+	$(BIN)/quillbench run -subset smoke50 -trials 2 -notes "release $$(git describe --tags --always)" $(if $(MODEL),-model=$(MODEL),)
+
+bench-release-check: build ## Fail if RUN resolves >4 points fewer smoke50 tasks than BASE: make bench-release-check BASE=<run> RUN=<run>
+	@test -n "$(BASE)" -a -n "$(RUN)" || { echo "usage: make bench-release-check BASE=<baseline run> RUN=<release run>"; exit 2; }
+	$(BIN)/quillbench compare -max-drop 4 $(BASE) $(RUN)

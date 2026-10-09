@@ -112,6 +112,24 @@ func TestCompareOnSharedTasks(t *testing.T) {
 	}
 }
 
+func TestRegressedAllowsADropWithinTheTolerance(t *testing.T) {
+	base := TaskOutcome{"a": 1, "b": 1, "c": 1, "d": 0}
+	for _, tc := range []struct {
+		next    TaskOutcome
+		maxDrop float64
+		want    bool
+	}{
+		{TaskOutcome{"a": 1, "b": 1, "c": 1, "d": 1}, 0, false},
+		{TaskOutcome{"a": 1, "b": 1, "c": 0, "d": 0}, 25, false},
+		{TaskOutcome{"a": 1, "b": 1, "c": 0, "d": 0}, 24, true},
+		{TaskOutcome{"a": 1, "b": 0, "c": 0, "d": 1}, 0, true},
+	} {
+		if got := Compare(base, tc.next).Regressed(tc.maxDrop); got != tc.want {
+			t.Errorf("%v with max drop %v: regressed = %v", tc.next, tc.maxDrop, got)
+		}
+	}
+}
+
 func TestOutcomesSkipInfraAndAverageTrials(t *testing.T) {
 	o := Outcomes([]Attempt{
 		{InstanceID: "a", Phase: PhaseDone, Resolved: true},

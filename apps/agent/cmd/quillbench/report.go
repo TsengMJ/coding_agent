@@ -71,6 +71,7 @@ func runReport(ctx context.Context, e env, args []string, stdout, stderr io.Writ
 func runCompare(ctx context.Context, e env, args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("compare", stderr)
 	ref := fs.String("ref", "", "compare the run with imported reference grades: <harness>/<model>")
+	maxDrop := fs.Float64("max-drop", -1, "fail when the new run resolves more than this many percentage points fewer shared tasks (negative = report only)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -122,7 +123,14 @@ func runCompare(ctx context.Context, e env, args []string, stdout, stderr io.Wri
 		return fmt.Errorf("%s and %s share no scored tasks", nameA, nameB)
 	}
 	name := "compare-" + strings.ReplaceAll(nameA, "/", "_") + "-vs-" + nameB
-	return writeReport(e, name, bench.RenderComparison(nameA, nameB, c), stdout)
+	if err := writeReport(e, name, bench.RenderComparison(nameA, nameB, c), stdout); err != nil {
+		return err
+	}
+	if *maxDrop >= 0 && c.Regressed(*maxDrop) {
+		return fmt.Errorf("%s regressed: %.1f%% -> %.1f%% on %d shared tasks (allowed drop %.1f points)",
+			nameB, c.A.Pct(), c.B.Pct(), c.Shared, *maxDrop)
+	}
+	return nil
 }
 
 func runHistory(ctx context.Context, e env, args []string, stdout, stderr io.Writer) error {

@@ -239,6 +239,12 @@ func Compare(a, b TaskOutcome) Comparison {
 	return c
 }
 
+// Regressed reports whether B resolved more than maxDrop percentage points
+// fewer of the shared tasks than A.
+func (c Comparison) Regressed(maxDrop float64) bool {
+	return -c.DiffPoints > maxDrop
+}
+
 // RenderReport formats a run summary as markdown.
 func RenderReport(run *Run, s Summary) string {
 	var b strings.Builder

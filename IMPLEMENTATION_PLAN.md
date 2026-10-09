@@ -162,4 +162,11 @@
 **Goal**: 修已知 bug、決定修復迴圈預設、補 Anthropic provider、定義發版評測門檻。
 **Success Criteria**: `make agent-check` 通過；「通過 → 通過」不再觸發 `same_failure`；Anthropic provider 通過 httptest（文字、tool call、串流、錯誤）。
 **Tests**: `detectStuck` 新增案例；Anthropic httptest。
-**Status**: Not Started
+**Status**: In Progress（程式碼完成；B5 基準線要花真的 LLM 費用，等使用者決定何時跑）
+
+**Results**:
+- `same_failure`：最後一次檢查通過時不再判為卡住（`TestDetectStuckIgnoresChecksThatKeepPassing`）。
+- 修復迴圈預設：`codeagent.DefaultDisabled` = `failure_class,repair_state,repro,planner,stuck,reviewer`，保留驗證關卡（baseline、diff review、test edits）、micro、checkpoint 與 progress / budget。依據是 RL8：全開的步數約 1.8 倍、解題率沒有提高。`quill` 與 `quill serve` 新增 `-disable`（預設 `$QUILL_DISABLE`，未設定時用 `DefaultDisabled`，空字串全開），經 `server.Config.Disable` 傳給 agent；`quillbench run -disable` 的預設也改成出貨設定，量的就是使用者拿到的 agent。測試：`TestDefaultDisabledKeepsTheVerifyGateMicroAndCheckpoint`、`TestDisabledFeaturesReachTheAgent`、`TestDisableFlagRejectsUnknownFeatures`、`TestDisableDefaultsToTheShippedRepairLoop`。
+- Anthropic provider（`llm/anthropic.go`，`anthropic:<model>`，`ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL`）：直接呼叫 Messages API（不經 langchaingo），每次都串流，Generate 收集串流結果，共用既有的重試（429 / 5xx / 529）與 idle watchdog。開頭的 system 訊息成為 system prompt，之後的 system 訊息（`<repair-state>` 等）以 user 文字送出並與 tool_result 合併成同一則；prompt cache 斷點放在 system 結尾與尾端變動內容之前的最後一個 block（RL8 cache 的教訓）。usage 的 input 含 cache read / write，和 `cost.Estimate` 一致；`prompt is too long`、`exceed context limit` 判為 `ErrContextOverflow`。thinking 區塊回傳為 reasoning，送回時省略（沒有保留簽章）。測試：`anthropic_test.go`（request 形狀、文字、tool call 分段 JSON、串流 delta、401、529 重試、context overflow、串流中的 error event、缺 message_stop、缺 key）。
+- 發版門檻：`quillbench compare -max-drop N` 在新 run 的解題率比基準低超過 N 個百分點時失敗（`Comparison.Regressed`，`TestRegressedAllowsADropWithinTheTolerance`）。`make bench-release`（smoke50、每題 2 次、notes 記 git describe）、`make bench-release-check BASE=<B5 run> RUN=<release run>`（`-max-drop 4`，即 50 題中 2 題，低於這個差距多半是雜訊）。
+- 待做：用 `make bench-release` 跑 B5 基準線（smoke50 × 2，約 100 次嘗試），之後每次發版用 `bench-release-check` 比對。
