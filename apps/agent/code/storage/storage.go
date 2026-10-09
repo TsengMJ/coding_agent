@@ -15,6 +15,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/code/cache"
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
 	"github.com/tsengmingchun/quill/apps/agent/code/trace"
+	"github.com/tsengmingchun/quill/apps/agent/code/workspace"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/planmode"
 	"github.com/tsengmingchun/quill/apps/agent/runtime"
 )
@@ -54,6 +55,7 @@ type Storage struct {
 	Sessions     sessions.Store
 	Plans        planmode.Store
 	Traces       trace.Log
+	Workspaces   workspace.Store
 	// Durable is a key-value store in Postgres.
 	Durable runtime.Store
 	// Cache holds short-lived lookups (search results, docs).
@@ -122,12 +124,17 @@ func Open(ctx context.Context, postgresConn, redisURL string) (*Storage, error) 
 	if err != nil {
 		return fail("store", err)
 	}
+	workspaces, err := workspace.NewPostgresStore(ctx, pool)
+	if err != nil {
+		return fail("workspaces", err)
+	}
 	return &Storage{
 		Kind:         KindPostgres,
 		Checkpointer: pg,
 		Sessions:     sess,
 		Plans:        plans,
 		Traces:       traces,
+		Workspaces:   workspaces,
 		Durable:      durable,
 		Cache:        cache.NewRedis(rdb, redisPrefix+":cache"),
 		expiring: func(ttl time.Duration) runtime.Store {
@@ -146,6 +153,7 @@ func NewMemory() *Storage {
 		Sessions:     sessions.NewMemoryStore(),
 		Plans:        planmode.NewMemoryStore(),
 		Traces:       trace.NewMemoryLog(),
+		Workspaces:   workspace.NewMemoryStore(),
 		Durable:      runtime.NewInMemoryStore(),
 		Cache:        cache.NewMemory(),
 		expiring:     func(time.Duration) runtime.Store { return expiring },

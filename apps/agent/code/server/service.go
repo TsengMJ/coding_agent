@@ -15,6 +15,7 @@ import (
 
 	"github.com/tsengmingchun/quill/apps/agent/agent"
 	codeagent "github.com/tsengmingchun/quill/apps/agent/code/agent"
+	"github.com/tsengmingchun/quill/apps/agent/code/auth"
 	"github.com/tsengmingchun/quill/apps/agent/code/browser"
 	"github.com/tsengmingchun/quill/apps/agent/code/config"
 	"github.com/tsengmingchun/quill/apps/agent/code/cost"
@@ -23,6 +24,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
 	"github.com/tsengmingchun/quill/apps/agent/code/storage"
 	"github.com/tsengmingchun/quill/apps/agent/code/trace"
+	"github.com/tsengmingchun/quill/apps/agent/code/workspace"
 	"github.com/tsengmingchun/quill/apps/agent/llm"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/hitl"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/planmode"
@@ -58,6 +60,12 @@ type Config struct {
 	MCP mcp.Session
 	// ConnectMCP starts the browser MCP servers; nil uses mcp.Connect.
 	ConnectMCP func(context.Context, []mcp.ServerConfig) (mcp.Session, error)
+	// Workspaces runs threads in cloned repositories inside containers;
+	// nil disables RunRequest.WorkspaceID.
+	Workspaces *workspace.Manager
+	// RequireWorkspace refuses runs in a server directory (RunRequest.Cwd),
+	// so remote users cannot run commands on the server host.
+	RequireWorkspace bool
 }
 
 // ResumeTraceTag marks the run of a turn that resumes after an approval, so
@@ -89,6 +97,8 @@ type Service struct {
 	mcpTools     []tool.Tool
 	browsers     *browserManager
 	processes    *process.Manager
+	workspaces   *workspace.Manager
+	requireWS    bool
 
 	mu     sync.Mutex
 	agents map[agentKey]*agentEntry
@@ -97,6 +107,7 @@ type Service struct {
 
 type agentKey struct {
 	cwd         string
+	workspace   string
 	interactive bool
 	// browser is browserTools.key; empty without the panel.
 	browser string
@@ -161,6 +172,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	s := &Service{
 		browsers:     newBrowserManager(browserKind, connect),
 		processes:    process.NewManager(),
+		workspaces:   cfg.Workspaces,
+		requireWS:    cfg.RequireWorkspace,
 		mcp:          cfg.MCP,
 		mcpTools:     mcpTools,
 		webModel:     webModel,
@@ -410,7 +423,7 @@ func (s *Service) Run(ctx context.Context, req RunRequest) iter.Seq2[Event, erro
 }
 
 func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, error) bool) error {
-	if err := validate(&req); err != nil {
+	if err := s.validate(&req); err != nil {
 		return err
 	}
 	if !s.acquire(req.ThreadID) {
@@ -422,7 +435,21 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	if err != nil {
 		return err
 	}
-	if info != nil && info.Cwd != req.Cwd {
+	if err := checkOwner(ctx, info); err != nil {
+		return err
+	}
+	var ws *workspace.Workspace
+	if req.WorkspaceID != "" {
+		if info != nil && info.WorkspaceID != req.WorkspaceID {
+			return fmt.Errorf("%w: thread %s runs in workspace %q", ErrThreadCwdMismatch, req.ThreadID, info.WorkspaceID)
+		}
+		var release func()
+		if ws, release, err = s.acquireWorkspace(ctx, req.WorkspaceID); err != nil {
+			return err
+		}
+		defer release()
+		req.Cwd = ws.Dir
+	} else if info != nil && (info.WorkspaceID != "" || info.Cwd != req.Cwd) {
 		return fmt.Errorf("%w: thread %s uses %s", ErrThreadCwdMismatch, req.ThreadID, info.Cwd)
 	}
 	prev, err := s.checkpointer.Latest(ctx, req.ThreadID)
@@ -442,7 +469,7 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	if err != nil {
 		return err
 	}
-	a, err := s.agentFor(ctx, req, bt)
+	a, err := s.agentFor(ctx, req, bt, ws)
 	if err != nil {
 		return err
 	}
@@ -535,9 +562,18 @@ func convert(ev runtime.Event, sent map[string]int) []Event {
 	return nil
 }
 
-func validate(req *RunRequest) error {
+func (s *Service) validate(req *RunRequest) error {
 	if req.ThreadID == "" {
 		return fmt.Errorf("%w: thread_id is required", ErrBadRequest)
+	}
+	switch {
+	case req.WorkspaceID != "" && s.workspaces == nil:
+		return fmt.Errorf("%w: this server has no workspaces (start quill serve with -workspaces)", ErrBadRequest)
+	case req.WorkspaceID != "":
+		req.Cwd = ""
+		return validateRest(req)
+	case s.requireWS:
+		return fmt.Errorf("%w: workspace_id is required; this server does not run in its own directories", ErrBadRequest)
 	}
 	if !filepath.IsAbs(req.Cwd) {
 		return fmt.Errorf("%w: cwd must be an absolute path, got %q", ErrBadRequest, req.Cwd)
@@ -550,6 +586,10 @@ func validate(req *RunRequest) error {
 	if !fi.IsDir() {
 		return fmt.Errorf("%w: cwd %s is not a directory", ErrBadRequest, req.Cwd)
 	}
+	return validateRest(req)
+}
+
+func validateRest(req *RunRequest) error {
 	if (len(req.Messages) > 0) == (req.Resume != nil) {
 		return fmt.Errorf("%w: exactly one of messages and resume is required", ErrBadRequest)
 	}
@@ -610,8 +650,8 @@ func (s *Service) release(threadID string) {
 // agentFor returns the cached agent for the run's cwd, building it at most
 // once per key. The build runs outside s.mu so it never delays acquire and
 // release for other threads.
-func (s *Service) agentFor(ctx context.Context, req RunRequest, bt browserTools) (agent.Agent, error) {
-	key := agentKey{cwd: req.Cwd, interactive: req.Interactive, browser: bt.key()}
+func (s *Service) agentFor(ctx context.Context, req RunRequest, bt browserTools, ws *workspace.Workspace) (agent.Agent, error) {
+	key := agentKey{cwd: req.Cwd, workspace: req.WorkspaceID, interactive: req.Interactive, browser: bt.key()}
 	s.mu.Lock()
 	e, ok := s.agents[key]
 	if !ok {
@@ -625,7 +665,7 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest, bt browserTools)
 		if !req.Interactive {
 			reviewModel = s.model
 		}
-		e.agent, e.err = codeagent.CreateCLIAgent(ctx, codeagent.Options{
+		opts := codeagent.Options{
 			ReviewModel:  reviewModel,
 			Settings:     s.settings,
 			Model:        s.model,
@@ -642,7 +682,13 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest, bt browserTools)
 			MCPTools:     slices.Concat(s.mcpTools, bt.tools),
 			BrowserMCP:   string(bt.kind),
 			Processes:    s.processes,
-		})
+		}
+		if ws != nil {
+			opts.Backend = s.workspaces.Backend(ws)
+			opts.WorkingDirSection = workspace.WorkingDirSection(ws)
+			opts.UserDir = ""
+		}
+		e.agent, e.err = codeagent.CreateCLIAgent(ctx, opts)
 	})
 	if e.err != nil {
 		s.mu.Lock()
@@ -671,7 +717,8 @@ func (s *Service) runModelFor(req RunRequest, info *sessions.Info) (runModel, er
 }
 
 func (s *Service) touch(ctx context.Context, req RunRequest, cp *runtime.Checkpoint, model string) error {
-	info := sessions.Info{ThreadID: req.ThreadID, Cwd: req.Cwd, UpdatedAt: time.Now(), Model: model}
+	info := sessions.Info{ThreadID: req.ThreadID, Cwd: req.Cwd, WorkspaceID: req.WorkspaceID,
+		Owner: auth.OwnerFrom(ctx), UpdatedAt: time.Now(), Model: model}
 	var msgs []llm.Message
 	if cp != nil {
 		msgs = cp.State.Messages

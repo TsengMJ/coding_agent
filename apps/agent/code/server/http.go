@@ -15,6 +15,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/code/commands"
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
 	"github.com/tsengmingchun/quill/apps/agent/code/trace"
+	"github.com/tsengmingchun/quill/apps/agent/code/workspace"
 )
 
 // DefaultAddr is where `quill serve` listens by default.
@@ -196,7 +197,66 @@ func NewHandler(srv Server) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, res)
 	})
+	if ws, ok := srv.(WorkspaceServer); ok {
+		addWorkspaceRoutes(mux, ws)
+	}
 	return mux
+}
+
+// addWorkspaceRoutes exposes the workspace API:
+//
+//	POST   /workspaces           workspace.Spec -> 201 workspace.Workspace (clones the repository)
+//	GET    /workspaces           -> []workspace.Workspace of the user
+//	GET    /workspaces/{id}      -> workspace.Workspace
+//	POST   /workspaces/{id}/stop -> 204, stops the container and keeps the files
+//	DELETE /workspaces/{id}      -> 204, removes container and files
+func addWorkspaceRoutes(mux *http.ServeMux, srv WorkspaceServer) {
+	mux.HandleFunc("POST /workspaces", func(w http.ResponseWriter, r *http.Request) {
+		var spec workspace.Spec
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&spec); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("decode workspace spec: %w", err))
+			return
+		}
+		ws, err := srv.CreateWorkspace(r.Context(), spec)
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, ws)
+	})
+	mux.HandleFunc("GET /workspaces", func(w http.ResponseWriter, r *http.Request) {
+		list, err := srv.ListWorkspaces(r.Context())
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		if list == nil {
+			list = []workspace.Workspace{}
+		}
+		writeJSON(w, http.StatusOK, list)
+	})
+	mux.HandleFunc("GET /workspaces/{id}", func(w http.ResponseWriter, r *http.Request) {
+		ws, err := srv.GetWorkspace(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, ws)
+	})
+	mux.HandleFunc("POST /workspaces/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
+		if err := srv.StopWorkspace(r.Context(), r.PathValue("id")); err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("DELETE /workspaces/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if err := srv.DeleteWorkspace(r.Context(), r.PathValue("id")); err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 }
 
 func historyParams(r *http.Request) (before, limit int, err error) {
@@ -283,13 +343,19 @@ func streamRun(w http.ResponseWriter, r *http.Request, run *liveRun) {
 
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, ErrBadRequest):
+	case errors.Is(err, ErrBadRequest), errors.Is(err, workspace.ErrInvalid):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrThreadNotFound), errors.Is(err, trace.ErrNotFound):
+	case errors.Is(err, ErrForbidden), errors.Is(err, workspace.ErrForbidden):
+		return http.StatusForbidden
+	case errors.Is(err, ErrThreadNotFound), errors.Is(err, trace.ErrNotFound), errors.Is(err, workspace.ErrNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, ErrNoWorkspaces):
+		return http.StatusNotImplemented
+	case errors.Is(err, ErrQuotaExceeded):
+		return http.StatusTooManyRequests
 	case errors.Is(err, ErrThreadBusy), errors.Is(err, ErrThreadCwdMismatch),
 		errors.Is(err, ErrPendingApproval), errors.Is(err, ErrNoPendingApproval),
-		errors.Is(err, ErrNothingToCompact):
+		errors.Is(err, ErrNothingToCompact), errors.Is(err, workspace.ErrBusy), errors.Is(err, workspace.ErrQuota):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

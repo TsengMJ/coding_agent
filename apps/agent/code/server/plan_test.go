@@ -45,12 +45,12 @@ func TestValidateRejectsBadModes(t *testing.T) {
 	}
 	for name, req := range cases {
 		req.ThreadID, req.Cwd, req.Messages = "t", cwd, []llm.Message{llm.NewUserMessage("x")}
-		if err := validate(&req); !errors.Is(err, ErrBadRequest) {
+		if err := (&Service{}).validate(&req); !errors.Is(err, ErrBadRequest) {
 			t.Errorf("%s: err = %v, want ErrBadRequest", name, err)
 		}
 	}
 	resume := RunRequest{ThreadID: "t", Cwd: cwd, Resume: &Resume{}, BuildPlan: true}
-	if err := validate(&resume); !errors.Is(err, ErrBadRequest) {
+	if err := (&Service{}).validate(&resume); !errors.Is(err, ErrBadRequest) {
 		t.Errorf("build on resume: err = %v", err)
 	}
 }

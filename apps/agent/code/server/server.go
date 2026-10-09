@@ -38,6 +38,10 @@ var (
 	ErrThreadNotFound = errors.New("thread not found")
 	// ErrNothingToCompact is returned when a thread is too short to compact.
 	ErrNothingToCompact = errors.New("conversation is too short to compact")
+	// ErrForbidden is returned when a user touches another user's thread.
+	ErrForbidden = errors.New("thread belongs to another user")
+	// ErrQuotaExceeded is returned when a user has spent the daily budget.
+	ErrQuotaExceeded = errors.New("daily spending limit reached")
 )
 
 // CompactResult describes a summarization done by Compact.
@@ -53,10 +57,13 @@ type CompactResult struct {
 // RunRequest starts a run on a thread, or resumes one paused for approval.
 // Exactly one of Messages and Resume must be set.
 type RunRequest struct {
-	ThreadID string        `json:"thread_id"`
-	Cwd      string        `json:"cwd"`
-	Messages []llm.Message `json:"messages,omitempty"`
-	Resume   *Resume       `json:"resume,omitempty"`
+	ThreadID string `json:"thread_id"`
+	// Cwd is a directory on the server; ignored when WorkspaceID is set.
+	Cwd string `json:"cwd,omitempty"`
+	// WorkspaceID runs the thread in a remote workspace (POST /workspaces).
+	WorkspaceID string        `json:"workspace_id,omitempty"`
+	Messages    []llm.Message `json:"messages,omitempty"`
+	Resume      *Resume       `json:"resume,omitempty"`
 	// AutoApprove skips human review of tool calls.
 	AutoApprove bool `json:"auto_approve,omitempty"`
 	// Interactive selects the system prompt for a human-attended session.

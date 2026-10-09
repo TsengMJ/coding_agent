@@ -90,7 +90,18 @@
 **Goal**: thread 綁定 workspace（repo + branch + 容器），不再綁 server 的 `cwd`；指令只在容器內執行。
 **Success Criteria**: `make agent-check` 通過；同 repo 兩個 workspace 互不可見；容器內看不到 server 的環境變數；server 重啟後 workspace 狀態從 Postgres 讀回、容器可重新啟動。
 **Tests**: fake docker 的 Manager 單元測試（建立、啟動、停止、回收、配額、映像選擇）；真 Docker 整合測試（`QUILL_DOCKER_IT=1`）；service 端到端（FakeModel 在 workspace 中寫檔並經 docker exec 執行）。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- `code/workspace`：`Manager`（Create / Acquire / Stop / Delete / Reap / Reconcile / Run）、`Store`（memory、Postgres `quill_workspaces`）、`Docker` 介面與 `CLIDocker`。
+  - Create 在主機 `git clone`（token 經 `GIT_CONFIG_*` 環境變數送出，不在命令列也不寫進 clone 的設定），映像依 `.quill/Dockerfile`（build 成 `quill-ws-<id>`）> devcontainer `image` > `-workspace-image`。
+  - Acquire 在需要時建立或啟動容器（`--init`、`sleep infinity`、clone 掛在 `/workspace`），設定 `safe.directory` 並刷新 git index；使用中的 workspace 不能 stop / delete，reaper 也跳過。
+  - repo_url 只接受無帳密的 `https://`；`-workspace-local-repos` 才接受主機路徑。
+- Service：`RunRequest.WorkspaceID`；thread 綁定 workspace（換 workspace 或改用目錄都回 409）；`Config.RequireWorkspace` 讓遠端模式拒絕在 server 目錄執行；檔案工具走主機上的 clone、指令走 `docker exec`。
+- HTTP：`POST/GET /workspaces`、`GET/DELETE /workspaces/{id}`、`POST /workspaces/{id}/stop`；回應不含主機路徑。
+- `quill serve -workspaces DIR`（`$QUILL_WORKSPACES_ROOT`）與 `-workspace-image / -idle / -retention / -max-running / -cpus / -memory-mb / -network / -local-repos`。
+- `quill_threads` 加上 `workspace_id`、`owner` 欄位（owner 在 S2 填入）。
+- 偏離計畫：workspace 裡沒有 `start_process`。`DockerExecBackend` 不是 `process.Preparer`：停止 host 上的 `docker exec` client 不會殺掉容器內的行程，需要另外的容器內行程管理，留到 S5（瀏覽器搬進容器時一起做）。
 
 ### Stage S2: 身分、權限、遠端連線
 **Goal**: 非 loopback 也能安全提供服務；每個 thread 有擁有者。

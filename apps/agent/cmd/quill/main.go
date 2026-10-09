@@ -141,7 +141,7 @@ func connect(ctx context.Context, e env, serverURL, model string) (server.Server
 		}
 		return r, nil
 	}
-	svc, err := newService(ctx, e, model)
+	svc, err := newService(ctx, e, model, nil)
 	if err != nil {
 		return nil, fmt.Errorf("start agent: %w", err)
 	}
@@ -150,7 +150,8 @@ func connect(ctx context.Context, e env, serverURL, model string) (server.Server
 
 // newService opens Postgres and Redis, both required, and starts the
 // in-process service on them.
-func newService(ctx context.Context, e env, model string) (*server.Service, error) {
+// newService builds the agent service; ws, when set, enables workspaces.
+func newService(ctx context.Context, e env, model string, ws *workspaceFlags) (*server.Service, error) {
 	ls, err := codeagent.NewLangSmith(e.settings)
 	if err != nil {
 		return nil, err
@@ -165,6 +166,16 @@ func newService(ctx context.Context, e env, model string) (*server.Service, erro
 		return nil, err
 	}
 	cfg.Storage = st
+	if ws != nil && ws.root != "" {
+		m, err := ws.manager(st.Workspaces)
+		if err != nil {
+			closeTracer(ls)
+			st.Close()
+			return nil, err
+		}
+		cfg.Workspaces, cfg.RequireWorkspace = m, ws.require
+		go m.Run(ctx, nil)
+	}
 	if cfg.MCP, err = connectMCP(ctx, e.paths.MCPConfig); err != nil {
 		closeTracer(ls)
 		st.Close()
@@ -306,6 +317,8 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	addr := fs.String("addr", server.DefaultAddr, "listen address (loopback only)")
 	model := fs.String("model", "", modelFlagUsage)
 	sandboxMode := fs.String("sandbox", "", sandboxFlagUsage)
+	var ws workspaceFlags
+	ws.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -320,7 +333,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	svc, err := newService(ctx, e, *model)
+	svc, err := newService(ctx, e, *model, &ws)
 	if err != nil {
 		return fmt.Errorf("start agent: %w", err)
 	}

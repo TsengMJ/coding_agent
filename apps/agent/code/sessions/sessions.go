@@ -25,21 +25,36 @@ type Info struct {
 	MessageCount int       `json:"message_count"`
 	// Model is the "provider:model" spec the thread last ran with.
 	Model string `json:"model,omitempty"`
+	// WorkspaceID is the remote workspace the thread runs in; empty for a
+	// thread bound to a local directory.
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	// Owner is the user who started the thread; empty without login.
+	Owner string `json:"owner,omitempty"`
 	// Running is a process-local service status. It is intentionally not
 	// persisted: a service restart cancels in-flight runs.
 	Running bool `json:"running,omitempty"`
 }
 
-// Filter narrows List. An empty Cwd lists every thread; Limit <= 0 means no limit.
+// Filter narrows List. Empty fields match every thread; Limit <= 0 means no limit.
 type Filter struct {
-	Cwd   string
-	Limit int
+	Cwd         string
+	WorkspaceID string
+	Owner       string
+	Limit       int
+}
+
+// Match reports whether info passes the filter (Limit aside).
+func (f Filter) Match(info Info) bool {
+	return (f.Cwd == "" || info.Cwd == f.Cwd) &&
+		(f.WorkspaceID == "" || info.WorkspaceID == f.WorkspaceID) &&
+		(f.Owner == "" || info.Owner == f.Owner)
 }
 
 // Store is the thread catalog.
 type Store interface {
 	// Touch inserts or updates a thread. An existing thread keeps its Cwd,
-	// CreatedAt, non-empty Title, and Model when info.Model is empty.
+	// WorkspaceID, Owner, CreatedAt, non-empty Title, and Model when
+	// info.Model is empty.
 	Touch(ctx context.Context, info Info) error
 	// Get returns nil when the thread is unknown.
 	Get(ctx context.Context, threadID string) (*Info, error)
@@ -97,6 +112,8 @@ func (s *MemoryStore) Touch(_ context.Context, info Info) error {
 	}
 	if prev, ok := s.threads[info.ThreadID]; ok {
 		info.Cwd = prev.Cwd
+		info.WorkspaceID = prev.WorkspaceID
+		info.Owner = prev.Owner
 		info.CreatedAt = prev.CreatedAt
 		if prev.Title != "" {
 			info.Title = prev.Title
@@ -138,7 +155,7 @@ func (s *MemoryStore) List(_ context.Context, f Filter) ([]Info, error) {
 	defer s.mu.Unlock()
 	var out []Info
 	for _, info := range s.threads {
-		if f.Cwd == "" || info.Cwd == f.Cwd {
+		if f.Match(info) {
 			out = append(out, info)
 		}
 	}

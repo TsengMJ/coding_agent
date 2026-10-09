@@ -83,6 +83,21 @@ func testStore(t *testing.T, s Store) {
 	if missing, err := s.SetTitle(ctx, id("zzz"), "missing"); err != nil || missing != nil {
 		t.Fatalf("rename missing = %+v, %v", missing, err)
 	}
+
+	ws, owner := id("ws"), id("owner")
+	t.Cleanup(func() { _ = s.Delete(context.Background(), id("w")) })
+	must(s.Touch(ctx, Info{ThreadID: id("w"), Cwd: "/srv/ws", WorkspaceID: ws, Owner: owner}))
+	must(s.Touch(ctx, Info{ThreadID: id("w"), Cwd: "/srv/ws", WorkspaceID: "other", Owner: "intruder"}))
+	if got, _ := s.Get(ctx, id("w")); got == nil || got.WorkspaceID != ws || got.Owner != owner {
+		t.Fatalf("workspace thread = %+v", got)
+	}
+	for _, f := range []Filter{{WorkspaceID: ws}, {Owner: owner}} {
+		list, err := s.List(ctx, f)
+		must(err)
+		if len(list) != 1 || list[0].ThreadID != id("w") {
+			t.Fatalf("List(%+v) = %+v", f, list)
+		}
+	}
 }
 
 func TestMemoryStore(t *testing.T) {
