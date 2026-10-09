@@ -428,6 +428,7 @@ var contextOverflowMarkers = []string{
 	"maximum context length",
 	"context window",
 	"prompt is too long",
+	"exceed context limit",
 }
 
 func isContextOverflow(err error) bool {
