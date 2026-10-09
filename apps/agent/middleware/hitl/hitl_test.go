@@ -13,6 +13,7 @@ import (
 
 	"github.com/tsengmingchun/quill/apps/agent/agent"
 	"github.com/tsengmingchun/quill/apps/agent/llm"
+	"github.com/tsengmingchun/quill/apps/agent/migrate"
 	"github.com/tsengmingchun/quill/apps/agent/runtime"
 	"github.com/tsengmingchun/quill/apps/agent/tool"
 )
@@ -372,6 +373,9 @@ func TestEditSurvivesPostgresResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(cp.Close)
+	if err := migrate.Up(context.Background(), cp.Pool(), migrate.Quill()); err != nil {
+		t.Fatal(err)
+	}
 	thread := fmt.Sprintf("pg-hitl-edit-%d", time.Now().UnixNano())
 	t.Cleanup(func() { _ = cp.DeleteThread(context.Background(), thread) })
 

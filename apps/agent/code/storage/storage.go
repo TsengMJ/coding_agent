@@ -19,6 +19,7 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/code/trace"
 	"github.com/tsengmingchun/quill/apps/agent/code/workspace"
 	"github.com/tsengmingchun/quill/apps/agent/middleware/planmode"
+	"github.com/tsengmingchun/quill/apps/agent/migrate"
 	"github.com/tsengmingchun/quill/apps/agent/runtime"
 )
 
@@ -81,7 +82,7 @@ func (s *Storage) Close() {
 	}
 }
 
-// Open connects to Postgres and Redis and creates the tables. Both are
+// Open connects to Postgres and Redis and migrates the schema. Both are
 // required: an empty or unreachable one is an error.
 func Open(ctx context.Context, postgresConn, redisURL string) (*Storage, error) {
 	if postgresConn == "" {
@@ -113,6 +114,9 @@ func Open(ctx context.Context, postgresConn, redisURL string) (*Storage, error) 
 		return nil, fmt.Errorf("storage: %s: %w", what, err)
 	}
 	pool := pg.Pool()
+	if err := migrate.Up(ctx, pool, migrate.Quill()); err != nil {
+		return fail("migrate", err)
+	}
 	sess, err := sessions.NewPostgresStore(ctx, pool)
 	if err != nil {
 		return fail("sessions", err)

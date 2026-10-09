@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/tsengmingchun/quill/apps/agent/migrate"
 )
 
 // testStore runs the behavior every Store implementation must share. ns
@@ -135,6 +136,9 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(cp.Close)
+	if err := migrate.Up(context.Background(), cp.Pool(), migrate.Quill()); err != nil {
+		t.Fatal(err)
+	}
 	s, err := NewPostgresStore(context.Background(), cp.Pool())
 	if err != nil {
 		t.Fatal(err)

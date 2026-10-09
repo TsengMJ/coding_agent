@@ -10,35 +10,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const postgresSchema = `
-CREATE TABLE IF NOT EXISTS quill_users (
-	id            TEXT PRIMARY KEY,
-	name          TEXT NOT NULL DEFAULT '',
-	github_token  BYTEA NOT NULL,
-	created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-	last_login_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS quill_sessions (
-	token_hash TEXT PRIMARY KEY,
-	user_id    TEXT NOT NULL REFERENCES quill_users (id) ON DELETE CASCADE,
-	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-	expires_at TIMESTAMPTZ NOT NULL
-);
-CREATE INDEX IF NOT EXISTS quill_sessions_expires ON quill_sessions (expires_at);
-`
-
 // PostgresStore keeps users and sessions in quill_users and quill_sessions.
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresStore creates the tables if needed. The caller owns the pool.
+// NewPostgresStore uses quill_users and quill_sessions, created by the migrate package. The caller
+// owns the pool.
 func NewPostgresStore(ctx context.Context, pool *pgxpool.Pool) (*PostgresStore, error) {
 	if pool == nil {
 		return nil, errors.New("auth.NewPostgresStore: nil pool")
-	}
-	if _, err := pool.Exec(ctx, postgresSchema); err != nil {
-		return nil, fmt.Errorf("auth: create tables: %w", err)
 	}
 	return &PostgresStore{pool: pool}, nil
 }

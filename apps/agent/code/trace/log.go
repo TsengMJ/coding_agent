@@ -77,26 +77,6 @@ func (f FileLog) Each(_ context.Context, _ string, fn func([]byte) bool) error {
 	return sc.Err()
 }
 
-// Lines are BYTEA rather than JSONB: tool output may hold NUL characters,
-// which JSONB rejects. The advisory lock serializes concurrent CREATE TABLE IF
-// NOT EXISTS, which otherwise races on pg_type and fails.
-const postgresLogSchema = `
-SELECT pg_advisory_xact_lock(hashtext('quill_trace_schema'));
-CREATE TABLE IF NOT EXISTS quill_trace_blobs (
-	hash TEXT PRIMARY KEY,
-	line BYTEA NOT NULL
-);
-CREATE TABLE IF NOT EXISTS quill_trace_records (
-	id         BIGSERIAL PRIMARY KEY,
-	thread_id  TEXT NOT NULL,
-	type       TEXT NOT NULL,
-	blob_hash  TEXT REFERENCES quill_trace_blobs (hash),
-	data       BYTEA,
-	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS quill_trace_records_thread ON quill_trace_records (thread_id, id);
-`
-
 // PostgresLog keeps traces in quill_trace_records. A blob line goes to
 // quill_trace_blobs once per hash, shared by every thread, and the thread
 // keeps a row pointing at it.
@@ -104,13 +84,11 @@ type PostgresLog struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresLog creates the tables if needed. The caller owns the pool.
+// NewPostgresLog uses quill_trace_*, created by the migrate package. The caller
+// owns the pool.
 func NewPostgresLog(ctx context.Context, pool *pgxpool.Pool) (*PostgresLog, error) {
 	if pool == nil {
 		return nil, errors.New("trace.NewPostgresLog: nil pool")
-	}
-	if _, err := pool.Exec(ctx, postgresLogSchema); err != nil {
-		return nil, fmt.Errorf("trace: create tables: %w", err)
 	}
 	return &PostgresLog{pool: pool}, nil
 }

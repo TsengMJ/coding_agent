@@ -10,32 +10,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const postgresSchema = `
-CREATE TABLE IF NOT EXISTS quill_audit (
-	id           BIGSERIAL PRIMARY KEY,
-	at           TIMESTAMPTZ NOT NULL,
-	user_id      TEXT NOT NULL,
-	action       TEXT NOT NULL,
-	thread_id    TEXT NOT NULL DEFAULT '',
-	workspace_id TEXT NOT NULL DEFAULT '',
-	cost_usd     DOUBLE PRECISION NOT NULL DEFAULT 0,
-	detail       JSONB
-);
-CREATE INDEX IF NOT EXISTS quill_audit_user_at ON quill_audit (user_id, at DESC);
-`
-
 // PostgresLog keeps events in the quill_audit table.
 type PostgresLog struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresLog creates the table if needed. The caller owns the pool.
+// NewPostgresLog uses quill_audit, created by the migrate package. The caller
+// owns the pool.
 func NewPostgresLog(ctx context.Context, pool *pgxpool.Pool) (*PostgresLog, error) {
 	if pool == nil {
 		return nil, errors.New("audit.NewPostgresLog: nil pool")
-	}
-	if _, err := pool.Exec(ctx, postgresSchema); err != nil {
-		return nil, fmt.Errorf("audit: create quill_audit: %w", err)
 	}
 	return &PostgresLog{pool: pool}, nil
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/smallnest/langgraphgo/graph"
 
 	"github.com/tsengmingchun/quill/apps/agent/llm"
+	"github.com/tsengmingchun/quill/apps/agent/migrate"
 )
 
 func newTestPostgres(t *testing.T) *PostgresCheckpointer {
@@ -24,6 +25,9 @@ func newTestPostgres(t *testing.T) *PostgresCheckpointer {
 		t.Fatal(err)
 	}
 	t.Cleanup(cp.Close)
+	if err := migrate.Up(context.Background(), cp.Pool(), migrate.Quill()); err != nil {
+		t.Fatal(err)
+	}
 	return cp
 }
 
@@ -92,6 +96,9 @@ func TestPostgresCheckpointerRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(a.Close)
+	if err := migrate.Up(context.Background(), a.Pool(), migrate.Quill()); err != nil {
+		t.Fatal(err)
+	}
 	b, err := NewPostgresCheckpointer(ctx, conn)
 	if err != nil {
 		t.Fatal(err)

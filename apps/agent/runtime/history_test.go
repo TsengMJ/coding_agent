@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tsengmingchun/quill/apps/agent/llm"
+	"github.com/tsengmingchun/quill/apps/agent/migrate"
 )
 
 func TestHistoryPagersAgreeOnTurns(t *testing.T) {
@@ -20,6 +21,9 @@ func TestHistoryPagersAgreeOnTurns(t *testing.T) {
 			}
 			cp, err := NewPostgresCheckpointer(context.Background(), conn)
 			if err != nil {
+				t.Fatal(err)
+			}
+			if err := migrate.Up(context.Background(), cp.Pool(), migrate.Quill()); err != nil {
 				t.Fatal(err)
 			}
 			thread := fmt.Sprintf("hist-%d", time.Now().UnixNano())

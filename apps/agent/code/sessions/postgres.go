@@ -10,33 +10,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const postgresSchema = `
-CREATE TABLE IF NOT EXISTS quill_threads (
-	thread_id     TEXT PRIMARY KEY,
-	cwd           TEXT NOT NULL,
-	title         TEXT NOT NULL DEFAULT '',
-	created_at    TIMESTAMPTZ NOT NULL,
-	updated_at    TIMESTAMPTZ NOT NULL,
-	message_count INTEGER NOT NULL DEFAULT 0
-);
-ALTER TABLE quill_threads ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT '';
-ALTER TABLE quill_threads ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT '';
-ALTER TABLE quill_threads ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT '';
-CREATE INDEX IF NOT EXISTS quill_threads_cwd_updated ON quill_threads (cwd, updated_at DESC);
-`
-
 // PostgresStore keeps the catalog in the quill_threads table.
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresStore creates the table if needed. The caller owns the pool.
+// NewPostgresStore uses quill_threads, created by the migrate package. The caller
+// owns the pool.
 func NewPostgresStore(ctx context.Context, pool *pgxpool.Pool) (*PostgresStore, error) {
 	if pool == nil {
 		return nil, errors.New("sessions.NewPostgresStore: nil pool")
-	}
-	if _, err := pool.Exec(ctx, postgresSchema); err != nil {
-		return nil, fmt.Errorf("sessions: create quill_threads: %w", err)
 	}
 	return &PostgresStore{pool: pool}, nil
 }

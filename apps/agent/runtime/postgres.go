@@ -23,8 +23,9 @@ type PostgresCheckpointer struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresCheckpointer opens a pool, creates the checkpoint table, and
-// returns a checkpointer that survives process restarts.
+// NewPostgresCheckpointer opens a pool and returns a checkpointer that
+// survives process restarts. Its table, quill_checkpoints, is created by the
+// migrate package; run migrate.Up on Pool() before use.
 func NewPostgresCheckpointer(ctx context.Context, connString string) (*PostgresCheckpointer, error) {
 	if connString == "" {
 		return nil, fmt.Errorf("postgres checkpointer: empty connection string")
@@ -34,15 +35,7 @@ func NewPostgresCheckpointer(ctx context.Context, connString string) (*PostgresC
 		return nil, fmt.Errorf("postgres checkpointer: %w", err)
 	}
 	store := postgres.NewPostgresCheckpointStoreWithPool(pool, postgresCheckpointTable)
-	if err := store.InitSchema(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("postgres checkpointer: init schema: %w", err)
-	}
 	index := pgIndex{pool: pool, table: postgresCheckpointTable}
-	if err := index.initSchema(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("postgres checkpointer: init index: %w", err)
-	}
 	return &PostgresCheckpointer{
 		storeCheckpointer: newStoreCheckpointer(store, index),
 		pool:              pool,
@@ -65,13 +58,6 @@ func (c *PostgresCheckpointer) Close() {
 type pgIndex struct {
 	pool  *pgxpool.Pool
 	table string
-}
-
-func (p pgIndex) initSchema(ctx context.Context) error {
-	_, err := p.pool.Exec(ctx, fmt.Sprintf(
-		`CREATE INDEX IF NOT EXISTS idx_%[1]s_thread_version ON %[1]s (execution_id, version DESC, timestamp DESC)`,
-		p.table))
-	return err
 }
 
 func (p pgIndex) latest(ctx context.Context, threadID string) (*graph.Checkpoint, error) {

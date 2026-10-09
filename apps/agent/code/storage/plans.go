@@ -11,32 +11,14 @@ import (
 	"github.com/tsengmingchun/quill/apps/agent/middleware/planmode"
 )
 
-// The advisory lock serializes concurrent CREATE TABLE IF NOT EXISTS, which
-// otherwise races on pg_type and fails.
-const plansSchema = `
-SELECT pg_advisory_xact_lock(hashtext('quill_plans_schema'));
-CREATE TABLE IF NOT EXISTS quill_plans (
-	id         TEXT PRIMARY KEY,
-	thread_id  TEXT NOT NULL,
-	name       TEXT NOT NULL,
-	status     TEXT NOT NULL,
-	plan       JSONB NOT NULL,
-	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS quill_plans_thread ON quill_plans (thread_id, updated_at DESC);
-`
-
 // PostgresPlans keeps plans in quill_plans.
 type PostgresPlans struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresPlans creates the table if needed. The caller owns the pool.
+// NewPostgresPlans uses quill_plans, created by the migrate package. The caller
+// owns the pool.
 func NewPostgresPlans(ctx context.Context, pool *pgxpool.Pool) (*PostgresPlans, error) {
-	if _, err := pool.Exec(ctx, plansSchema); err != nil {
-		return nil, fmt.Errorf("create quill_plans: %w", err)
-	}
 	return &PostgresPlans{pool: pool}, nil
 }
 

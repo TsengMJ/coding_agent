@@ -9,33 +9,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const postgresSchema = `
-CREATE TABLE IF NOT EXISTS quill_workspaces (
-	id           TEXT PRIMARY KEY,
-	owner        TEXT NOT NULL DEFAULT '',
-	repo_url     TEXT NOT NULL,
-	base_branch  TEXT NOT NULL DEFAULT '',
-	image        TEXT NOT NULL,
-	dir          TEXT NOT NULL,
-	state        TEXT NOT NULL,
-	created_at   TIMESTAMPTZ NOT NULL,
-	last_used_at TIMESTAMPTZ NOT NULL
-);
-CREATE INDEX IF NOT EXISTS quill_workspaces_owner ON quill_workspaces (owner, created_at DESC);
-`
-
 // PostgresStore keeps workspaces in the quill_workspaces table.
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresStore creates the table if needed. The caller owns the pool.
+// NewPostgresStore uses quill_workspaces, created by the migrate package. The caller
+// owns the pool.
 func NewPostgresStore(ctx context.Context, pool *pgxpool.Pool) (*PostgresStore, error) {
 	if pool == nil {
 		return nil, errors.New("workspace.NewPostgresStore: nil pool")
-	}
-	if _, err := pool.Exec(ctx, postgresSchema); err != nil {
-		return nil, fmt.Errorf("workspace: create quill_workspaces: %w", err)
 	}
 	return &PostgresStore{pool: pool}, nil
 }

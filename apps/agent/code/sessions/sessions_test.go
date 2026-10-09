@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tsengmingchun/quill/apps/agent/migrate"
 )
 
 func TestNewThreadIDIsUniqueHex(t *testing.T) {
@@ -114,6 +115,9 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	if err := migrate.Up(context.Background(), pool, migrate.Quill()); err != nil {
+		t.Fatal(err)
+	}
 	s, err := NewPostgresStore(context.Background(), pool)
 	if err != nil {
 		t.Fatal(err)

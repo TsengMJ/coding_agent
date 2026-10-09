@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tsengmingchun/quill/apps/agent/backend"
 	"github.com/tsengmingchun/quill/apps/agent/llm"
+	"github.com/tsengmingchun/quill/apps/agent/migrate"
 	"github.com/tsengmingchun/quill/apps/agent/tool"
 )
 
@@ -233,6 +234,9 @@ func TestPostgresLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	if err := migrate.Up(context.Background(), pool, migrate.Quill()); err != nil {
+		t.Fatal(err)
+	}
 	l, err := NewPostgresLog(ctx, pool)
 	if err != nil {
 		t.Fatal(err)

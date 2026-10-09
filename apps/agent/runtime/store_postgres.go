@@ -11,33 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The advisory lock serializes concurrent CREATE TABLE IF NOT EXISTS, which
-// otherwise races on pg_type and fails.
-const postgresStoreSchema = `
-SELECT pg_advisory_xact_lock(hashtext('quill_store_schema'));
-CREATE TABLE IF NOT EXISTS quill_store (
-	prefix     TEXT NOT NULL,
-	key        TEXT NOT NULL,
-	value      JSONB NOT NULL,
-	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-	updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-	PRIMARY KEY (prefix, key)
-);
-CREATE INDEX IF NOT EXISTS quill_store_prefix ON quill_store (prefix text_pattern_ops);
-`
-
 // PostgresStore keeps items in the quill_store table; they never expire.
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresStore creates the table if needed. The caller owns the pool.
+// NewPostgresStore uses quill_store, created by the migrate package. The caller
+// owns the pool.
 func NewPostgresStore(ctx context.Context, pool *pgxpool.Pool) (*PostgresStore, error) {
 	if pool == nil {
 		return nil, errors.New("runtime.NewPostgresStore: nil pool")
-	}
-	if _, err := pool.Exec(ctx, postgresStoreSchema); err != nil {
-		return nil, fmt.Errorf("store: create quill_store: %w", err)
 	}
 	return &PostgresStore{pool: pool}, nil
 }

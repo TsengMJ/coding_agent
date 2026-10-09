@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tsengmingchun/quill/apps/agent/migrate"
 )
 
 func testLog(t *testing.T, l Log) {
@@ -54,6 +55,9 @@ func TestPostgresLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	if err := migrate.Up(context.Background(), pool, migrate.Quill()); err != nil {
+		t.Fatal(err)
+	}
 	l, err := NewPostgresLog(context.Background(), pool)
 	if err != nil {
 		t.Fatal(err)
