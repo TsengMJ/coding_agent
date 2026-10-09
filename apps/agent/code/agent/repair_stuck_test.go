@@ -47,6 +47,14 @@ func TestDetectStuckSameFailure(t *testing.T) {
 	}
 }
 
+func TestDetectStuckIgnoresChecksThatKeepPassing(t *testing.T) {
+	passed := step{name: "execute", args: goTest, result: goPassed}
+	msgs := transcript(failing("TestA"), editN(0), passed, editN(1), passed, editN(2), passed, editN(3), passed)
+	if r, ok := detectStuck(msgs); ok {
+		t.Fatalf("passing reruns reported as stuck: %+v", r)
+	}
+}
+
 func TestDetectStuckIgnoresProgress(t *testing.T) {
 	msgs := transcript(failing("TestA", "TestB"), editN(0), failing("TestB"), editN(1), failing("TestB"), editN(2), failing("TestB"))
 	if r, ok := detectStuck(msgs); ok {

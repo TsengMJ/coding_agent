@@ -149,7 +149,9 @@ func detectStuck(msgs []llm.Message) (stuckReport, bool) {
 	}
 	if len(ranCode) >= stuckAttempts {
 		last := ranCode[len(ranCode)-stuckAttempts:]
-		if !slices.ContainsFunc(last, func(a Attempt) bool { return a.Delta == nil || a.Delta.Kind != DeltaUnchanged }) {
+		// A check that keeps passing is "unchanged" too, but not a failure.
+		if last[len(last)-1].Result.Category != FailurePassed &&
+			!slices.ContainsFunc(last, func(a Attempt) bool { return a.Delta == nil || a.Delta.Kind != DeltaUnchanged }) {
 			return report(stuckSameFailure, fmt.Sprintf("the last %d attempts all left the same failure: %s", stuckAttempts, failureLabel(*last[len(last)-1].Result)))
 		}
 		if !slices.ContainsFunc(last, madeProgress) {
