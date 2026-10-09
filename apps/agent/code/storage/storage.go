@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/tsengmingchun/quill/apps/agent/code/audit"
+	"github.com/tsengmingchun/quill/apps/agent/code/auth"
 	"github.com/tsengmingchun/quill/apps/agent/code/cache"
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
 	"github.com/tsengmingchun/quill/apps/agent/code/trace"
@@ -56,6 +58,9 @@ type Storage struct {
 	Plans        planmode.Store
 	Traces       trace.Log
 	Workspaces   workspace.Store
+	Audit        audit.Log
+	// Users holds GitHub logins and session tokens of the remote service.
+	Users auth.Store
 	// Durable is a key-value store in Postgres.
 	Durable runtime.Store
 	// Cache holds short-lived lookups (search results, docs).
@@ -128,6 +133,14 @@ func Open(ctx context.Context, postgresConn, redisURL string) (*Storage, error) 
 	if err != nil {
 		return fail("workspaces", err)
 	}
+	auditLog, err := audit.NewPostgresLog(ctx, pool)
+	if err != nil {
+		return fail("audit", err)
+	}
+	users, err := auth.NewPostgresStore(ctx, pool)
+	if err != nil {
+		return fail("users", err)
+	}
 	return &Storage{
 		Kind:         KindPostgres,
 		Checkpointer: pg,
@@ -135,6 +148,8 @@ func Open(ctx context.Context, postgresConn, redisURL string) (*Storage, error) 
 		Plans:        plans,
 		Traces:       traces,
 		Workspaces:   workspaces,
+		Audit:        auditLog,
+		Users:        users,
 		Durable:      durable,
 		Cache:        cache.NewRedis(rdb, redisPrefix+":cache"),
 		expiring: func(ttl time.Duration) runtime.Store {
@@ -154,6 +169,8 @@ func NewMemory() *Storage {
 		Plans:        planmode.NewMemoryStore(),
 		Traces:       trace.NewMemoryLog(),
 		Workspaces:   workspace.NewMemoryStore(),
+		Audit:        audit.NewMemoryLog(),
+		Users:        auth.NewMemoryStore(),
 		Durable:      runtime.NewInMemoryStore(),
 		Cache:        cache.NewMemory(),
 		expiring:     func(time.Duration) runtime.Store { return expiring },

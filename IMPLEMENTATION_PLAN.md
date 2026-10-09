@@ -107,7 +107,14 @@
 **Goal**: 非 loopback 也能安全提供服務；每個 thread 有擁有者。
 **Success Criteria**: `make agent-check` 通過；`-public` 模式可綁任意位址；未登入 401、他人的 thread 403；稽核紀錄寫入；超過每日額度拒絕新 run。
 **Tests**: GitHub device flow（httptest 假 GitHub）、session token 建立 / 過期、授權中介層、audit、額度。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- `code/auth`：GitHub device flow（`POST /auth/device`、`POST /auth/token`（等待中 428、過期 410、拒絕或不在名單 403）、`POST /auth/logout`、`GET /auth/me`）；只有 `QUILL_ALLOWED_USERS` 名單內的 GitHub 帳號能登入。session token 只存 SHA-256，GitHub token 以 `QUILL_SECRET_KEY`（AES-256-GCM）加密存 Postgres（`quill_users`、`quill_sessions`），預設 30 天過期。
+- `code/audit`：`quill_audit` 表；記錄 login / logout / login_refused、run（含該次 run 增加的模型花費）、decision（核准哪些工具）、workspace_create / workspace_delete。`GET /audit` 只回自己的紀錄。
+- 擁有者：登入的使用者只能看、跑、改名、壓縮、追蹤、取消自己的 thread，`GET /threads` 只列自己的；本機無擁有者的 thread 對登入使用者也是 403。未登入（本機模式）行為不變。
+- 額度：`-daily-limit-usd`（`$QUILL_DAILY_LIMIT_USD`）以 audit 的當日（UTC）run 花費加總判斷，超過回 429。單次 run 不會中途被切斷，所以最多超出一個 run 的花費。
+- `quill serve -public`：可綁任意位址、必須搭配 `-workspaces`（並強制 RequireWorkspace，不能加 `-workspace-local-repos`）、所有 API 需要 `Authorization: Bearer`、`GET /healthz` 與 `/auth/*` 免登入、瀏覽器 Origin 只接受 `-allowed-origins`（並回 CORS）。TLS 交給 S3 的反向代理。
 
 ### Stage S3: 部署與維運
 **Goal**: 一份 docker-compose 在一台機器上跑起整套服務。

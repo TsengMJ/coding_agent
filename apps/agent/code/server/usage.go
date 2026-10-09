@@ -56,6 +56,9 @@ func (s *Service) GetUsage(ctx context.Context, threadID string) (*ThreadUsage, 
 	if threadID == "" {
 		return nil, fmt.Errorf("%w: thread_id is required", ErrBadRequest)
 	}
+	if err := s.AuthorizeThread(ctx, threadID); err != nil {
+		return nil, err
+	}
 	cp, err := s.checkpointer.Latest(ctx, threadID)
 	if err != nil || cp == nil {
 		return nil, err

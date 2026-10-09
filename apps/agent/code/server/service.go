@@ -15,6 +15,7 @@ import (
 
 	"github.com/tsengmingchun/quill/apps/agent/agent"
 	codeagent "github.com/tsengmingchun/quill/apps/agent/code/agent"
+	"github.com/tsengmingchun/quill/apps/agent/code/audit"
 	"github.com/tsengmingchun/quill/apps/agent/code/auth"
 	"github.com/tsengmingchun/quill/apps/agent/code/browser"
 	"github.com/tsengmingchun/quill/apps/agent/code/config"
@@ -66,6 +67,9 @@ type Config struct {
 	// RequireWorkspace refuses runs in a server directory (RunRequest.Cwd),
 	// so remote users cannot run commands on the server host.
 	RequireWorkspace bool
+	// DailyLimitUSD refuses new runs of a signed-in user who has spent this
+	// much today (UTC); zero is no limit.
+	DailyLimitUSD float64
 }
 
 // ResumeTraceTag marks the run of a turn that resumes after an approval, so
@@ -99,6 +103,8 @@ type Service struct {
 	processes    *process.Manager
 	workspaces   *workspace.Manager
 	requireWS    bool
+	audit        audit.Log
+	dailyLimit   float64
 
 	mu     sync.Mutex
 	agents map[agentKey]*agentEntry
@@ -174,6 +180,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		processes:    process.NewManager(),
 		workspaces:   cfg.Workspaces,
 		requireWS:    cfg.RequireWorkspace,
+		audit:        cfg.Storage.Audit,
+		dailyLimit:   cfg.DailyLimitUSD,
 		mcp:          cfg.MCP,
 		mcpTools:     mcpTools,
 		webModel:     webModel,
@@ -234,6 +242,12 @@ func (s *Service) BrowserStatus() BrowserStatus { return s.browsers.Status() }
 // Storage reports where threads are kept: "postgres" or "memory".
 func (s *Service) Storage() string { return s.store.Kind }
 
+// Users is where the team server keeps logins and sessions.
+func (s *Service) Users() auth.Store { return s.store.Users }
+
+// Audit is the service's audit log; nil when the storage has none.
+func (s *Service) Audit() audit.Log { return s.audit }
+
 // ModelInfo identifies the service's default model.
 func (s *Service) ModelInfo() llm.ModelInfo { return s.defaultModel.model.Info() }
 
@@ -262,18 +276,31 @@ func (s *Service) Close() error {
 }
 
 func (s *Service) GetTrace(ctx context.Context, threadID string) (*trace.Trace, error) {
+	if err := s.AuthorizeThread(ctx, threadID); err != nil {
+		return nil, err
+	}
 	return s.traces.Load(threadID)
 }
 
 func (s *Service) GetTraceSummary(ctx context.Context, threadID string) (*trace.Trace, error) {
+	if err := s.AuthorizeThread(ctx, threadID); err != nil {
+		return nil, err
+	}
 	return s.traces.Summary(threadID)
 }
 
 func (s *Service) GetLLMCall(ctx context.Context, threadID string, seq int) (*trace.LLMCallDetail, error) {
+	if err := s.AuthorizeThread(ctx, threadID); err != nil {
+		return nil, err
+	}
 	return s.traces.LLMCall(threadID, seq)
 }
 
+// ListThreads lists threads; a signed-in user only sees their own.
 func (s *Service) ListThreads(ctx context.Context, f sessions.Filter) ([]sessions.Info, error) {
+	if u, ok := auth.UserFrom(ctx); ok {
+		f.Owner = u.ID
+	}
 	list, err := s.sessions.List(ctx, f)
 	if err != nil {
 		return nil, err
@@ -292,6 +319,9 @@ func (s *Service) RenameThread(ctx context.Context, threadID, title string) (*se
 	if threadID == "" || title == "" || len([]rune(title)) > 120 || strings.ContainsAny(title, "\r\n") {
 		return nil, fmt.Errorf("%w: title must be a single line of 1–120 characters", ErrBadRequest)
 	}
+	if err := s.AuthorizeThread(ctx, threadID); err != nil {
+		return nil, err
+	}
 	info, err := s.sessions.SetTitle(ctx, threadID, title)
 	if err != nil {
 		return nil, err
@@ -303,6 +333,9 @@ func (s *Service) RenameThread(ctx context.Context, threadID, title string) (*se
 }
 
 func (s *Service) GetThread(ctx context.Context, threadID string) (*ThreadState, error) {
+	if err := s.AuthorizeThread(ctx, threadID); err != nil {
+		return nil, err
+	}
 	cp, err := s.checkpointer.Latest(ctx, threadID)
 	if err != nil || cp == nil {
 		return nil, err
@@ -328,6 +361,9 @@ func (s *Service) GetThread(ctx context.Context, threadID string) (*ThreadState,
 func (s *Service) GetHistory(ctx context.Context, threadID string, before, limit int) (*HistoryPage, error) {
 	if threadID == "" {
 		return nil, fmt.Errorf("%w: thread_id is required", ErrBadRequest)
+	}
+	if err := s.AuthorizeThread(ctx, threadID); err != nil {
+		return nil, err
 	}
 	p, err := runtime.LoadHistoryPage(ctx, s.checkpointer, threadID, before, limit)
 	if err != nil || p == nil {
@@ -373,6 +409,9 @@ func (s *Service) Compact(ctx context.Context, threadID string) (*CompactResult,
 
 	info, err := s.sessions.Get(ctx, threadID)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkOwner(ctx, info); err != nil {
 		return nil, err
 	}
 	cp, err := s.checkpointer.Latest(ctx, threadID)
@@ -438,6 +477,9 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	if err := checkOwner(ctx, info); err != nil {
 		return err
 	}
+	if err := s.checkBudget(ctx); err != nil {
+		return err
+	}
 	var ws *workspace.Workspace
 	if req.WorkspaceID != "" {
 		if info != nil && info.WorkspaceID != req.WorkspaceID {
@@ -476,6 +518,22 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	if err := s.touch(ctx, req, prev, rm.spec); err != nil {
 		return err
 	}
+	s.recordDecisions(ctx, req, prev)
+	var runErr error
+	defer func() {
+		var before []llm.Message
+		if prev != nil {
+			before = prev.State.Messages
+		}
+		var paused *runtime.InterruptError
+		failed := runErr
+		if errors.As(runErr, &paused) {
+			failed = nil
+		}
+		if latest, err := s.checkpointer.Latest(context.WithoutCancel(ctx), req.ThreadID); err == nil && latest != nil {
+			s.recordRun(ctx, req, rm.spec, before, latest.State.Messages, failed)
+		}
+	}()
 
 	// sent counts the messages already sent per namespace ("" is the main agent).
 	sent := map[string]int{}
@@ -492,7 +550,6 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 	ctx, tr := s.startTrace(ctx, req.ThreadID)
 	defer tr.stop()
 	ctx = trace.WithBrowserMCP(ctx, string(bt.kind))
-	var runErr error
 	for ev, err := range a.Stream(ctx, in, cfg, runtime.StreamValues, runtime.StreamMessages) {
 		if err != nil {
 			runErr = err

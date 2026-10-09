@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tsengmingchun/quill/apps/agent/code/audit"
 	"github.com/tsengmingchun/quill/apps/agent/code/commands"
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
 	"github.com/tsengmingchun/quill/apps/agent/code/trace"
@@ -47,6 +48,7 @@ var (
 //	POST /threads/{id}/compact -> CompactResult (404 unknown, 409 busy/pending/too short)
 //	GET  /threads/{id}/usage -> ThreadUsage (404 when unknown)
 //	GET  /commands        -> []commands.Command (quill slash commands, hidden ones omitted)
+//	GET  /audit           ?limit= -> []audit.Event of the signed-in user, newest first
 func NewHandler(srv Server) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -63,7 +65,21 @@ func NewHandler(srv Server) http.Handler {
 	mux.HandleFunc("POST /runs", func(w http.ResponseWriter, r *http.Request) {
 		handleRun(w, r, srv, runs)
 	})
+	authorize := func(w http.ResponseWriter, r *http.Request) bool {
+		a, ok := srv.(threadAuthorizer)
+		if !ok {
+			return true
+		}
+		if err := a.AuthorizeThread(r.Context(), r.PathValue("id")); err != nil {
+			writeError(w, statusFor(err), err)
+			return false
+		}
+		return true
+	}
 	mux.HandleFunc("GET /threads/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		if !authorize(w, r) {
+			return
+		}
 		run := runs.get(r.PathValue("id"))
 		if run == nil {
 			w.WriteHeader(http.StatusNoContent)
@@ -72,6 +88,9 @@ func NewHandler(srv Server) http.Handler {
 		streamRun(w, r, run)
 	})
 	mux.HandleFunc("POST /threads/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		if !authorize(w, r) {
+			return
+		}
 		run := runs.get(r.PathValue("id"))
 		if run == nil {
 			writeError(w, http.StatusNotFound, errors.New("thread has no running run"))
@@ -103,7 +122,7 @@ func NewHandler(srv Server) http.Handler {
 	mux.HandleFunc("GET /threads/{id}", func(w http.ResponseWriter, r *http.Request) {
 		ts, err := srv.GetThread(r.Context(), r.PathValue("id"))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
+			writeError(w, statusFor(err), err)
 			return
 		}
 		if ts == nil {
@@ -200,7 +219,40 @@ func NewHandler(srv Server) http.Handler {
 	if ws, ok := srv.(WorkspaceServer); ok {
 		addWorkspaceRoutes(mux, ws)
 	}
+	if al, ok := srv.(auditLister); ok {
+		mux.HandleFunc("GET /audit", func(w http.ResponseWriter, r *http.Request) {
+			limit := 100
+			if s := r.URL.Query().Get("limit"); s != "" {
+				n, err := strconv.Atoi(s)
+				if err != nil || n < 1 || n > 1000 {
+					writeError(w, http.StatusBadRequest, errors.New("limit must be between 1 and 1000"))
+					return
+				}
+				limit = n
+			}
+			list, err := al.AuditLog(r.Context(), limit)
+			if err != nil {
+				writeError(w, statusFor(err), err)
+				return
+			}
+			if list == nil {
+				list = []audit.Event{}
+			}
+			writeJSON(w, http.StatusOK, list)
+		})
+	}
 	return mux
+}
+
+// threadAuthorizer refuses a signed-in user another user's thread on
+// routes that do not go through a Server method taking the thread.
+type threadAuthorizer interface {
+	AuthorizeThread(ctx context.Context, threadID string) error
+}
+
+// auditLister backs GET /audit: the signed-in user's own events.
+type auditLister interface {
+	AuditLog(ctx context.Context, limit int) ([]audit.Event, error)
 }
 
 // addWorkspaceRoutes exposes the workspace API:
@@ -401,6 +453,10 @@ func ServeHandler(ctx context.Context, addr string, h http.Handler, ready func(n
 	if err := requireLoopback(addr); err != nil {
 		return err
 	}
+	return serve(ctx, addr, h, ready)
+}
+
+func serve(ctx context.Context, addr string, h http.Handler, ready func(net.Addr)) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err

@@ -141,7 +141,7 @@ func connect(ctx context.Context, e env, serverURL, model string) (server.Server
 		}
 		return r, nil
 	}
-	svc, err := newService(ctx, e, model, nil)
+	svc, err := newService(ctx, e, model, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("start agent: %w", err)
 	}
@@ -150,8 +150,8 @@ func connect(ctx context.Context, e env, serverURL, model string) (server.Server
 
 // newService opens Postgres and Redis, both required, and starts the
 // in-process service on them.
-// newService builds the agent service; ws, when set, enables workspaces.
-func newService(ctx context.Context, e env, model string, ws *workspaceFlags) (*server.Service, error) {
+// ws, when set, enables workspaces; pub, when set, the team server limits.
+func newService(ctx context.Context, e env, model string, ws *workspaceFlags, pub *publicFlags) (*server.Service, error) {
 	ls, err := codeagent.NewLangSmith(e.settings)
 	if err != nil {
 		return nil, err
@@ -166,6 +166,9 @@ func newService(ctx context.Context, e env, model string, ws *workspaceFlags) (*
 		return nil, err
 	}
 	cfg.Storage = st
+	if pub != nil && pub.enabled {
+		cfg.DailyLimitUSD = pub.dailyLimitUSD
+	}
 	if ws != nil && ws.root != "" {
 		m, err := ws.manager(st.Workspaces)
 		if err != nil {
@@ -314,12 +317,17 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("quill serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	addr := fs.String("addr", server.DefaultAddr, "listen address (loopback only)")
+	addr := fs.String("addr", server.DefaultAddr, "listen address (loopback only, unless -public)")
 	model := fs.String("model", "", modelFlagUsage)
 	sandboxMode := fs.String("sandbox", "", sandboxFlagUsage)
 	var ws workspaceFlags
 	ws.register(fs)
+	var pub publicFlags
+	pub.register(fs)
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := pub.check(&ws); err != nil {
 		return err
 	}
 	e, err := loadEnv()
@@ -329,11 +337,14 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	if err := e.applySandbox(*sandboxMode); err != nil {
 		return err
 	}
+	if pub.enabled {
+		return servePublic(ctx, e, *addr, *model, &ws, &pub, stderr)
+	}
 	token, err := server.ServeToken()
 	if err != nil {
 		return err
 	}
-	svc, err := newService(ctx, e, *model, &ws)
+	svc, err := newService(ctx, e, *model, &ws, nil)
 	if err != nil {
 		return fmt.Errorf("start agent: %w", err)
 	}
