@@ -975,3 +975,60 @@
 - E3 卡住偵測與 `<repair-state>`（`d65e016`）：環境類 attempt 不計入 `same_failure` / `no_progress` / `same_patch`；連續 3 次環境錯誤回報新規則 `environment`，要求修環境或問使用者，不擋編輯（修環境可能要改 `go.mod`）；`<repair-state>` 的 next 改成點出環境問題。測試：`TestDetectStuckEnvironment`、`TestDetectStuckLeavesEnvironmentAttemptsOutOfTheCodeRules`、`TestDetectStuckSamePatchIgnoresEnvironmentChecks`、`TestStuckRefusalLetsEditsThroughAfterAnEnvironmentNote`、`TestDeriveRepairPhases` 新增一列。
 - E4 驗證關卡（`ba4722e`）：最後一次檢查是環境錯誤時，訊息是「could not run because of the environment (Env)」加上同樣的建議，沒有「Fix the cause」。測試：`TestVerifyGateNamesTheEnvironmentProblem`、`TestVerifyGateAsksToFixACodeFailure`。
 - E5 e2e：`TestAgentGetsEnvironmentAdviceInsteadOfFixingCode`（headless，缺 go.sum 拿到 `go mod tidy` 建議、micro 只提醒一次、離線的 `go test` 判為 network、關卡訊息點出環境問題）。
+- Bench A2 `20261008-091748-quill-hard-go`（修復迴圈全開，含 cache 尾端修正 `c0d205a`、checkpoint 修正 `577715c` 與本 stage），各 1 次：
+
+  | 題 | 解出 A / B / A2 | 步數 A / B / A2 | input tokens (M) | cache % | peak ctx (k) | $ | 分鐘 |
+  |---|---|---|---|---|---|---|---|
+  | flipt-c188 | 0 / 0 / 0 | 83 / 47 / 43 | 19.8 / 5.5 / 4.8 | 33 / 84 / 84 | 553 / 307 / 293 | 1.52 / 0.17 / 0.15 | 47 / 18 / 19 |
+  | vuls-ca3f | 1 / 1 / 1 | 109 / 59 / 113 | 27.8 / 7.2 / 18.7 | 37 / 81 / 90 | 536 / 240 / 420 | 1.96 / 0.24 / 0.44 | 50 / 25 / 42 |
+
+  - 成本下降大部分來自 cache 修正（命中率 33–37% → 84–90%），步數和 peak context 才反映行為的改變。
+  - flipt：micro 3 次（2 次是真的要處理的程式碼問題：專案內還沒建立的套件、還沒加進 go.mod 的外部套件；1 次 environment/network），檢查判為 environment，關卡兩次都寫「could not run because of the environment (network)」，agent 第 40 步就說明網路不通並結束（RL8 的 A 是 83 步）。步數、成本都和 B 相當。
+  - vuls：步數沒有下降。編輯 57 次、平均分布在整段（A 是 32 次），沒有環境錯誤引發的反覆修改；後段的檢查因為任務要求的 go.mod 升級（goval-dictionary v0.7.4 不在離線 cache）判為 dependency。單次樣本，差異可能是軌跡本身的變異。
+  - 發現的問題（未修，等使用者決定）：
+    - `same_failure` 會把連續 3 次「通過 → 通過」（delta `unchanged`）當成卡住：vuls 第 94 步收到 `the last 3 attempts all left the same failure: passed`。和 RL6 checkpoint 的 `passed → passed` 是同一類問題。
+    - 缺 go.sum 的建議是 `go mod tidy`，但離線時它也會失敗；vuls 的 agent 自己判斷出來了，最後一步才試 `go mod download`。
+  - Success Criteria：解題率不變；flipt 的步數與成本在 B 的 20% 內，vuls 沒有（步數 +92%、成本 +83%）。
+
+## Desktop 與瀏覽器（D1–D5）
+
+專案改成 monorepo（`apps/agent` Go 服務、`apps/desktop` Electron），移除 TUI，GUI 改由 Electron 包裝，並在 Electron 內嵌瀏覽器面板，讓 Playwright MCP 與 Chrome DevTools MCP 透過 CDP 過濾 proxy 操作它。可行性見 [docs/browser_spike.md](docs/browser_spike.md)。
+
+### D1: Monorepo 搬遷與移除 TUI
+
+**Goal**: Go 程式搬到 `apps/agent`（module path `github.com/tsengmingchun/quill/apps/agent`）；刪除 `code/tui`、`-tui`、`-plain`、在瀏覽器分頁開 GUI 的模式與 `code/gui` 的靜態檔；`quill serve` 強制 token，啟動時寫 `~/.quill/agent.json`；根目錄 Makefile 與 npm workspace。
+**Success Criteria**: 根目錄 `make agent-check` 通過；`quill -n` 與 `quillbench` 照常；沒有 token 的 API 請求回 403。
+**Tests**: server 的 loopback Host、token、Origin 檢查；`agent.json` 寫入（0600）與 `QUILL_AGENT_TOKEN` 覆寫；既有測試全數通過。
+**Status**: Complete（`59a4b48`）
+
+### D2: Electron 桌面端
+
+**Goal**: `apps/desktop`（electron-vite + TypeScript），React GUI 搬成 renderer；main process 以 `quill://` protocol 服務 renderer，並把 `/api/*` 轉送到 agent、注入 token；agent 沒啟動時顯示錯誤頁。
+**Success Criteria**: `make serve` 與 `make desktop` 分開啟動後可完整操作 GUI；`make desktop-check`（typecheck、vitest、build）通過。
+**Tests**: API 轉送（token 注入、串流、非 `/api` 路徑、agent 不在線）；既有前端測試。
+**Note**: electron-vite 5 的 peer dependency 只到 vite 7，和現有 vite 8 衝突，改成 renderer 用 Vite、main 用 `tsc -p tsconfig.main.json` 建置。
+**Status**: Complete（`4ca993c`）
+
+### D3: Go MCP client
+
+**Goal**: 用官方 `github.com/modelcontextprotocol/go-sdk` 實作 `code/mcp` 的 stdio client；MCP 工具轉成 `tool.Tool`（`mcp__<server>__<tool>`），text / image content 轉成對應 block。
+**Success Criteria**: agent 能列出並呼叫 MCP server 的工具；MCP server 掛掉時回傳錯誤 tool message 而非讓 run 失敗。
+**Tests**: in-process MCP server：工具列表、呼叫、isError 轉換、image 轉換、Close；設定檔載入。
+**Note**: 只讀 `~/.quill/mcp.json`（專案目錄不能新增 server）；`[mcp] allow_tools` 設定免核准的工具。
+**Status**: Complete（`4466004`）
+
+### D4: 內嵌瀏覽器與兩種 MCP
+
+**Goal**: Electron 瀏覽器面板（獨立 session partition、只允許 localhost）；main process 的 CDP 過濾 proxy（依 browserContextId 放行）；`PUT /api/browser` 告知 agent endpoint；`[browser] mcp = "playwright" | "chrome-devtools"`，每次 run 可覆寫，trace 記錄使用的 MCP。
+**Success Criteria**: GUI 中可看到 agent 一步步操作面板；proxy 讓 GUI target 不可見；兩種 MCP 都能 navigate / snapshot / click。
+**Tests**: proxy 單元測試（GUI target 不可見、attach / 偽造 session 被拒、createTarget 改寫）；agent 端 browser 設定與 preset 參數；MCP 工具只在有 endpoint 時出現。
+**Note**: 實機 e2e 兩種 MCP 都能 navigate / snapshot / click（計數頁點兩下讀到正確值）。額外加了工具政策（拿掉 `browser_run_code_unsafe`、`upload_file`、寫檔路徑與 `isolatedContext` 參數）；面板每次導航後要重設 backgroundThrottling，否則沒有 rAF、Playwright click 逾時（見 docs/browser_spike.md）。
+**Status**: Complete（`43eef67`）
+
+### D5: 開發伺服器與截圖回饋
+
+**Goal**: 背景行程工具（`start_process`、`read_process_output`、`stop_process`，沙箱內、跟著 thread）；`unsupportedcontent` 把 tool 訊息裡的圖片搬到後面的 user 訊息；timeline 顯示瀏覽器工具截圖。
+**Success Criteria**: agent 能啟動 dev server 後用瀏覽器驗證；MCP 截圖能送給 OpenAI 模型。
+**Tests**: 背景行程啟動、讀輸出、停止、thread 結束清理；圖片搬移（支援 / 不支援 tool 圖片的 profile）；OpenAI 請求形狀。
+**Note**: 沒有刪除 thread 的 API，所以行程跟著 thread 保留到 `quill serve` 結束（每個 thread 最多同時 4 個）；工具只在互動 session 提供，核准規則同 `execute`。實機 e2e：start_process 起 http.server → Playwright 開頁、點擊、截圖（經 OpenRouter 的 OpenAI 相容模型，正確讀出 count: 1）→ stop_process，時間軸顯示截圖縮圖。
+**Status**: Complete（`edb4b4c`、`f6ec701`、`9e7d9d3`）
