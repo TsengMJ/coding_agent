@@ -146,7 +146,8 @@ func runRun(ctx context.Context, e env, args []string, stdout, stderr io.Writer)
 	prune := fs.Bool("prune-images", false, "remove each task image after its last attempt")
 	keep := fs.Bool("keep-workspace", false, "keep the agent's copy of each repository")
 	notes := fs.String("notes", "", "free-form notes stored with the run")
-	disable := fs.String("disable", "", "comma-separated agent features to turn off for ablation: "+strings.Join(codeagent.Features, ", "))
+	disable := fs.String("disable", strings.Join(codeagent.DefaultDisabled, ","),
+		"comma-separated agent features to turn off, empty for none (default: what quill ships); known: "+strings.Join(codeagent.Features, ", "))
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

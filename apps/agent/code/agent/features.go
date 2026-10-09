@@ -63,6 +63,12 @@ const (
 // Features lists every name Options.Disable accepts.
 var Features = []string{FeatureBaseline, FeatureDiffReview, FeatureTestEdits, FeatureProgress, FeatureBudget, FeatureFailureClass, FeatureRepairState, FeatureMicro, FeatureRepro, FeaturePlanner, FeatureStuck, FeatureCheckpoint, FeatureReviewer}
 
+// DefaultDisabled is what quill ships with: the verify gate, micro checks,
+// checkpoints and the progress / budget guards stay on; the rest of the
+// repair loop multiplied steps and cost in the RL8 ablation without solving
+// more tasks.
+var DefaultDisabled = []string{FeatureFailureClass, FeatureRepairState, FeatureRepro, FeaturePlanner, FeatureStuck, FeatureReviewer}
+
 // ParseFeatures splits a comma-separated list of feature names and rejects
 // unknown ones.
 func ParseFeatures(list string) ([]string, error) {

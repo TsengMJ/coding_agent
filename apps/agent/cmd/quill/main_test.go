@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	codeagent "github.com/tsengmingchun/quill/apps/agent/code/agent"
 	"github.com/tsengmingchun/quill/apps/agent/code/config"
 	"github.com/tsengmingchun/quill/apps/agent/code/server"
 	"github.com/tsengmingchun/quill/apps/agent/code/sessions"
@@ -129,6 +130,26 @@ func TestHeadlessFlagsRequireAPrompt(t *testing.T) {
 		if code != 2 || err == nil || !strings.Contains(err.Error(), "requires -n") {
 			t.Errorf("%v: code=%d err=%v", args, code, err)
 		}
+	}
+}
+
+func TestDisableFlagRejectsUnknownFeatures(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code, err := run(context.Background(), []string{"-disable", "bogus", "-n", "hi"}, &stdout, &stderr)
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "unknown feature") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestDisableDefaultsToTheShippedRepairLoop(t *testing.T) {
+	t.Setenv(disableEnvVar, "")
+	os.Unsetenv(disableEnvVar)
+	if got, want := defaultDisable(), strings.Join(codeagent.DefaultDisabled, ","); got != want {
+		t.Errorf("unset: %q, want %q", got, want)
+	}
+	t.Setenv(disableEnvVar, "")
+	if got := defaultDisable(); got != "" {
+		t.Errorf("empty env turns everything on, got %q", got)
 	}
 }
 

@@ -35,7 +35,13 @@ const (
 	serverFlagUsage  = "quill serve URL (default $" + config.ServerEnvVar + " or server.url in config.toml)"
 	sandboxFlagUsage = "shell sandbox for this run: read-only, workspace-write or full-access (default $" +
 		config.SandboxModeEnvVar + " or sandbox.mode in config.toml, else workspace-write on macOS and Linux)"
+	disableEnvVar = "QUILL_DISABLE"
 )
+
+func disableUsage() string {
+	return "comma-separated agent features to turn off, empty for none (default $" + disableEnvVar + ", else " +
+		strings.Join(codeagent.DefaultDisabled, ",") + "; known: " + strings.Join(codeagent.Features, ", ") + ")"
+}
 
 func main() {
 	ossandbox.MaybeRunNetBridge()
@@ -70,6 +76,7 @@ type env struct {
 	cwd      string
 	paths    config.Paths
 	settings *config.Settings
+	disable  []string
 }
 
 // loadEnv loads .env files, then config.toml with environment overrides.
@@ -119,6 +126,30 @@ func (e env) applySandbox(flagValue string) error {
 	return err
 }
 
+// applyDisable sets the agent features to turn off from the -disable flag,
+// else $QUILL_DISABLE, else codeagent.DefaultDisabled. It runs after
+// loadEnv so .env files can set the variable.
+func (e *env) applyDisable(fs *flag.FlagSet, flagValue string) error {
+	if !flagWasSet(fs, "disable") {
+		flagValue = defaultDisable()
+	}
+	disabled, err := codeagent.ParseFeatures(flagValue)
+	if err != nil {
+		return fmt.Errorf("-disable: %w", err)
+	}
+	e.disable = disabled
+	return nil
+}
+
+// defaultDisable is $QUILL_DISABLE when set (empty turns every feature
+// on), else codeagent.DefaultDisabled.
+func defaultDisable() string {
+	if v, ok := os.LookupEnv(disableEnvVar); ok {
+		return v
+	}
+	return strings.Join(codeagent.DefaultDisabled, ",")
+}
+
 func flagWasSet(fs *flag.FlagSet, name string) bool {
 	set := false
 	fs.Visit(func(f *flag.Flag) {
@@ -156,7 +187,7 @@ func newService(ctx context.Context, e env, model string, ws *workspaceFlags, pu
 	if err != nil {
 		return nil, err
 	}
-	cfg := server.Config{Settings: e.settings, Paths: e.paths, ModelSpec: model}
+	cfg := server.Config{Settings: e.settings, Paths: e.paths, ModelSpec: model, Disable: e.disable}
 	if ls != nil {
 		cfg.Tracer = ls
 	}
@@ -229,6 +260,7 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 	noStream := fs.Bool("no-stream", false, "with -n: print the reply once complete instead of token by token")
 	timeout := fs.Duration("timeout", 0, "with -n: cancel after this long (e.g. 10m) and exit 124")
 	sandboxMode := fs.String("sandbox", "", sandboxFlagUsage)
+	disable := fs.String("disable", "", disableUsage())
 	version := fs.Bool("version", false, "print version and exit")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage:\n"+
@@ -273,6 +305,9 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) (int
 	e, err := loadEnv()
 	if err != nil {
 		return 1, err
+	}
+	if err := e.applyDisable(fs, *disable); err != nil {
+		return 2, err
 	}
 	serverURL := e.serverURL(fs, *serverFlag)
 	if serverURL == "" {
@@ -320,6 +355,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	addr := fs.String("addr", server.DefaultAddr, "listen address (loopback only, unless -public)")
 	model := fs.String("model", "", modelFlagUsage)
 	sandboxMode := fs.String("sandbox", "", sandboxFlagUsage)
+	disable := fs.String("disable", "", disableUsage())
 	var ws workspaceFlags
 	ws.register(fs)
 	var pub publicFlags
@@ -332,6 +368,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	e, err := loadEnv()
 	if err != nil {
+		return err
+	}
+	if err := e.applyDisable(fs, *disable); err != nil {
 		return err
 	}
 	if pub.enabled {

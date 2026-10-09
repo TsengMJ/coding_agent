@@ -56,6 +56,9 @@ type Config struct {
 	// NoVerifyGate lets headless runs finish without the agent's
 	// verify-before-done check (see codeagent.VerifyGate).
 	NoVerifyGate bool
+	// Disable turns agent features off by name (codeagent.Features); nil
+	// keeps them all on.
+	Disable []string
 	// Tracer records run trees (codeagent.NewLangSmith); nil is off.
 	// Service.Close closes it when it has a Close method.
 	Tracer tracing.Tracer
@@ -109,6 +112,7 @@ type Service struct {
 	artifacts    *codeagent.Artifacts
 	traces       *trace.Store
 	noVerifyGate bool
+	disable      []string
 	tracer       tracing.Tracer
 	mcp          mcp.Session
 	mcpTools     []tool.Tool
@@ -215,6 +219,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		agents:       map[agentKey]*agentEntry{},
 		busy:         map[string]bool{},
 		noVerifyGate: cfg.NoVerifyGate,
+		disable:      cfg.Disable,
 		tracer:       cfg.Tracer,
 		store:        cfg.Storage,
 		checkpointer: cfg.Storage.Checkpointer,
@@ -790,6 +795,7 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest, bt browserTools,
 			Cache:        s.store.Cache,
 			Interactive:  req.Interactive,
 			NoVerifyGate: s.noVerifyGate,
+			Disable:      s.disable,
 			Tracer:       s.tracer,
 			MCPTools:     slices.Concat(s.mcpTools, bt.tools),
 			BrowserMCP:   string(bt.kind),

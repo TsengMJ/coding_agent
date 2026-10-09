@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	codeagent "github.com/tsengmingchun/quill/apps/agent/code/agent"
 	"github.com/tsengmingchun/quill/apps/agent/code/askuser"
 	"github.com/tsengmingchun/quill/apps/agent/code/config"
 	"github.com/tsengmingchun/quill/apps/agent/code/storage"
@@ -34,6 +35,27 @@ func specNames(req llm.ChatRequest) []string {
 		names = append(names, s.Name)
 	}
 	return names
+}
+
+func TestDisabledFeaturesReachTheAgent(t *testing.T) {
+	tools := func(disable []string) []string {
+		model := llm.NewFakeModel(llm.NewAssistantMessage("done"))
+		svc, err := New(context.Background(), Config{Storage: storage.NewMemory(), Model: model, NoVerifyGate: true, Disable: disable})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer svc.Close()
+		if _, err := collect(t, svc, userReq("t", t.TempDir(), "hi")); err != nil {
+			t.Fatal(err)
+		}
+		return specNames(model.Requests()[0])
+	}
+	if names := tools(nil); !slices.Contains(names, codeagent.RepairToolName) {
+		t.Fatalf("all features on, tools = %v", names)
+	}
+	if names := tools([]string{codeagent.FeatureRepairState}); slices.Contains(names, codeagent.RepairToolName) {
+		t.Fatalf("repair_state disabled, tools = %v", names)
+	}
 }
 
 func TestValidateRejectsBadModes(t *testing.T) {
