@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/tsengmingchun/quill/apps/agent/code/auth"
+	"github.com/tsengmingchun/quill/apps/agent/code/process"
 	"github.com/tsengmingchun/quill/apps/agent/code/storage"
 	"github.com/tsengmingchun/quill/apps/agent/code/workspace"
 	"github.com/tsengmingchun/quill/apps/agent/llm"
@@ -66,6 +67,13 @@ func gitRepo(t *testing.T, files map[string]string) string {
 
 func newWorkspaceService(t *testing.T, require bool, replies ...llm.Message) *Service {
 	t.Helper()
+	return newWorkspaceServiceWith(t, func(c *Config) { c.RequireWorkspace = require }, replies...)
+}
+
+// newWorkspaceServiceWith is newWorkspaceService with configure applied to
+// the service config.
+func newWorkspaceServiceWith(t *testing.T, configure func(*Config), replies ...llm.Message) *Service {
+	t.Helper()
 	bin := filepath.Join(t.TempDir(), "docker")
 	if err := os.WriteFile(bin, []byte(fakeDockerScript), 0o755); err != nil {
 		t.Fatal(err)
@@ -77,10 +85,9 @@ func newWorkspaceService(t *testing.T, require bool, replies ...llm.Message) *Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := New(context.Background(), Config{
-		Storage: store, Model: llm.NewFakeModel(replies...), NoVerifyGate: true,
-		Workspaces: m, RequireWorkspace: require,
-	})
+	cfg := Config{Storage: store, Model: llm.NewFakeModel(replies...), NoVerifyGate: true, Workspaces: m}
+	configure(&cfg)
+	svc, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +139,39 @@ func TestServiceRunsInAWorkspace(t *testing.T) {
 	info, _ := svc.sessions.Get(ctx, "t1")
 	if info == nil || info.WorkspaceID != ws.ID {
 		t.Fatalf("thread info = %+v", info)
+	}
+}
+
+func TestInteractiveWorkspaceRunsStartProcessesInTheContainer(t *testing.T) {
+	repo := gitRepo(t, map[string]string{"README.md": "hello\n"})
+	svc := newWorkspaceService(t, true,
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "s", Name: process.StartName,
+			Args: map[string]any{"command": "echo serving; pwd > where.txt; sleep 30", "wait_seconds": 1}}}},
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "k", Name: process.StopName,
+			Args: map[string]any{"id": "p1"}}}},
+		llm.NewAssistantMessage("done"),
+	)
+	ws, err := svc.CreateWorkspace(context.Background(), workspace.Spec{RepoURL: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := wsReq("t1", ws.ID, "start the server")
+	req.Interactive = true
+	events, err := collect(t, svc, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, m := range messages(events) {
+		out[m.ToolCallID] = m.Text()
+	}
+	if !strings.Contains(out["s"], "serving") || !strings.Contains(out["k"], "stopped") {
+		t.Fatalf("start = %q, stop = %q", out["s"], out["k"])
+	}
+	got, _ := svc.GetWorkspace(context.Background(), ws.ID)
+	where, _ := os.ReadFile(filepath.Join(got.Dir, "where.txt"))
+	if real, _ := filepath.EvalSymlinks(got.Dir); strings.TrimSpace(string(where)) != real && strings.TrimSpace(string(where)) != got.Dir {
+		t.Fatalf("process ran in %q, want the workspace %q", where, got.Dir)
 	}
 }
 

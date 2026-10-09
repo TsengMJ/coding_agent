@@ -92,6 +92,34 @@ describe("handleAppRequest API forwarding", () => {
   });
 });
 
+describe("handleAppRequest with a team server", () => {
+  const remote = { url: "https://quill.example.com", token: "sess", remote: true };
+
+  it("sends the session as a bearer token and never the renderer's", async () => {
+    const d = deps(remote);
+    await handleAppRequest(new Request("quill://app/api/threads/t1/events", { headers: { Authorization: "Bearer renderer" } }), d);
+    expect(d.seen[0].url).toBe("https://quill.example.com/threads/t1/events");
+    const h = new Headers(d.seen[0].init.headers);
+    expect(h.get("Authorization")).toBe("Bearer sess");
+    expect(h.get("X-Quill-Token")).toBeNull();
+  });
+
+  it("reports a refused session", async () => {
+    const refused: string[] = [];
+    const d = { ...deps(remote, () => new Response('{"error":"session expired"}', { status: 401 })), onUnauthorized: (u: string) => refused.push(u) };
+    const resp = await handleAppRequest(new Request("quill://app/api/info"), d);
+    expect(resp.status).toBe(401);
+    expect(refused).toEqual(["https://quill.example.com"]);
+  });
+
+  it("does not report 401 from a local agent", async () => {
+    const refused: string[] = [];
+    const d = { ...deps(agent, () => new Response("{}", { status: 401 })), onUnauthorized: (u: string) => refused.push(u) };
+    await handleAppRequest(new Request("quill://app/api/info"), d);
+    expect(refused).toEqual([]);
+  });
+});
+
 describe("handleAppRequest static files", () => {
   it("serves renderer files with a content type", async () => {
     const resp = await handleAppRequest(new Request("quill://app/assets/app.js"), deps(agent));

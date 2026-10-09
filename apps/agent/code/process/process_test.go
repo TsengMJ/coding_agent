@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,6 +69,34 @@ func TestStopKillsTheWholeProcessGroup(t *testing.T) {
 	time.Sleep(1500 * time.Millisecond)
 	if _, err := os.Stat(filepath.Join(dir, "child-survived")); err == nil {
 		t.Fatal("background child outlived stop")
+	}
+}
+
+// remoteShell runs commands locally but, like docker exec, needs StopCommand
+// to end them.
+type remoteShell struct {
+	*backend.LocalShellBackend
+	stopped []string
+}
+
+func (r *remoteShell) StopCommand(cmd *exec.Cmd) {
+	r.stopped = append(r.stopped, cmd.Args[len(cmd.Args)-1])
+}
+
+func TestStopAlsoStopsTheRemoteSideOfAStopper(t *testing.T) {
+	sh, _ := shell(t)
+	r := &remoteShell{LocalShellBackend: sh}
+	m := NewManager()
+	defer m.Close()
+	p, err := m.Start("t1", r, "sleep 30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Stop("t1", p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.stopped) != 1 || !strings.Contains(r.stopped[0], "sleep 30") {
+		t.Fatalf("StopCommand calls = %q", r.stopped)
 	}
 }
 

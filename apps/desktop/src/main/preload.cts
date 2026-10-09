@@ -9,6 +9,13 @@ interface Rect {
 }
 
 contextBridge.exposeInMainWorld("quillDesktop", {
+  connection: {
+    get: () => ipcRenderer.invoke("connection:get"),
+    useLocal: () => ipcRenderer.invoke("connection:local"),
+    login: (url: string) => ipcRenderer.invoke("connection:login", url),
+    wait: () => ipcRenderer.invoke("connection:wait"),
+    logout: () => ipcRenderer.invoke("connection:logout"),
+  },
   browser: {
     setBounds: (rect: Rect | null) => ipcRenderer.send("browser:bounds", rect),
     navigate: (url: string) => ipcRenderer.send("browser:navigate", url),

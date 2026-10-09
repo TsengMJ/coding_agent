@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,25 @@ type Manager struct {
 	inUse map[string]int
 	// locks serializes start / stop / delete per workspace.
 	locks map[string]*sync.Mutex
+	// onStop is called with the id of every container stopped or removed.
+	onStop []func(id string)
+}
+
+// OnStop registers fn to learn about stopped and deleted workspaces, so
+// state tied to a running container (such as a browser session) can go.
+func (m *Manager) OnStop(fn func(id string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onStop = append(m.onStop, fn)
+}
+
+func (m *Manager) stopped(id string) {
+	m.mu.Lock()
+	fns := slices.Clone(m.onStop)
+	m.mu.Unlock()
+	for _, fn := range fns {
+		fn(id)
+	}
 }
 
 // NewManager validates cfg and fills in defaults.
@@ -329,6 +349,7 @@ func (m *Manager) stopLocked(ctx context.Context, id string) error {
 			return err
 		}
 	}
+	m.stopped(id)
 	ws.State = StateStopped
 	return m.cfg.Store.Put(ctx, *ws)
 }
@@ -351,6 +372,7 @@ func (m *Manager) deleteLocked(ctx context.Context, id string) error {
 	if err := m.cfg.Docker.Remove(ctx, ContainerName(id)); err != nil {
 		return err
 	}
+	m.stopped(id)
 	if err := os.RemoveAll(ws.Dir); err != nil {
 		return fmt.Errorf("workspace: remove %s: %w", ws.Dir, err)
 	}
@@ -453,14 +475,18 @@ func (m *Manager) Run(ctx context.Context, log *slog.Logger) {
 // Backend serves file tools from the host clone and runs commands in the
 // container.
 func (m *Manager) Backend(ws *Workspace) *backend.DockerExecBackend {
-	bin := "docker"
-	if d, ok := m.cfg.Docker.(CLIDocker); ok && d.Binary != "" {
-		bin = d.Binary
-	}
 	return backend.NewDockerExecBackend(backend.DockerExecOptions{
 		FilesystemOptions: backend.FilesystemOptions{RootDir: ws.Dir, VirtualMode: true, RespectGitignore: true},
-		Container:         ContainerName(ws.ID), Workdir: ContainerDir, Binary: bin,
+		Container:         ContainerName(ws.ID), Workdir: ContainerDir, Binary: m.DockerBinary(),
 	})
+}
+
+// DockerBinary is the docker client that runs commands in containers.
+func (m *Manager) DockerBinary() string {
+	if d, ok := m.cfg.Docker.(CLIDocker); ok {
+		return d.bin()
+	}
+	return "docker"
 }
 
 // WorkingDirSection replaces the system prompt's path section for agents

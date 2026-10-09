@@ -25,6 +25,8 @@ services:
       QUILL_REDIS_URL: redis://redis:6379/0
       QUILL_WORKSPACES_ROOT: ${QUILL_WORKSPACES_ROOT:?set QUILL_WORKSPACES_ROOT}
       QUILL_METRICS_ADDR: ":9090"
+      # Headless Chromium in each workspace container (deploy/workspace.Dockerfile).
+      QUILL_WORKSPACE_BROWSER: ${QUILL_WORKSPACE_BROWSER:-1}
     volumes:
       # quill starts workspace containers on the host daemon, which resolves
       # bind mounts on the host: the workspace root must have the same path

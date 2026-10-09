@@ -39,8 +39,13 @@ func newService(t *testing.T, replies ...llm.Message) (*Service, *llm.FakeModel)
 
 func collect(t *testing.T, srv Server, req RunRequest) ([]Event, error) {
 	t.Helper()
+	return collectAs(t, context.Background(), srv, req)
+}
+
+func collectAs(t *testing.T, ctx context.Context, srv Server, req RunRequest) ([]Event, error) {
+	t.Helper()
 	var events []Event
-	for ev, err := range srv.Run(context.Background(), req) {
+	for ev, err := range srv.Run(ctx, req) {
 		if err != nil {
 			return events, err
 		}

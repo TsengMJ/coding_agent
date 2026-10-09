@@ -60,6 +60,29 @@ func Preset(kind Kind, cdpURL, outputDir string) (mcp.ServerConfig, error) {
 	return cfg, nil
 }
 
+// ContainerChromium is where the workspace image installs Chromium.
+const ContainerChromium = "/usr/bin/chromium"
+
+// ScreenshotTool and ClickTool are the Playwright MCP tools the panel of a
+// workspace browser uses for frames and the user's clicks.
+const (
+	ScreenshotTool = "browser_take_screenshot"
+	ClickTool      = "browser_mouse_click_xy"
+)
+
+// ContainerPreset is Playwright MCP running in a workspace container
+// through `docker exec -i`, with its own headless Chromium. The browser
+// and its DevTools port stay inside the container; only MCP crosses it.
+// The vision tools let the panel forward clicks at coordinates.
+func ContainerPreset(dockerBinary, container string) mcp.ServerConfig {
+	return mcp.ServerConfig{Name: string(Playwright), Transport: mcp.TransportStdio, Command: dockerBinary,
+		Args: []string{"exec", "-i", container,
+			"npx", "-y", "@playwright/mcp@" + PlaywrightMCPVersion,
+			"--headless", "--isolated", "--no-sandbox", "--browser", "chromium",
+			"--executable-path", ContainerChromium, "--caps", "vision",
+			"--output-dir", "/tmp/quill-browser", "--no-webmcp"}}
+}
+
 // CheckEndpoint accepts only a bare http://<loopback>:<port> URL: the
 // endpoint controls a browser, so it must never point off the machine.
 func CheckEndpoint(raw string) error {

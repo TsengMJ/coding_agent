@@ -368,6 +368,26 @@ func TestReapStopsIdleAndDeletesExpired(t *testing.T) {
 	}
 }
 
+func TestOnStopHearsAboutStoppedAndDeletedWorkspaces(t *testing.T) {
+	repo := gitRepo(t, map[string]string{"a.txt": "a"})
+	m := newManager(t, newFakeDocker(), &clock{t: time.Now()})
+	ctx := context.Background()
+	var heard []string
+	m.OnStop(func(id string) { heard = append(heard, id) })
+	ws, _ := m.Create(ctx, "", Spec{RepoURL: repo}, "")
+	_, release, _ := m.Acquire(ctx, ws.ID)
+	release()
+	if err := m.Stop(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(heard) != 2 || heard[0] != ws.ID || heard[1] != ws.ID {
+		t.Fatalf("heard = %q", heard)
+	}
+}
+
 func TestReconcileMarksVanishedContainersStopped(t *testing.T) {
 	repo := gitRepo(t, map[string]string{"a.txt": "a"})
 	d := newFakeDocker()

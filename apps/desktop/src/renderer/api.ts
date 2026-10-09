@@ -5,6 +5,8 @@ import type {
   HistoryPage,
   LLMCallDetail,
   Message,
+  PRResult,
+  RepoDiff,
   RunEvent,
   RunMode,
   SlashCommand,
@@ -12,6 +14,7 @@ import type {
   ThreadState,
   ThreadUsage,
   Trace,
+  Workspace,
 } from "./types";
 
 export class ApiError extends Error {
@@ -126,6 +129,38 @@ export class Api {
     }
   }
 
+  workspaces(): Promise<Workspace[]> {
+    return this.json("/workspaces");
+  }
+
+  // createWorkspace clones the repository on the server; it can take a while.
+  createWorkspace(spec: { repo_url: string; base_branch?: string }): Promise<Workspace> {
+    return this.json("/workspaces", { method: "POST", body: JSON.stringify(spec) });
+  }
+
+  diff(id: string): Promise<RepoDiff> {
+    return this.json(`/threads/${encodeURIComponent(id)}/diff`);
+  }
+
+  createPR(id: string, req: { title: string; body?: string; draft?: boolean }): Promise<PRResult> {
+    return this.json(`/threads/${encodeURIComponent(id)}/pr`, { method: "POST", body: JSON.stringify(req) });
+  }
+
+  // screenshot is the workspace browser's current page; null until the
+  // thread's workspace has a browser.
+  async screenshot(id: string, signal?: AbortSignal): Promise<Blob | null> {
+    try {
+      return await (await this.request(`/threads/${encodeURIComponent(id)}/browser/screenshot`, { signal })).blob();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  async click(id: string, x: number, y: number): Promise<void> {
+    await this.request(`/threads/${encodeURIComponent(id)}/browser/click`, { method: "POST", body: JSON.stringify({ x, y }) });
+  }
+
   async saveDefaultModel(spec: string): Promise<void> {
     await this.request("/default-model", { method: "PUT", body: JSON.stringify({ model: spec }) });
   }
@@ -136,6 +171,7 @@ export class Api {
     req: {
       thread_id: string;
       cwd: string;
+      workspace_id?: string;
       messages?: Message[];
       resume?: { decisions: Decision[] };
       auto_approve: boolean;

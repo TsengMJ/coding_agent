@@ -9,6 +9,8 @@ export type AppDeps = {
   // Read per request so restarting `quill serve` (new token) needs no app restart.
   agent: () => AgentConfig;
   fetch: typeof fetch;
+  // onUnauthorized hears about a team server refusing its session.
+  onUnauthorized?: (url: string) => void;
 };
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -23,7 +25,7 @@ const CONTENT_TYPES: Record<string, string> = {
 
 // Headers the renderer must not pass on: the agent checks Origin against
 // Host, and the token comes from the main process only.
-const DROPPED_HEADERS = ["origin", "referer", "cookie", "host", "x-quill-token"];
+const DROPPED_HEADERS = ["origin", "referer", "cookie", "host", "x-quill-token", "authorization"];
 
 function jsonError(status: number, error: string): Response {
   return new Response(JSON.stringify({ error }), { status, headers: { "Content-Type": "application/json" } });
@@ -44,7 +46,8 @@ async function forward(req: Request, url: URL, deps: AppDeps): Promise<Response>
   const target = agent.url + url.pathname.slice("/api".length) + url.search;
   const headers = new Headers(req.headers);
   for (const h of DROPPED_HEADERS) headers.delete(h);
-  headers.set("X-Quill-Token", agent.token);
+  if (agent.remote) headers.set("Authorization", `Bearer ${agent.token}`);
+  else headers.set("X-Quill-Token", agent.token);
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
   try {
     const resp = await deps.fetch(target, {
@@ -54,9 +57,11 @@ async function forward(req: Request, url: URL, deps: AppDeps): Promise<Response>
       signal: req.signal,
       ...(hasBody ? { duplex: "half" } : {}),
     } as RequestInit);
+    if (agent.remote && resp.status === 401) deps.onUnauthorized?.(agent.url);
     return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: resp.headers });
   } catch (e) {
-    return jsonError(502, `The agent service at ${agent.url} did not answer (${(e as Error).message}). Is \`quill serve\` still running?`);
+    const hint = agent.remote ? "Check the server URL and your network." : "Is `quill serve` still running?";
+    return jsonError(502, `The agent service at ${agent.url} did not answer (${(e as Error).message}). ${hint}`);
   }
 }
 

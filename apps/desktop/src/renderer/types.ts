@@ -216,6 +216,43 @@ export interface ThreadInfo {
   updated_at?: string;
   message_count?: number;
   running?: boolean;
+  workspace_id?: string;
+}
+
+// Workspace mirrors workspace.Workspace: a server-side clone and its container.
+export interface Workspace {
+  id: string;
+  repo_url: string;
+  base_branch?: string;
+  image: string;
+  state: "running" | "stopped" | string;
+  created_at: string;
+  last_used_at: string;
+  in_use?: boolean;
+}
+
+// FileChange and RepoDiff mirror delivery.FileChange and delivery.Diff
+// (GET /threads/{id}/diff).
+export interface FileChange {
+  path: string;
+  old_path?: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  binary?: boolean;
+}
+
+export interface RepoDiff {
+  base: string;
+  files: FileChange[];
+  patch: string;
+  truncated?: boolean;
+}
+
+// PRResult mirrors server.PRResult (POST /threads/{id}/pr).
+export interface PRResult {
+  commit: { branch: string; base: string; head: string; created: boolean };
+  pull_request: { number: number; html_url: string; title: string; existing?: boolean };
 }
 
 // SlashCommand mirrors commands.Command from GET /api/commands.
@@ -226,13 +263,19 @@ export interface SlashCommand {
   args?: string;
 }
 
+// Info is GET /info: the local `quill serve` fills cwd, thread_id and
+// auto_approve; a team server (server.PublicInfo) fills user and
+// workspaces instead.
 export interface Info {
-  cwd: string;
-  thread_id: string;
+  cwd?: string;
+  thread_id?: string;
   model: string;
   model_override?: string;
-  auto_approve: boolean;
+  auto_approve?: boolean;
   version: string;
+  user?: { id: string; name?: string };
+  workspaces?: boolean;
+  daily_limit_usd?: number;
 }
 
 export interface BrowserStatus {

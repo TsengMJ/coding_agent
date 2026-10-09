@@ -1,5 +1,8 @@
 {
   "name": "quill-desktop",
+  "productName": "quill",
+  "description": "Desktop client for the quill coding agent",
+  "author": "quill",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -10,15 +13,50 @@
     "dev": "npm run build && electron .",
     "dev:renderer": "vite",
     "test": "vitest run",
-    "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.main.json --noEmit"
+    "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.main.json --noEmit",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:unsigned": "npm run build && electron-builder --dir --publish never -c.mac.identity=null -c.mac.notarize=false"
+  },
+  "build": {
+    "appId": "dev.quill.desktop",
+    "productName": "quill",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "notarize": true
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "TsengMJ",
+        "repo": "coding_agent"
+      }
+    ]
   },
   "dependencies": {
-    "highlight.js": "^11.12.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "react-markdown": "^10.1.0",
-    "react-virtuoso": "^4.18.16",
-    "remark-gfm": "^4.0.1",
+    "electron-updater": "^6.8.9",
     "ws": "^8.22.0"
   },
   "devDependencies": {
@@ -28,6 +66,13 @@
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.1.1",
     "electron": "44.7.0",
+    "electron-builder": "^26.15.3",
+    "highlight.js": "^11.12.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "react-virtuoso": "^4.18.16",
+    "remark-gfm": "^4.0.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.1",
     "vitest": "^5.0.2"

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tsengmingchun/quill/apps/agent/code/process"
 )
 
 // TestDockerWorkspace runs a real container: QUILL_DOCKER_IT=1, and
@@ -66,4 +68,30 @@ func TestDockerWorkspace(t *testing.T) {
 	if body, _ := os.ReadFile(wsA.Dir + "/hello.txt"); strings.TrimSpace(string(body)) != "changed" {
 		t.Fatalf("host copy = %q", body)
 	}
+
+	procs := process.NewManager()
+	defer procs.Close()
+	p, err := procs.Start("t1", m.Processes(wsA), "sleep 301 & sleep 302")
+	if err != nil {
+		t.Fatal(err)
+	}
+	countSleeps := `for f in /proc/[0-9]*/cmdline; do tr '\0' ' ' < $f; echo; done | grep -c 'sleep 30[12]' || true`
+	waitFor(t, func() bool { return strings.TrimSpace(ba.Execute(ctx, countSleeps, nil).Output) == "2" })
+	if err := procs.Stop("t1", p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.TrimSpace(ba.Execute(ctx, countSleeps, nil).Output); n != "0" {
+		t.Fatalf("%s sleep processes outlived stop_process", n)
+	}
+}
+
+func waitFor(t *testing.T, ok func() bool) {
+	t.Helper()
+	for range 50 {
+		if ok() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("condition not met in 5s")
 }

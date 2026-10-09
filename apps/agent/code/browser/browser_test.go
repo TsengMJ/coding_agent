@@ -33,6 +33,19 @@ func TestPlaywrightPresetPinsTheVersionAndKeepsOutputOutOfTheProject(t *testing.
 	}
 }
 
+func TestContainerPresetRunsTheBrowserInsideTheContainer(t *testing.T) {
+	cfg := ContainerPreset("/usr/bin/docker", "quill-ws-abc")
+	if cfg.Command != "/usr/bin/docker" || !slices.Equal(cfg.Args[:3], []string{"exec", "-i", "quill-ws-abc"}) {
+		t.Fatalf("cfg = %+v", cfg)
+	}
+	if !slices.Contains(cfg.Args, "@playwright/mcp@"+PlaywrightMCPVersion) || !slices.Contains(cfg.Args, "--headless") {
+		t.Fatalf("args = %v", cfg.Args)
+	}
+	if slices.Contains(cfg.Args, "--cdp-endpoint") {
+		t.Fatalf("a container browser must not attach to an outside endpoint: %v", cfg.Args)
+	}
+}
+
 func TestChromeDevToolsPresetPinsTheVersion(t *testing.T) {
 	cfg, err := Preset(ChromeDevTools, "http://127.0.0.1:9333", "/tmp/out")
 	if err != nil {

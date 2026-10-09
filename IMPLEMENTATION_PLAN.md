@@ -146,7 +146,17 @@
 **Goal**: 使用者只裝桌面 app 就能連到遠端服務。
 **Success Criteria**: `make check` 通過；desktop 可設定 server URL、以 device flow 登入、token 存系統金鑰圈；瀏覽器 endpoint 可指向 workspace 容器；electron-builder 設定與 GitHub Actions workflow 存在且 lint 通過。
 **Tests**: 遠端連線設定與 token 注入、登入流程、browser endpoint 驗證。
-**Status**: Not Started
+**Status**: Complete
+
+**Results**:
+- 桌面連線（`src/main/connection.ts`）：server URL 只接受 https（loopback 可用 http）；GitHub device flow（`/auth/device` → 開瀏覽器 → 輪詢 `/auth/token`，428 等待、`slow` 加 5 秒、410 過期、403 拒絕）；session token 以 Electron `safeStorage`（macOS Keychain）加密存在 userData，依 URL 分開。遠端請求帶 `Authorization: Bearer`，401 時忘掉 session 並回到連線面板；本機模式維持 `X-Quill-Token`。
+- Renderer：連線面板、workspace 選擇器（repo URL + branch，新 thread 必須先選）、「Files changed」面板（`/diff` + 開 PR 表單）、遠端瀏覽器面板。重連沿用既有的 thread 事件重播。
+- 容器內瀏覽器：workspace 映像改用 Node 24（Playwright MCP 需要 Node 20+）並加 Chromium；server 用 `docker exec -i <container> npx @playwright/mcp --headless --isolated` 啟動 MCP，每個 workspace 一個，容器停止或刪除時關掉。CDP 不離開容器，所以沒有做 CDP proxy。
+- 和計畫的差異：screencast 改成面板每秒輪詢 `GET /threads/{id}/browser/screenshot`（jpeg），點擊經 `POST /threads/{id}/browser/click` 轉成 `browser_mouse_click_xy`；比 CDP screencast 簡單，對少量使用者夠用。
+- `start_process` 在 workspace thread 改在容器內執行（`workspace.ProcessShell`，PID 檔 + `/proc` 子行程樹），`stop_process` 會殺掉容器內整棵行程樹（真 Docker 驗證）。
+- 發佈：electron-builder（mac dmg/zip，hardened runtime + notarize；linux AppImage；win nsis；publish 到 GitHub Releases）、`electron-updater` 自動更新（只在打包後）。`.github/workflows/ci.yml`（PR：Postgres + Redis service、`make agent-check`、`-race`、`make desktop-check`），`release.yml`（`v*` tag：推 quill / quill-workspace 映像到 GHCR，三平台 installer）。actionlint 通過；本機 unsigned 打包與啟動成功。
+- 尚未驗證：GitHub runner 上的 bubblewrap 行為、簽章與 notarize（需要 `CSC_LINK`、`APPLE_ID` 等 secrets）。
+- 測試：`connection.test.ts`、`protocol.test.ts`（Bearer、401、本機 token）、`remote.test.ts`、`TestStopAlsoStopsTheRemoteSideOfAStopper`、`TestOnStopHearsAboutStoppedAndDeletedWorkspaces`、`TestInteractiveWorkspaceRunsStartProcessesInTheContainer`、`wsbrowser_test.go`、`TestContainerBrowser`（`QUILL_DOCKER_IT=1`，真容器內 navigate / screenshot / click 通過）。
 
 ### Stage S6: 上線品質門檻
 **Goal**: 修已知 bug、決定修復迴圈預設、補 Anthropic provider、定義發版評測門檻。

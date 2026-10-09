@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: quill
+          POSTGRES_PASSWORD: quill
+          POSTGRES_DB: quill
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U quill" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_CONN_STRING: postgres://quill:quill@127.0.0.1:5432/quill?sslmode=disable
+      QUILL_POSTGRES_CONN_STRING: postgres://quill:quill@127.0.0.1:5432/quill?sslmode=disable
+      REDIS_URL: redis://127.0.0.1:6379/0
+      QUILL_REDIS_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/agent/go.mod
+          cache-dependency-path: apps/agent/go.sum
+      - name: Install bubblewrap (shell sandbox tests)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: gofmt, vet and test
+        run: make agent-check
+      - name: Race detector
+        run: make agent-test ARGS='-race -count=1'
+
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - run: make desktop-install
+      - name: Typecheck, test and build
+        run: make desktop-check

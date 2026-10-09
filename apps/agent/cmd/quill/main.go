@@ -176,7 +176,7 @@ func newService(ctx context.Context, e env, model string, ws *workspaceFlags, pu
 			st.Close()
 			return nil, err
 		}
-		cfg.Workspaces, cfg.RequireWorkspace = m, ws.require
+		cfg.Workspaces, cfg.RequireWorkspace, cfg.WorkspaceBrowser = m, ws.require, ws.browser
 		go m.Run(ctx, nil)
 	}
 	if cfg.MCP, err = connectMCP(ctx, e.paths.MCPConfig); err != nil {

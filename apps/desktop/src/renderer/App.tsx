@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { Api, ApiError } from "./api";
-import type { BrowserStatus, Decision, Info, Message, RunEvent, RunMode, SlashCommand, ThreadInfo, ThreadUsage } from "./types";
+import type { BrowserStatus, Decision, Info, Message, RunEvent, RunMode, SlashCommand, ThreadInfo, ThreadUsage, Workspace } from "./types";
 import { helpText, parseModelArgs, resolveCommand } from "./model/commands";
 import { contextText, costText, tokensText } from "./model/usage";
 import { applyEvent, emptyView, endRun, fromHistory, showBuild, startRun, type ThreadView } from "./model/state";
@@ -19,8 +19,13 @@ import { ApprovalCard } from "./components/Approval";
 import { LLMInspector } from "./components/LLMInspector";
 import { CopyButton } from "./components/common";
 import { BrowserPane } from "./components/BrowserPane";
-import { desktopBrowser, type PanelState } from "./desktop";
+import { ChangesPanel } from "./components/ChangesPanel";
+import { ConnectionPanel } from "./components/ConnectionPanel";
+import { RemoteBrowserPane } from "./components/RemoteBrowserPane";
+import { WorkspacePicker } from "./components/WorkspacePicker";
+import { desktopBrowser, desktopConnection, type ConnectionState, type PanelState } from "./desktop";
 import { hasPage } from "./model/browser";
+import { repoName } from "./model/remote";
 
 function newThreadID(): string {
   const b = new Uint8Array(6);
@@ -132,6 +137,13 @@ export function App({ api }: { api: Api }) {
   const [panel, setPanel] = useState<PanelState>(BLANK_PANEL);
   const [browserStatus, setBrowserStatus] = useState<BrowserStatus | null>(null);
   const [browserMCP, setBrowserMCP] = useState(savedBrowserMCP);
+  const connection = useMemo(() => desktopConnection(), []);
+  const [connState, setConnState] = useState<ConnectionState | null>(null);
+  const [showConnection, setShowConnection] = useState(false);
+  // On a team server every thread runs in a workspace (a server-side clone).
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [pickedWorkspaces, setPickedWorkspaces] = useState<Record<string, string>>({});
+  const [changesOpen, setChangesOpen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [drawerWidth, setDrawerWidth] = useState(() => savedDrawerWidth() ?? Math.round(window.innerWidth * 0.42));
   const drawerWidthRef = useRef(drawerWidth);
@@ -154,6 +166,9 @@ export function App({ api }: { api: Api }) {
   }, []);
   const view = views[threadId] ?? emptyView();
   const threadModel = threadModels[threadId] ?? "";
+  const threadWorkspaceID = pickedWorkspaces[threadId] ?? threads.find((t) => t.thread_id === threadId)?.workspace_id ?? "";
+  const threadWorkspace = workspaces.find((w) => w.id === threadWorkspaceID);
+  const needsWorkspace = !!info?.workspaces && !threadWorkspaceID;
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth);
@@ -363,31 +378,56 @@ export function App({ api }: { api: Api }) {
   }, [api, diffsLoading, setViewFor, threadId]);
 
   useEffect(() => {
+    void connection?.get().then(setConnState);
+  }, [connection]);
+
+  // Switching servers or accounts starts over with the new server's threads.
+  const changeConnection = useCallback((s: ConnectionState) => {
+    setConnState(s);
+    window.location.reload();
+  }, []);
+
+  useEffect(() => {
     api
       .info()
       .then((i) => {
         setInfo(i);
-        setRunCwd(i.cwd);
-        setAutoApprove(i.auto_approve);
+        setRunCwd(i.cwd ?? "");
+        // In a workspace the container is the sandbox; opening a pull
+        // request always asks.
+        setAutoApprove(i.auto_approve ?? !!i.workspaces);
         setModelOverride(i.model_override ?? "");
-        void loadThread(i.thread_id);
+        void loadThread(i.thread_id || newThreadID());
       })
       .catch((e: Error) => {
+        if (e instanceof ApiError && e.status === 401) {
+          setFatal("Your session on the team server ended; sign in again.");
+          void connection?.get().then(setConnState);
+          return;
+        }
         setFatal(
           e instanceof ApiError && e.status === 403
             ? "The agent service refused the session token. Restart `quill serve`, then reload (Cmd/Ctrl+R)."
             : `Cannot reach the agent service: ${e.message} Reload (Cmd/Ctrl+R) after starting it.`,
         );
       });
-  }, [api, loadThread]);
+  }, [api, connection, loadThread]);
 
   useEffect(() => {
-    if (info) void refreshThreads(info.cwd);
+    if (!info?.workspaces) return;
+    api
+      .workspaces()
+      .then(setWorkspaces)
+      .catch((e: Error) => setNotice(`Could not list workspaces: ${e.message}`));
+  }, [api, info]);
+
+  useEffect(() => {
+    if (info) void refreshThreads(info.cwd ?? "");
   }, [info, refreshThreads]);
 
   useEffect(() => {
     if (!info) return;
-    const onFocus = () => void refreshThreads(info.cwd);
+    const onFocus = () => void refreshThreads(info.cwd ?? "");
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [info, refreshThreads]);
@@ -398,7 +438,7 @@ export function App({ api }: { api: Api }) {
   useEffect(() => {
     if (!info) return;
     const tick = () => {
-      if (document.visibilityState === "visible") void refreshThreads(info.cwd);
+      if (document.visibilityState === "visible") void refreshThreads(info.cwd ?? "");
     };
     const id = window.setInterval(tick, 3000);
     return () => window.clearInterval(id);
@@ -461,7 +501,12 @@ export function App({ api }: { api: Api }) {
       req: { messages?: Message[]; resume?: { decisions: Decision[] }; mode?: RunMode; build_plan?: boolean },
       userText: string,
     ) => {
+      if (needsWorkspace) {
+        setNotice("Pick the repository for this thread first.");
+        return;
+      }
       const runThreadID = threadId;
+      const runWorkspace = threadWorkspaceID || undefined;
       const runCwdForThread = runCwd;
       const runAutoApprove = autoApprove;
       const runModel = modelOverride || undefined;
@@ -471,11 +516,14 @@ export function App({ api }: { api: Api }) {
       abortRefs.current[runThreadID] = ctrl;
       setViewFor(runThreadID, (v) => startRun(v, userText));
       void refreshThreads(info?.cwd ?? "");
-      const body = { thread_id: runThreadID, cwd: runCwdForThread, auto_approve: runAutoApprove, model: runModel, mode: runMode, browser_mcp: runBrowser, ...req };
+      const body = {
+        thread_id: runThreadID, cwd: runWorkspace ? "" : runCwdForThread, workspace_id: runWorkspace,
+        auto_approve: runAutoApprove, model: runModel, mode: runMode, browser_mcp: runWorkspace ? undefined : runBrowser, ...req,
+      };
       await follow(runThreadID, ctrl, async () => api.run(body, ctrl.signal));
       if (modelOverride) setThreadModels((models) => ({ ...models, [runThreadID]: modelOverride }));
     },
-    [api, threadId, runCwd, autoApprove, modelOverride, mode, runBrowserMCP, refreshThreads, follow, info, setViewFor],
+    [api, threadId, threadWorkspaceID, needsWorkspace, runCwd, autoApprove, modelOverride, mode, runBrowserMCP, refreshThreads, follow, info, setViewFor],
   );
 
   // stop cancels the run on the server and lets its stream end, so the
@@ -499,7 +547,7 @@ export function App({ api }: { api: Api }) {
 
   const newThread = useCallback(() => {
     if (!info) return;
-    setRunCwd(info.cwd);
+    setRunCwd(info.cwd ?? "");
     void loadThread(newThreadID());
   }, [info, loadThread]);
 
@@ -696,6 +744,13 @@ export function App({ api }: { api: Api }) {
   }, [selected, inspect, visibleTurns]);
 
   if (fatal) {
+    if (connection) {
+      return (
+        <div className="empty-state">
+          <ConnectionPanel connection={connection} state={connState} message={fatal} onChanged={changeConnection} />
+        </div>
+      );
+    }
     return (
       <div className="empty-state">
         <h2>quill</h2>
@@ -718,6 +773,8 @@ export function App({ api }: { api: Api }) {
   const blocked = view.interrupts.length > 0;
   const overlayDrawer = viewportWidth < DRAWER_OVERLAY_WIDTH;
   const inspectorWidth = clampDrawerWidth(drawerWidth, viewportWidth);
+  const firstRequest = view.messages.find((m) => m.role === "user")?.content?.map((c) => c.text ?? "").join("") ?? "";
+  const remoteBrowser = !!threadWorkspaceID && !!info.workspaces;
 
   return (
     <UIContext.Provider value={ui}>
@@ -728,7 +785,7 @@ export function App({ api }: { api: Api }) {
           allDirs={allDirs}
           onAllDirs={setAllDirs}
           onPick={(t) => {
-            setRunCwd(t.cwd || info.cwd);
+            setRunCwd(t.cwd || info.cwd || "");
             resumeThread(t.thread_id);
           }}
           onNew={newThread}
@@ -741,9 +798,15 @@ export function App({ api }: { api: Api }) {
             <span className="pill model-pill" title={currentModel}>
               {currentModel}
             </span>
-            <span className="cwd" title={runCwd}>
-              {runCwd}
-            </span>
+            {threadWorkspaceID ? (
+              <span className="cwd" title={threadWorkspace?.repo_url ?? threadWorkspaceID}>
+                {threadWorkspace ? `${repoName(threadWorkspace.repo_url)}${threadWorkspace.base_branch ? ` @ ${threadWorkspace.base_branch}` : ""}` : `workspace ${threadWorkspaceID}`}
+              </span>
+            ) : (
+              <span className="cwd" title={runCwd}>
+                {runCwd}
+              </span>
+            )}
             <span className="pill mono" title="thread id">
               {threadId} <CopyButton text={threadId} label="⧉" />
             </span>
@@ -769,13 +832,27 @@ export function App({ api }: { api: Api }) {
             >
               auto-approve {autoApprove ? "on" : "off"}
             </button>
-            {browser && (
+            {threadWorkspaceID && (
+              <button className={`pill ${changesOpen ? "on" : ""}`} onClick={() => setChangesOpen(!changesOpen)} title="Files changed in this thread's workspace, and its pull request">
+                changes
+              </button>
+            )}
+            {remoteBrowser ? (
+              <button className={`pill ${browserOpen ? "on" : ""}`} onClick={() => setBrowserOpen(!browserOpen)} title="Show or hide the browser in this thread's container">
+                browser
+              </button>
+            ) : browser && (
               <button
                 className={`pill ${browserOpen ? "on" : ""}`}
                 onClick={() => setBrowserOpen(!browserOpen)}
                 title={browserStatus?.connected ? "Show or hide the browser the agent drives" : "The agent service has not registered the browser panel; reload after starting quill serve"}
               >
                 browser{browserStatus && !browserStatus.connected ? " (offline)" : ""}
+              </button>
+            )}
+            {connection && (
+              <button className="pill" onClick={() => setShowConnection(true)} title="Choose the server threads run on">
+                {connState?.mode === "remote" ? connState.user ?? "team server" : "this computer"}
               </button>
             )}
           </header>
@@ -837,6 +914,14 @@ export function App({ api }: { api: Api }) {
               onDecide={(decisions) => void run({ resume: { decisions } }, "")}
             />
           )}
+          {needsWorkspace && view.messages.length === 0 && (
+            <WorkspacePicker
+              api={api}
+              workspaces={workspaces}
+              onPick={(ws) => setPickedWorkspaces((p) => ({ ...p, [threadId]: ws.id }))}
+              onCreated={(ws) => setWorkspaces((list) => [ws, ...list.filter((w) => w.id !== ws.id)])}
+            />
+          )}
           <Composer
             ref={composerRef}
             running={view.running}
@@ -854,7 +939,11 @@ export function App({ api }: { api: Api }) {
             onStop={() => stop(threadId)}
           />
         </main>
-        {browser && browserOpen && (
+        {changesOpen && threadWorkspaceID && (
+          <ChangesPanel key={threadId} api={api} threadId={threadId} firstRequest={firstRequest} running={view.running} onClose={() => setChangesOpen(false)} />
+        )}
+        {remoteBrowser && browserOpen && <RemoteBrowserPane key={threadId} api={api} threadId={threadId} onClose={() => setBrowserOpen(false)} />}
+        {!remoteBrowser && browser && browserOpen && (
           <BrowserPane
             browser={browser}
             state={panel}
@@ -902,6 +991,11 @@ export function App({ api }: { api: Api }) {
             {overlayDrawer && <button className="drawer-backdrop" aria-label="Close model inspector" onClick={() => setInspect(null)} />}
             <LLMInspector api={api} threadId={threadId} seq={inspect.seq} label={inspect.label} onClose={() => setInspect(null)} />
           </>
+        )}
+        {showConnection && connection && (
+          <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowConnection(false); }}>
+            <ConnectionPanel connection={connection} state={connState} onChanged={changeConnection} onClose={() => setShowConnection(false)} />
+          </div>
         )}
       </div>
     </UIContext.Provider>

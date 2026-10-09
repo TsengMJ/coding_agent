@@ -79,6 +79,10 @@ type Config struct {
 	// PushURL, when set, maps a workspace's repo_url to the URL its
 	// branches are pushed to (tests point it at a local remote).
 	PushURL func(repoURL string) string
+	// WorkspaceBrowser gives workspace runs a headless browser inside their
+	// container (Playwright MCP); the image must provide Chromium at
+	// browser.ContainerChromium.
+	WorkspaceBrowser bool
 }
 
 // ResumeTraceTag marks the run of a turn that resumes after an approval, so
@@ -109,6 +113,7 @@ type Service struct {
 	mcp          mcp.Session
 	mcpTools     []tool.Tool
 	browsers     *browserManager
+	wsBrowsers   *workspaceBrowsers
 	processes    *process.Manager
 	workspaces   *workspace.Manager
 	requireWS    bool
@@ -221,6 +226,13 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 			History: cfg.Storage.Durable,
 		},
 	}
+	if cfg.WorkspaceBrowser && cfg.Workspaces != nil {
+		m := cfg.Workspaces
+		s.wsBrowsers = newWorkspaceBrowsers(connect, func(id string) mcp.ServerConfig {
+			return browser.ContainerPreset(m.DockerBinary(), workspace.ContainerName(id))
+		})
+		m.OnStop(s.dropWorkspaceBrowser)
+	}
 	return s, nil
 }
 
@@ -281,6 +293,9 @@ func (s *Service) Close() error {
 	s.store.Close()
 	if cerr := s.browsers.Close(); cerr != nil && err == nil {
 		err = cerr
+	}
+	if s.wsBrowsers != nil {
+		s.wsBrowsers.Close()
 	}
 	if s.mcp != nil {
 		if cerr := s.mcp.Close(); cerr != nil && err == nil {
@@ -524,7 +539,7 @@ func (s *Service) run(ctx context.Context, req RunRequest, yield func(Event, err
 		return err
 	}
 	ctx = withRunModel(ctx, rm)
-	bt, err := s.browsers.toolsFor(ctx, req.BrowserMCP)
+	bt, err := s.browserToolsFor(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -782,6 +797,7 @@ func (s *Service) agentFor(ctx context.Context, req RunRequest, bt browserTools,
 		}
 		if ws != nil {
 			opts.Backend = s.workspaces.Backend(ws)
+			opts.ProcessShell = s.workspaces.Processes(ws)
 			opts.WorkingDirSection = workspace.WorkingDirSection(ws)
 			opts.UserDir = ""
 			opts.ExtraTools = append(slices.Clip(opts.ExtraTools), s.createPRTool())

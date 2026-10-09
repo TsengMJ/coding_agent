@@ -27,6 +27,12 @@ type Preparer interface {
 	PrepareCommand(ctx context.Context, command string) (*exec.Cmd, error)
 }
 
+// Stopper is a Preparer whose commands outlive the local process, such as
+// `docker exec` into a container: StopCommand ends what cmd started there.
+type Stopper interface {
+	StopCommand(cmd *exec.Cmd)
+}
+
 // Manager holds the processes of every thread.
 type Manager struct {
 	mu      sync.Mutex
@@ -63,6 +69,9 @@ func (m *Manager) Start(thread string, p Preparer, command string) (*Proc, error
 	m.nextID[thread]++
 	proc := &Proc{ID: fmt.Sprintf("p%d", m.nextID[thread]), Command: command, cmd: cmd, done: make(chan struct{})}
 	proc.out.limit = bufferBytes
+	if s, ok := p.(Stopper); ok {
+		proc.stop = func() { s.StopCommand(cmd) }
+	}
 	cmd.Stdout, cmd.Stderr = &proc.out, &proc.out
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -124,6 +133,7 @@ type Proc struct {
 	Command string
 
 	cmd      *exec.Cmd
+	stop     func()
 	out      buffer
 	done     chan struct{}
 	exitCode int
@@ -144,6 +154,9 @@ func (p *Proc) wait() {
 }
 
 func (p *Proc) kill() {
+	if p.stop != nil {
+		p.stop()
+	}
 	_ = backend.KillProcessGroup(p.cmd)
 	_ = p.cmd.Process.Kill()
 	<-p.done

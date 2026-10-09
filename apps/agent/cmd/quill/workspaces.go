@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/tsengmingchun/quill/apps/agent/code/browser"
 	"github.com/tsengmingchun/quill/apps/agent/code/workspace"
 )
 
@@ -19,6 +20,7 @@ type workspaceFlags struct {
 	memoryMB   int
 	network    string
 	localRepos bool
+	browser    bool
 	// require refuses runs in the server's own directories; set by -public.
 	require bool
 }
@@ -34,6 +36,8 @@ func (w *workspaceFlags) register(fs *flag.FlagSet) {
 	fs.IntVar(&w.memoryMB, "workspace-memory-mb", 0, "memory limit per workspace container in MB (0 = unlimited)")
 	fs.StringVar(&w.network, "workspace-network", "", "docker network for workspace containers (empty = default bridge)")
 	fs.BoolVar(&w.localRepos, "workspace-local-repos", false, "also accept server paths and file:// URLs as repo_url (single-user setups only)")
+	fs.BoolVar(&w.browser, "workspace-browser", os.Getenv("QUILL_WORKSPACE_BROWSER") == "1",
+		"give workspace runs a headless Chromium inside their container ($QUILL_WORKSPACE_BROWSER=1); the image needs "+browser.ContainerChromium)
 }
 
 func (w *workspaceFlags) manager(store workspace.Store) (*workspace.Manager, error) {

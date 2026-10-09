@@ -65,6 +65,9 @@ type Options struct {
 	// Processes, in interactive runs on the host shell, backs the
 	// start_process tools; processes are kept per thread.
 	Processes *process.Manager
+	// ProcessShell starts those processes when the Backend cannot, such
+	// as a container workspace's process.Stopper.
+	ProcessShell process.Preparer
 	// WebModel reads fetched pages for fetch_url prompts; nil uses Model.
 	WebModel llm.ChatModel
 	// ReviewModel, when set, runs the independent reviewer the headless
@@ -124,7 +127,11 @@ func CreateCLIAgent(ctx context.Context, opts Options) (core.Agent, error) {
 	}
 	sandboxed := shellSandboxed(b)
 	var procTools []tool.Tool
-	if shell, ok := b.(process.Preparer); ok && opts.Interactive && opts.Processes != nil {
+	shell, ok := b.(process.Preparer)
+	if opts.ProcessShell != nil {
+		shell, ok = opts.ProcessShell, true
+	}
+	if ok && opts.Interactive && opts.Processes != nil {
 		procTools = process.Tools(opts.Processes, shell)
 	}
 	b = withHostRoutes(b, userSkillRoots(opts.UserDir, opts.AgentName), opts.Artifacts, opts.Cwd)

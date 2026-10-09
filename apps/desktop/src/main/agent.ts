@@ -2,7 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export type AgentConfig = { url: string; token: string } | { error: string };
+// remote marks a team server session (sent as a bearer token) rather than
+// the local `quill serve` token.
+export type AgentConfig = { url: string; token: string; remote?: boolean } | { error: string };
 
 type Env = Record<string, string | undefined>;
 

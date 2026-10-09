@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, shell } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, safeStorage, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,7 +6,9 @@ import { readAgentConfig } from "./agent.js";
 import { createBrowserPanel } from "./browserPanel.js";
 import { readDevToolsPort, registerBrowser } from "./browserPolicy.js";
 import { startCdpProxy, type CdpProxy } from "./cdpProxy.js";
+import { Connections } from "./connection.js";
 import { APP_ORIGIN, handleAppRequest } from "./protocol.js";
+import { startAutoUpdate } from "./updates.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(here, "..", "renderer");
@@ -29,6 +31,21 @@ function isAppURL(url: string): boolean {
 }
 
 let proxy: CdpProxy | undefined;
+let connections: Connections;
+
+// The renderer can see and change where the agent runs, and start the
+// GitHub login; it never sees a session token.
+function handleConnections(): void {
+  ipcMain.handle("connection:get", () => connections.state());
+  ipcMain.handle("connection:local", () => connections.useLocal());
+  ipcMain.handle("connection:login", async (_e, url: unknown) => {
+    const code = await connections.login(String(url));
+    if (code.verification_uri.startsWith("https://")) void shell.openExternal(code.verification_uri);
+    return { user_code: code.user_code, verification_uri: code.verification_uri };
+  });
+  ipcMain.handle("connection:wait", () => connections.wait());
+  ipcMain.handle("connection:logout", () => connections.logout());
+}
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -61,8 +78,9 @@ async function waitForDevToolsPort(): Promise<number> {
 // register tells the agent about the panel. It runs whenever the UI
 // (re)loads, which is also how a restarted `quill serve` learns about it.
 async function register(cdpURL: string): Promise<void> {
-  const agent = readAgentConfig();
-  if ("error" in agent) return;
+  // A team server runs its own browser in each workspace container.
+  const agent = connections.agent();
+  if ("error" in agent || agent.remote) return;
   try {
     await registerBrowser(agent, cdpURL);
   } catch (e) {
@@ -83,8 +101,13 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.whenReady().then(() => {
-    protocol.handle("quill", (req) => handleAppRequest(req, { rendererDir, agent: () => readAgentConfig(), fetch }));
+    connections = new Connections({ dir: app.getPath("userData"), crypt: safeStorage, fetch, local: () => readAgentConfig() });
+    handleConnections();
+    protocol.handle("quill", (req) =>
+      handleAppRequest(req, { rendererDir, agent: () => connections.agent(), fetch, onUnauthorized: (url) => connections.unauthorized(url) }),
+    );
     const win = createWindow();
+    startAutoUpdate();
     app.on("second-instance", () => {
       if (win.isMinimized()) win.restore();
       win.focus();

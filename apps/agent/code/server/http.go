@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -246,6 +247,33 @@ func NewHandler(srv Server) http.Handler {
 			writeJSON(w, http.StatusOK, res)
 		})
 	}
+	if bs, ok := srv.(workspaceBrowserServer); ok {
+		mux.HandleFunc("GET /threads/{id}/browser/screenshot", func(w http.ResponseWriter, r *http.Request) {
+			shot, err := bs.BrowserScreenshot(r.Context(), r.PathValue("id"))
+			if err != nil {
+				writeError(w, statusFor(err), err)
+				return
+			}
+			w.Header().Set("Content-Type", cmp.Or(shot.MimeType, "image/png"))
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write(shot.Data)
+		})
+		mux.HandleFunc("POST /threads/{id}/browser/click", func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
+			}
+			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Errorf(`want {"x": ..., "y": ...}: %w`, err))
+				return
+			}
+			if err := bs.BrowserClick(r.Context(), r.PathValue("id"), req.X, req.Y); err != nil {
+				writeError(w, statusFor(err), err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
 	if rc, ok := srv.(readinessChecker); ok {
 		mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 			serveReady(w, r, rc)
@@ -286,6 +314,14 @@ type threadAuthorizer interface {
 type deliveryServer interface {
 	GetDiff(ctx context.Context, threadID string) (*delivery.Diff, error)
 	CreatePR(ctx context.Context, threadID string, req PRRequest) (*PRResult, error)
+}
+
+// workspaceBrowserServer backs the desktop panel of a workspace browser:
+// GET /threads/{id}/browser/screenshot (the current frame) and POST
+// /threads/{id}/browser/click {"x", "y"}.
+type workspaceBrowserServer interface {
+	BrowserScreenshot(ctx context.Context, threadID string) (*Screenshot, error)
+	BrowserClick(ctx context.Context, threadID string, x, y float64) error
 }
 
 // auditLister backs GET /audit: the signed-in user's own events.
@@ -437,7 +473,8 @@ func statusFor(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, ErrForbidden), errors.Is(err, workspace.ErrForbidden):
 		return http.StatusForbidden
-	case errors.Is(err, ErrThreadNotFound), errors.Is(err, trace.ErrNotFound), errors.Is(err, workspace.ErrNotFound):
+	case errors.Is(err, ErrThreadNotFound), errors.Is(err, trace.ErrNotFound), errors.Is(err, workspace.ErrNotFound),
+		errors.Is(err, ErrNoBrowser):
 		return http.StatusNotFound
 	case errors.Is(err, ErrNoWorkspaces):
 		return http.StatusNotImplemented

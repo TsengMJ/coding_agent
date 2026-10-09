@@ -1863,3 +1863,172 @@ kbd {
 .hljs-variable {
   color: #ffa657;
 }
+
+/* Team server: connection, workspaces, Files changed, workspace browser */
+
+.connect-panel {
+  width: min(560px, 92vw);
+  padding: 20px 24px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-2);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.connect-panel h2 {
+  margin: 0;
+}
+
+.connect-form {
+  display: flex;
+  gap: 6px;
+}
+
+.connect-form input,
+.pr-form input,
+.pr-form textarea {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: inherit;
+}
+
+.connect-form input.branch {
+  flex: 0 0 140px;
+}
+
+.connect-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.error-note {
+  color: var(--red);
+}
+
+.workspace-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.workspace-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.changes-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.browser-bar .grow {
+  flex: 1;
+}
+
+.changes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.changes-list .change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.changes-list .change .grow {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+.changes-list .change.active,
+.changes-list .change:hover {
+  background: var(--bg-hover);
+}
+
+.status {
+  width: 14px;
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.status-added {
+  color: var(--green);
+}
+
+.status-deleted {
+  color: var(--red);
+}
+
+.status-modified,
+.status-renamed {
+  color: var(--yellow);
+}
+
+.pr-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.pr-form .btn {
+  align-self: flex-end;
+}
+
+.remote-browser {
+  overflow: auto;
+  background: var(--bg);
+}
+
+.remote-browser img {
+  display: block;
+  width: 100%;
+  height: auto;
+  cursor: pointer;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(1, 4, 9, 0.6);
+}
