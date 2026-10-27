@@ -17,6 +17,9 @@ Quill 是 coding agent：Go 寫的 agent SDK 與 agent 服務（`quill serve`、
 
 ```
 apps/agent               Go module github.com/tsengmingchun/quill/apps/agent（agent SDK、quill、quillbench）
+apps/desktop             Electron 桌面 app
+deploy                   單機部署（compose：quill、Postgres、Redis、Caddy）
+.github/workflows        CI 與 release workflow
 docs                     設計文件
 ```
 
@@ -29,7 +32,7 @@ middleware/*             Agent middleware（filesystem、subagents、summarizati
 backend                  檔案/shell 後端（state、store、filesystem、sandbox、composite ...）
 profiles                 Harness / Provider profiles
 agent                    Middleware 介面；圖用 langgraphgo MessageGraph 組裝
-llm, tool                訊息與 ChatModel；OpenAI 呼叫走 langchaingo
+llm, tool                訊息與 ChatModel；OpenAI 相容的 provider（openai、openrouter）走 langchaingo，anthropic 用 llm.AnthropicModel 直接呼叫 Messages API
 runtime                  State、Checkpointer（轉接 langgraphgo）、Store、Interrupt
 internal/notimpl         未實作 sentinel error
 ```
@@ -266,24 +269,58 @@ quill threads                      # 列出這個目錄的 threads（-all 列出
 - 模型呼叫遇到 429、5xx、連線錯誤，或 HTTP 200 卻沒有任何 choices（串流則是什麼都沒送出）的空回應會自動重試（預設 2 次，`retries.max_retries` 可調；串流已經送出內容後就不重試）；串流超過 5 分鐘沒有新資料視為卡住並報錯。
 - 每個 thread 只保留最新 10 筆 checkpoint，長對話不會讓 checkpoint 表無限成長。
 
+### 遠端服務（`quill serve -public`）
+
+上一節是本機 loopback：預設 `127.0.0.1:8123`、每個請求帶 `X-Quill-Token`、Host 必須是 loopback、網址與 token 寫在 `~/.quill/agent.json`。自己在同一台機器上用時維持這樣。要給別人或非 loopback 位址連時，改開團隊服務，而且一定要開 workspace：
+
+```sh
+quill serve -public -workspaces /var/lib/quill/workspaces -addr 0.0.0.0:8123
+```
+
+`-public` 會做這些檢查（`publicFlags.check`）：
+
+- 必須同時有 `-workspaces`（環境變數 `QUILL_WORKSPACES_ROOT`）。遠端使用者只能在 workspace 容器裡跑，不能在 server 自己的目錄跑指令。
+- 不能和 `-workspace-local-repos` 一起用。
+- 可以綁非 loopback 位址。其餘 API 要 `Authorization: Bearer`。不需登入的只有 `GET /healthz`、`GET /readyz` 與 `/auth/*`。
+- `-daily-limit-usd`（`QUILL_DAILY_LIMIT_USD`，`0` 表示不限）只能跟 `-public` 一起用，而且不能是負數。已登入使用者當天（UTC 00:00 起算）的模型花費達到上限時，新的 run 回 429。
+- `-allowed-origins` / `QUILL_ALLOWED_ORIGINS`：逗號分隔的瀏覽器 Origin。沒有 Origin 的請求（desktop 的 main process、curl）不受這份清單限制。
+- `-log-format` / `QUILL_LOG_FORMAT` 只能是 `json`（預設）或 `text`。
+- 選用 `-metrics-addr` / `QUILL_METRICS_ADDR`（例如 `:9090`）在另一個位址提供 Prometheus `GET /metrics`。公開的 listener 不會帶這條路由。
+
+登入是 GitHub device flow。環境變數：`QUILL_GITHUB_CLIENT_ID`、允許登入的帳號 `QUILL_ALLOWED_USERS`（逗號分隔）、`QUILL_SECRET_KEY`（32 bytes，base64 或 hex，AES-256-GCM，用來加密存在 server 的 GitHub token）。路由：`POST /auth/device`、`POST /auth/token`（等待中 428、過期 410、拒絕或不在名單 403）、`POST /auth/logout`、`GET /auth/me`。登入後只能看自己的 thread 與 workspace，別人的回 403。
+
+`-workspaces` 為每個 thread 在 Docker 裡 clone 一份 repo。映像依序採用 repo 的 `.quill/Dockerfile`、devcontainer 的 `image`、否則 `-workspace-image`（預設 `quill-workspace:latest`）。預設閒置 30 分鐘停掉容器（`-workspace-idle`）、14 天沒有使用就刪除（`-workspace-retention`）、每位使用者同時最多 3 個運行中的容器（`-workspace-max-running`）。thread 一旦綁定 workspace，換成另一個 workspace，或改對伺服器上的目錄下 run，回 409。`-public` 把 `RequireWorkspace` 打開，沒有 `workspace_id` 的新 run 回 400。
+
+`create_pr` 與 `POST /threads/{id}/pr` 把變更 commit 到 `quill/<thread>`、push，並開啟或沿用既有的 GitHub pull request。`create_pr` 一律要你核准，開了自動核准也一樣。push 時 GitHub token 留在 host、不進容器的做法見 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)。
+
+一台機器的部署是 [`deploy/compose.yaml`](deploy/compose.yaml)（quill、Postgres 17、Redis 7、Caddy；schema 在 quill 啟動時 migrate）。要填的變數在 [`deploy/.env.example`](deploy/.env.example)。`QUILL_SECRET_KEY` 與 GitHub client id 只放那裡，不要寫進專案根目錄的 `.env`。
+
+workspace、diff、PR、稽核與容器內瀏覽器的路由列在下方「server 的 HTTP 介面」。
+
 ### GUI
 
 GUI 是 Electron 桌面 app（`apps/desktop`），和 agent 服務分開啟動：先在專案目錄跑 `make serve`（`quill serve`），再開另一個終端機跑 `make desktop`。第一次要先 `make desktop-install`（需要 Node）。
 
-`quill serve` 啟動時產生一次性的 token，連同網址寫進 `~/.quill/agent.json`（權限 0600，結束時刪除）；desktop app 讀這個檔，由 main process 把 `quill://app/api/*` 轉送到 agent 並帶上 `X-Quill-Token`，renderer 拿不到 token。API 只接受 loopback Host、帶正確 token 的請求，瀏覽器來源還要同源。`QUILL_AGENT_TOKEN` 可以同時指定兩邊的 token。agent 沒啟動時 app 會顯示提示，啟動後按 Cmd/Ctrl+R 重新載入即可。
+本機連線：`quill serve` 啟動時產生一次性的 token，連同網址寫進 `~/.quill/agent.json`（權限 0600，結束時刪除）；desktop app 讀這個檔，由 main process 把 `quill://app/api/*` 轉送到 agent 並帶上 `X-Quill-Token`，renderer 拿不到 token。API 只接受 loopback Host、帶正確 token 的請求，瀏覽器來源還要同源。`QUILL_AGENT_TOKEN` 可以同時指定兩邊的 token。agent 沒啟動時 app 會顯示提示，啟動後按 Cmd/Ctrl+R 重新載入即可。本機時，desktop app 預設開啟 agent 目錄最近有對話內容的 thread。
 
-desktop app 預設開啟 agent 目錄最近有對話內容的 thread。側欄的 ✎ 可替已開始的 thread 命名，名稱會隨 thread 保存；執行中暫停切換 thread，避免把串流內容顯示到另一段對話。
+連到遠端服務：連線面板填 server 網址，必須是 `https://`；`http://` 只允許 `localhost`、`127.0.0.1`、`[::1]`。登入走 GitHub device flow，session token 以 Electron `safeStorage` 存在 main process，只放在打向該 server 的 `Authorization` header。開新 thread 之前要先選 workspace（既有的，或填 GitHub repo 讓 server clone）。thread 的 Files changed 面板列出工作區相對 base branch 的 diff（含未追蹤檔），並用標題、內文與 draft 開 pull request。容器裡的瀏覽器見下一節。
+
+側欄的 ✎ 可替已開始的 thread 命名，名稱會隨 thread 保存；執行中暫停切換 thread，避免把串流內容顯示到另一段對話。
 
 - 時間軸是收合結構（`main · LLM #n`、tool call 樹、subagent 縮排），可以一路往上捲到 thread 開頭。
 - 點 tool call 展開詳細內容：grep 依檔案分組並標出命中、read_file 帶行號、execute 顯示終端輸出、exit code 與沙箱 badge（見 [docs/sandbox.md](docs/sandbox.md#在-gui-看指令有沒有跑在沙箱裡)）、edit/write 以 GitHub 風格 diff（unified / split）呈現；另有 Arguments、Output、Raw JSON 分頁。
-- 輸入框可附圖片：直接貼上、拖進輸入框或按 Attach image。支援 PNG、JPEG、GIF、WebP，單張 5 MB、合計 10 MB；目前只有 OpenAI 相容的 provider（OpenAI、OpenRouter）會送出圖片，模型本身要支援 vision。圖片存在 thread 裡，之後每一輪都會一起送給模型。
+- 輸入框可附圖片：直接貼上、拖進輸入框或按 Attach image。支援 PNG、JPEG、GIF、WebP，單張 5 MB、合計 10 MB。desktop 對每個 provider 都送出圖片區塊，收不收由模型 profile 決定。OpenAI 與 OpenRouter 不接受 tool 結果裡的圖片，`unsupportedcontent` 會把它們移到緊接在 tool 結果後的 user 訊息（thread 裡保存的仍是原本的 tool 結果）。Anthropic（`Profile` 的 `ImageInputs` 與 `ToolMessageImageInputs`）接受 user 訊息與 tool 結果裡的圖片。圖片存在 thread 裡，之後每一輪都會一起送給模型。
 - 點 LLM 那一行（或 `inspect`）打開側欄，看這次呼叫實際送出的 messages（標出和上一次相比新增的部分）、回覆、提供的 tools 與 token 用量。
 - 每個 turn 結尾有 Files changed 摘要；需要核准時直接在頁面上看 diff 預覽後核准或附理由拒絕。
 - 上方可篩選 Edits / Commands / Errors / LLM calls、搜尋內容；鍵盤 `j`/`k` 移動、Enter 展開、`e` 全部展開、`/` 搜尋、`i` 打開 LLM 側欄、`G` 跳到底、Esc 關閉。
 
 ### 瀏覽器面板
 
-desktop app 右側有內建瀏覽器面板，agent 用瀏覽器 MCP 操作它來驗證自己的成果（開本機 dev server、點按鈕、讀頁面），每一步都看得到。面板載入新頁面時自動打開，上方 header 的 browser pill 顯示 agent 是否已連上面板。
+desktop 有兩種瀏覽器。本機 `quill serve` 用右側的 DevTools 面板，agent 經瀏覽器 MCP 操作它（開本機 dev server、點按鈕、讀頁面），每一步都看得到。連到開了 `-workspace-browser` 的遠端服務時，瀏覽器是 workspace 容器裡的 headless Chromium，面板只顯示截圖。
+
+#### 本機 DevTools 面板
+
+面板載入新頁面時自動打開，上方 header 的 browser pill 顯示 agent 是否已連上面板。
 
 - 面板只能開 `http://localhost`、`http://127.0.0.1`、`http://[::1]`（與 `about:blank`），用獨立且不落地的 session，不和 GUI 共用 cookie，權限請求一律拒絕。
 - app 啟動時開一個只綁 127.0.0.1、隨機 port 的 DevTools 端點，再包一層過濾 proxy：MCP server 只看得到、只能操作面板，碰不到 quill 自己的畫面；開新分頁會變成在面板內導覽，關閉瀏覽器、建立新 browser context 等指令會被拒絕。app 把 proxy 網址用 `PUT /browser` 告訴 `quill serve`（GUI 重新載入時會重新註冊，所以先後重啟哪一邊都可以）。
@@ -296,7 +333,11 @@ mcp = "playwright"   # 或 "chrome-devtools"
 
 - 工具名稱是 `mcp__playwright__*` / `mcp__chrome-devtools__*`，和其他 MCP 工具一樣在 manual 模式要核准（可用 `[mcp] allow_tools` 放行）。會跳出面板的功能被拿掉：Playwright 的 `browser_run_code_unsafe`（在面板外執行 Node 程式）、Chrome DevTools 的 `upload_file`，以及會把檔案寫到任意路徑的參數（`filePath`、`outputDirPath` 等）。Playwright 的快照與 log 寫在暫存目錄，不會出現在專案裡。
 - dev server 用 `start_process` 啟動（`execute` 結束時會殺掉它留下的背景行程）：和 `execute` 一樣在專案根目錄、同一個沙箱裡執行，核准規則也相同；`read_process_output` 看新的輸出，`stop_process` 連同子行程一起停掉。行程跟著 thread（每個 thread 最多同時 4 個），跨 turn 保留，`quill serve` 結束時全部停止。只有 desktop app 的互動 session 有這組工具。
-- 截圖以圖片交給模型（模型要支援 vision）；OpenAI 相容的 provider 不接受 tool 結果裡的圖片，送出前會把它們移到緊接在 tool 結果後的 user 訊息（thread 裡保存的仍是原本的 tool 結果）。時間軸上帶圖片的 tool call 下方會顯示縮圖，點一下放大。
+- 截圖以圖片交給模型。OpenAI 與 OpenRouter 的 tool 結果圖片會被移到下一則 user 訊息；Anthropic 留在 tool 結果裡（見上方輸入框的圖片說明）。時間軸上帶圖片的 tool call 下方會顯示縮圖，點一下放大。
+
+#### workspace 容器裡的瀏覽器
+
+`-workspace-browser`（或 `QUILL_WORKSPACE_BROWSER=1`）讓 workspace 的 run 在容器內用 headless Chromium。server 以 `docker exec` 啟動 `@playwright/mcp`，瀏覽器與 DevTools port 留在容器裡，只有 MCP 跨出來；映像要有 `/usr/bin/chromium`。desktop 面板輪詢 `GET /threads/{id}/browser/screenshot`，點擊送到 `POST /threads/{id}/browser/click`。這種 thread 的 `start_process` 在容器裡執行，不在 server 主機上。
 
 ### Plan 模式與 todo
 
@@ -312,7 +353,7 @@ GUI 的 session 有 Agent / Plan 兩種模式：
 
 桌面 app 的原始碼在 `apps/desktop`：`src/main` 是 Electron main process（視窗、`quill://` protocol、轉送 API），`src/renderer` 是 React + Vite 介面。建置結果在 `apps/desktop/out`，不進版控；agent 的 `go build` 不需要 Node。`make desktop-check` 跑 typecheck、測試與建置（`make check` 也會跑）。改介面時可以用熱更新：`make serve` 之後在 `apps/desktop` 執行 `npm run dev:renderer`（Vite dev server 會讀 `~/.quill/agent.json` 把 `/api` 轉給 agent），再用 `QUILL_RENDERER_URL=http://localhost:5173 npm start` 讓 Electron 載入 dev server（main process 要先 `npm run build` 過）。
 
-server 的 HTTP 介面：`GET /healthz`、`GET /info`、`PUT /default-model`、`POST /runs`（回傳 NDJSON：`delta`、`message`、`interrupt`、`trace`、`done`、`error`）、`GET /threads?cwd=&limit=`、`GET /threads/{id}`、`GET /threads/{id}/trace`、`GET /threads/{id}/trace/llm/{seq}`。
+server 的 HTTP 介面（`code/server/http.go`；本機 app handler 另有 `GET /info`、`PUT /default-model`、`PUT /browser`，`-public` 的 `GET /info` 在登入之後）：`GET /healthz`、`GET /readyz`（Postgres、Redis，開了 workspace 時還檢查 Docker，否則 503）、`GET /audit?limit=`、`GET /commands`、`POST /runs`（回傳 NDJSON：`delta`、`message`、`interrupt`、`trace`、`done`、`error`）、`GET /threads?cwd=&limit=`、`GET /threads/{id}`、`PATCH /threads/{id}`、`GET /threads/{id}/events`、`POST /threads/{id}/cancel`、`GET /threads/{id}/history`、`GET /threads/{id}/usage`、`GET /threads/{id}/trace`、`GET /threads/{id}/trace/summary`、`GET /threads/{id}/trace/llm/{seq}`、`POST /threads/{id}/compact`、`GET /threads/{id}/diff`、`POST /threads/{id}/pr`、`GET /threads/{id}/browser/screenshot`、`POST /threads/{id}/browser/click`、`POST /workspaces`、`GET /workspaces`、`GET /workspaces/{id}`、`POST /workspaces/{id}/stop`、`DELETE /workspaces/{id}`。`-public` 另外有 `POST /auth/device`、`POST /auth/token`、`POST /auth/logout`、`GET /auth/me`（見上方「遠端服務」）。沒有 `-workspaces` 時，workspace 路由回 501；`POST /threads/{id}/pr` 只接受跑在 workspace 裡的 thread。
 
 不要在 `quill` 的 prompt 前面加 `--`：Go 的 `flag` 套件會把 `--` 之後的東西都當成一般參數，`-n` 就會變成 prompt 的一部分。
 
@@ -322,13 +363,14 @@ server 的 HTTP 介面：`GET /healthz`、`GET /info`、`PUT /default-model`、`
 | --- | --- | --- | --- |
 | `openrouter` | `openrouter:openai/gpt-6-luna-pro` | `OPENROUTER_API_KEY` | `OPENROUTER_API_BASE` |
 | `openai` | `openai:gpt-5.5` | `OPENAI_API_KEY` | `OPENAI_BASE_URL` |
+| `anthropic` | `anthropic:claude-haiku-4-5` | `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL` |
 
-OpenRouter 會帶上 app attribution header（`HTTP-Referer`、`X-Title`），可用 `OPENROUTER_APP_URL`、`OPENROUTER_APP_TITLE` 覆寫，設成空字串則不送。
+OpenRouter 會帶上 app attribution header（`HTTP-Referer`、`X-Title`），可用 `OPENROUTER_APP_URL`、`OPENROUTER_APP_TITLE` 覆寫，設成空字串則不送。`openai` 與 `openrouter` 經 langchaingo；`anthropic` 由 `llm.AnthropicModel` 直接呼叫 Messages API。
 
 ### API key 與 `.env`
 
 ```sh
-cp .env.example .env   # 填入 OPENAI_API_KEY
+cp .env.example .env   # 填入要用的 API key（OPENAI_API_KEY、OPENROUTER_API_KEY 或 ANTHROPIC_API_KEY）
 make run PROMPT='hello'
 ```
 
@@ -348,7 +390,7 @@ web 工具的做法對齊 Claude Code：
 - 有 Brave 或 Context7 key 時，會多一個 `web-researcher` subagent：它用 `models.web`，只有 web 工具與唯讀檔案工具，每次最多 4 次搜尋、8 頁，最後回報結論、引用 URL、適用版本與來源衝突。啟動它的 `task` 需要核准，核准後裡面的網路呼叫不再逐一詢問。
 - `task` 可加 `run_in_background: true` 在背景執行。主 agent 先做別的事，結果以 `<task-notification>` 送回，或用 `task_output` 等待；run 會等背景 task 結束才收尾，取消 run 會一併取消。背景 task 只存在 server 記憶體：`quill serve` 重啟，或 run 停下來等待核准時，背景 task 會中止，下一輪會收到「cancelled」通知。
 
-`.env` 已列在 `.gitignore`，只有 `.env.example` 會進版控。
+`.env` 已列在 `.gitignore`，只有 `.env.example` 會進版控。`ANTHROPIC_API_KEY` 與選用的 `ANTHROPIC_BASE_URL` 在 `.env.example` 裡是註解。團隊服務的 `QUILL_SECRET_KEY` 與 GitHub client id 不放在這個檔，見 [`deploy/.env.example`](deploy/.env.example)。
 
 ### SWE-bench Pro V2 評測（`quillbench`）
 
@@ -367,6 +409,9 @@ export REDIS_URL='redis://127.0.0.1:6379/0'   # quill 的快取，quillbench run
 make bench-prepare                 # 固定 commit 的 task 目錄、驗證 SHA256SUMS、HF metadata、寫入 bench_tasks
 make bench-gate                    # 驗收評分器：官方 patch（oracle）要全過、空 patch（nop）要全不過
 make bench-smoke MODEL=openrouter:z-ai/glm-5.3   # 跑 smoke50
+make bench-release                 # 發布評測：smoke50、每題 2 次，notes 為 git describe
+make bench-release-check BASE=<baseline-run> RUN=<release-run>
+                                   # quillbench compare -max-drop 4
 
 # 以下用 make build 產生的 bin/quillbench，在根目錄執行
 
@@ -382,6 +427,7 @@ make bench-smoke MODEL=openrouter:z-ai/glm-5.3   # 跑 smoke50
 - 資料放在 `~/.quill/bench/`：task repo、metadata、每次嘗試的 log 與 agent trace（`logs/<run>/<instance>/t<trial>/`）、markdown 報表（`reports/`）。
 - 每題映像約 1 GB（`ghcr.io/scaleapi/swe-bench_pro-v2`，linux/amd64）；磁碟吃緊時加 `-prune-images`，網路慢時建議先跑 `bench-gate` 把映像拉好。
 - `-max-cost`（預設每題 3 美元）與 `-max-steps`（預設 250）是額外上限；`infra_error` 不算分，可用 `-retry-infra` 重跑。
-- `-disable baseline,diff_review,test_edits,progress,budget` 關掉個別 agent 功能做消融比較，會記在 run 的 config。`test_edits`：結束前若改過既有測試，先把這些測試檔暫時換回原版、在目前的程式碼上跑一次，原版失敗就列出來，請 agent 還原測試修正程式，或指出任務哪一條要求這個行為改變。`progress`：同一個呼叫連續兩次以同樣方式失敗、中間沒有編輯、shell 指令或新的使用者訊息時，第三次不執行。`budget`：headless run 用掉 80% 的時間或步數後，每個請求尾端提醒收斂。
+- `quill` 與 `quill serve` 的 `-disable` 優先，否則用 `QUILL_DISABLE`，再否則用 `codeagent.DefaultDisabled`（`failure_class,repair_state,repro,planner,stuck,reviewer`）。空字串代表這些功能全部開啟。預設關掉的是修復迴圈的其餘部分；驗證閘門（`baseline`、`diff_review`、`test_edits`）、`micro`、`checkpoint`、`progress`、`budget` 維持開啟。`quillbench run -disable` 的預設是同一組名單（flag 預設值，不讀 `QUILL_DISABLE`）；傳空字串同樣全部開啟，會記在 run 的 config。`test_edits`：結束前若改過既有測試，先把這些測試檔暫時換回原版、在目前的程式碼上跑一次，原版失敗就列出來，請 agent 還原測試修正程式，或指出任務哪一條要求這個行為改變。`progress`：同一個呼叫連續兩次以同樣方式失敗、中間沒有編輯、shell 指令或新的使用者訊息時，第三次不執行。`budget`：headless run 用掉 80% 的時間或步數後，每個請求尾端提醒收斂。
+- `make bench-release-check` 比較 smoke50 解出的題數，新的 run 少 4 題以上就失敗。目前還沒有 B5 的 baseline run，所以還沒有可對照的 `BASE`。
 - `./bin/quillbench analyze <run-id>...` 從 trace 重算過程指標並分類失敗，報表最後有離線重播（progress monitor 會介入幾次），最後是各元件實際觸發的次數（verify gate 各種類、progress、budget、危險指令、version guard、grep regex 重試、service hint、shell 截斷），以及 HEAD baseline 的每次判定（regression、pre-existing、flaky ...，記在 attempt 的 process JSON），用來找出從不觸發的元件。
 - 比較別的 harness 需要逐題成績：CSV（`instance_id,resolved[,steps,cost_usd]`）或 `{"instance_id": true}` JSON。
